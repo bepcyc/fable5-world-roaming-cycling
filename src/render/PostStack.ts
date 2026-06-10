@@ -10,7 +10,7 @@
  *     toning, saturation, contrast) → AgX via renderer.toneMapping
  */
 
-import { AgXToneMapping } from 'three';
+import { AgXToneMapping, Matrix4, NoToneMapping, Vector3 } from 'three';
 import type { Renderer, StorageBufferNode } from 'three/webgpu';
 import { RenderPipeline } from 'three/webgpu';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
@@ -20,9 +20,6 @@ import {
   Fn,
   If,
   Return,
-  cameraPosition,
-  cameraProjectionMatrixInverse,
-  cameraWorldMatrix,
   clamp,
   dot,
   float,
@@ -50,7 +47,7 @@ import type { Engine } from '../core/Engine';
 import { hash12 } from '../gpu/noise/NoiseTSL';
 import type { NV3, NV4 } from '../gpu/TSLTypes';
 import type { Atmosphere } from '../sky/Atmosphere';
-import type { Clouds } from '../sky/Clouds';
+import { CLOUD_BOTTOM, CLOUD_TOP, type Clouds } from '../sky/Clouds';
 import { GradeUniforms, gradeParamsAt } from './ColorScript';
 
 export class PostStack {
@@ -66,12 +63,26 @@ export class PostStack {
     clouds: Clouds | null = null,
   ) {
     const { renderer, scene, camera } = engine;
-    renderer.toneMapping = AgXToneMapping;
+    const cloudview = new URLSearchParams(window.location.search).get('cloudview');
+    // debug probes need raw values — tone mapping would garble them
+    renderer.toneMapping = cloudview ? NoToneMapping : AgXToneMapping;
     renderer.toneMappingExposure = 1.0;
     const frameU = uniform(0);
+    // The post quad pass binds its own orthographic camera: `cameraPosition`,
+    // `cameraWorldMatrix` and `cameraProjectionMatrixInverse` all resolve to
+    // THAT camera inside outputNode (verified via ?cloudview probes — depth
+    // reconstruction gave quad-local ~1 m distances). Feed the scene camera
+    // explicitly, like three's own GTAO/TRAA nodes do.
+    const uCamPos = uniform(new Vector3());
+    const uProjInv = uniform(new Matrix4());
+    const uCamWorld = uniform(new Matrix4());
     engine.onUpdate(() => {
       frameU.value = (frameU.value + 1) % 1024;
+      uCamPos.value.copy(camera.position);
+      uProjInv.value.copy(camera.projectionMatrixInverse);
+      uCamWorld.value.copy(camera.matrixWorld);
     });
+    const camPosW = vec3(uCamPos);
 
     const scenePass = pass(scene, camera);
     scenePass.setMRT(
@@ -90,14 +101,16 @@ export class PostStack {
     const aerialNode = Fn((): NV3 => {
       const d = depthTex.x.toVar();
       const col = beauty.rgb.toVar();
-      const viewPos = getViewPosition(screenUV, d, cameraProjectionMatrixInverse);
-      const worldPos = cameraWorldMatrix.mul(vec4(viewPos, 1)).xyz;
-      const rel = worldPos.sub(cameraPosition);
-      const dist = rel.length();
-      const dirW = rel.div(dist.max(1e-4));
+      // ray direction from a FIXED finite depth (the far-plane depth value
+      // degenerates through the inverse projection)
+      const viewDirV = getViewPosition(screenUV, float(0.5), uProjInv).normalize();
+      const dirW = uCamWorld.mul(vec4(viewDirV, 0)).xyz.normalize().toVar();
+      const viewPos = getViewPosition(screenUV, d, uProjInv);
+      const dist = viewPos.length();
       const distKm = dist.div(1000);
-      const camAltKm = cameraPosition.y.div(1000).max(0.005);
-      const isSky = d.lessThanEqual(1e-7);
+      const camAltKm = camPosW.y.div(1000).max(0.005);
+      // sky = cleared depth; tolerate either depth convention (0 or 1 at far)
+      const isSky = d.lessThanEqual(1e-7).or(d.greaterThanEqual(0.9999999));
       const hazed = atmosphere.aerial(col, dirW, camAltKm, distKm);
       // reversed-z: far plane clears to 0 → sky already carries the atmosphere
       const scenePart = isSky.select(col, hazed).toVar();
@@ -107,8 +120,56 @@ export class PostStack {
         const jitter = hash12(
           screenUV.mul(vec2(911.3, 423.7)).add(float(frameU).mul(0.61803)),
         );
-        const cl = clouds.march(cameraPosition, dirW, maxD, jitter);
-        scenePart.assign(scenePart.mul(float(1).sub(cl.alpha)).add(cl.color));
+        if (cloudview === '2') {
+          // constant output; march not built at all (graph-pollution bisect)
+          scenePart.assign(vec3(1, 0, 0));
+        } else if (cloudview === '7') {
+          // ray-direction probe: R = dir.y, G = -dir.y, B = horizontalness
+          scenePart.assign(
+            vec3(
+              clamp(dirW.y, 0, 1),
+              clamp(dirW.y.negate(), 0, 1),
+              dirW.y.abs().lessThan(1e-3).select(float(1), float(0)),
+            ),
+          );
+        } else if (cloudview === '6') {
+          // slab-intersection probe: R = valid, G = tEnter/10km, B = tExit/10km
+          const t0 = float(CLOUD_BOTTOM).sub(camPosW.y).div(dirW.y);
+          const t1 = float(CLOUD_TOP).sub(camPosW.y).div(dirW.y);
+          const tEnterRaw = t0.min(t1);
+          const tExitRaw = t0.max(t1);
+          const ins = camPosW.y
+            .greaterThan(CLOUD_BOTTOM)
+            .and(camPosW.y.lessThan(CLOUD_TOP));
+          const tEnter = ins.select(float(0), tEnterRaw.max(0));
+          const tExit = tExitRaw.min(maxD).min(26000);
+          const valid = tExit.greaterThan(tEnter).and(dirW.y.abs().greaterThan(1e-4));
+          scenePart.assign(
+            vec3(
+              valid.select(clamp(tExit.div(10000), 0, 1), float(0)),
+              clamp(tEnter.div(10000), 0, 1),
+              clamp(dist.div(10000), 0, 1),
+            ),
+          );
+        } else if (cloudview === '5') {
+          // camera uniform probe: gray = camera height / 3000
+          scenePart.assign(vec3(camPosW.y.div(3000)));
+        } else if (cloudview === '3') {
+          // isSky probe: white = far-plane depth
+          scenePart.assign(isSky.select(vec3(1), vec3(0)));
+        } else {
+          const cl = clouds.march(camPosW, dirW, maxD, jitter);
+          if (cloudview === '1') {
+            // march alpha as magenta overlay
+            scenePart.assign(mix(scenePart, vec3(1, 0, 1), clamp(cl.alpha, 0, 1)));
+          } else {
+            scenePart.assign(scenePart.mul(float(1).sub(cl.alpha)).add(cl.color));
+          }
+        }
+      }
+      if (cloudview === '4') {
+        // context probe: R/G = screenUV gradients, B = raw depth ×100
+        scenePart.assign(vec3(screenUV.x, screenUV.y, clamp(d.mul(100), 0, 1)));
       }
       return scenePart;
     })();
@@ -198,7 +259,12 @@ export class PostStack {
     })();
 
     this.post = new RenderPipeline(renderer);
-    this.post.outputNode = graded;
+    // chain bisect: 9 = constant at pipeline output, 8 = aerial only (no
+    // AO/TRAA/bloom/exposure/grade), default = full chain
+    this.post.outputNode =
+      cloudview === '9' ? vec3(1, 0, 0)
+      : cloudview !== null && cloudview !== '' ? aerialNode
+      : graded;
 
     this.setTimeOfDay(tod);
   }

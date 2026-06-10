@@ -58,9 +58,18 @@ export class Clouds {
   readonly density = uniform(0.85);
   private atmosphere: Atmosphere;
   private shadowKernel: Parameters<Renderer['computeAsync']>[0] | null = null;
+  /** ?cloudflat=1 — constant density slab, bypasses noise textures (bisect) */
+  private flatDebug = false;
 
   constructor(atmosphere: Atmosphere) {
     this.atmosphere = atmosphere;
+    // tuning overrides: ?cov=0.6&cdens=1.2
+    const q = new URLSearchParams(window.location.search);
+    const covQ = Number(q.get('cov') ?? NaN);
+    const densQ = Number(q.get('cdens') ?? NaN);
+    if (Number.isFinite(covQ)) this.coverage.value = covQ;
+    if (Number.isFinite(densQ)) this.density.value = densQ;
+    this.flatDebug = q.get('cloudflat') === '1';
     this.baseNoise = new Storage3DTexture(BASE_RES, BASE_RES, BASE_RES);
     this.baseNoise.type = HalfFloatType;
     this.baseNoise.format = RedFormat;
@@ -158,6 +167,7 @@ export class Clouds {
   sampleDensity(wp: NV3, detail: boolean): NF {
     const hNorm = wp.y.sub(CLOUD_BOTTOM).div(CLOUD_TOP - CLOUD_BOTTOM);
     const inLayer = smoothstep(0, 0.12, hNorm).mul(smoothstep(1, 0.55, hNorm));
+    if (this.flatDebug) return inLayer.mul(0.3).mul(float(this.density));
     // weather/coverage field: large-scale variation breaks the layer into
     // cumulus masses with clear lanes
     const wUv = wp.xz.div(5200);

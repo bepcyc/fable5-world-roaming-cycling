@@ -69,10 +69,14 @@ async function main(): Promise<void> {
   if (preset) urlOpts.preset = preset;
   urlOpts.hud = args['hud'] === true || args['hud'] === '1';
   urlOpts.freeze = args['nofreeze'] !== true;
+  // forward any flag not consumed above as a raw ?key=value page param
+  const consumed = new Set([
+    'w', 'h', 'scene', 'out', 'settle', 'timeout', 'seed', 'T', 'cam',
+    'preset', 'hud', 'nofreeze', 'stats',
+  ]);
   const extra: Record<string, string> = {};
-  for (const k of ['view', 'x', 'z', 'alt', 'yaw'] as const) {
-    const v = str(args[k]);
-    if (v !== undefined) extra[k] = v;
+  for (const [k, v] of Object.entries(args)) {
+    if (!consumed.has(k)) extra[k] = v === true ? '1' : String(v);
   }
   if (Object.keys(extra).length > 0) urlOpts.extra = extra;
   const url = laasUrl(urlOpts);

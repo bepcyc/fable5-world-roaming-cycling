@@ -71,6 +71,17 @@ export class Engine {
       requiredLimits: hooks.diag ? buildRequiredLimits(hooks.diag) : {},
     });
     await renderer.init();
+    // fail-loud: surface WebGPU validation errors (otherwise: silent black frames)
+    const device = (renderer.backend as unknown as { device?: GPUDevice }).device;
+    if (device) {
+      let reported = 0;
+      device.onuncapturederror = (e: GPUUncapturedErrorEvent): void => {
+        if (reported++ < 8) {
+          // eslint-disable-next-line no-console
+          console.error('[laas] WebGPU uncaptured error:', e.error.message);
+        }
+      };
+    }
     const dprCap = params.dpr ?? Math.min(window.devicePixelRatio, 1.5);
     renderer.setPixelRatio(dprCap);
     renderer.setSize(window.innerWidth, window.innerHeight);
