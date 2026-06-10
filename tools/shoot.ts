@@ -69,8 +69,12 @@ async function main(): Promise<void> {
   if (preset) urlOpts.preset = preset;
   urlOpts.hud = args['hud'] === true || args['hud'] === '1';
   urlOpts.freeze = args['nofreeze'] !== true;
-  const view = str(args['view']);
-  if (view) urlOpts.extra = { ...(urlOpts.extra ?? {}), view };
+  const extra: Record<string, string> = {};
+  for (const k of ['view', 'x', 'z', 'alt', 'yaw'] as const) {
+    const v = str(args[k]);
+    if (v !== undefined) extra[k] = v;
+  }
+  if (Object.keys(extra).length > 0) urlOpts.extra = extra;
   const url = laasUrl(urlOpts);
   console.log(`[shoot] ${url} → ${out}`);
 

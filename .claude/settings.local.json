@@ -23,7 +23,8 @@
       "Bash(git commit -q -m 'Phase 1 WIP: macro layout, 4096 synthesis, pipe-model erosion \\(tuned\\) *)",
       "Bash(curl -s \"http://localhost:5173/src/gpu/passes/FlowRivers.ts\")",
       "Bash(curl -s \"http://localhost:5173/src/world/MacroMap.ts\")",
-      "Bash(git commit -q -m 'Phase 1: hydrology — multigrid depression fill, flow accumulation, rivers, lake outlet *)"
+      "Bash(git commit -q -m 'Phase 1: hydrology — multigrid depression fill, flow accumulation, rivers, lake outlet *)",
+      "Bash(git commit -q -m 'Phase 1 complete: CDLOD tiles, far shell, PBR terrain material, biome+snow, gates *)"
     ]
   }
 }

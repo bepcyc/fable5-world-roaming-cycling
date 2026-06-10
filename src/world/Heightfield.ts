@@ -32,6 +32,7 @@ import type { LaasParams } from '../core/Params';
 import type { WorldSeed } from '../core/Seed';
 import { bilerpFloatBuffer, uvToGrid } from '../gpu/BufferSample';
 import type { NF, NV2, NV3 } from '../gpu/TSLTypes';
+import { runBiomeSnow } from '../gpu/passes/BiomeSnow';
 import { runErosion } from '../gpu/passes/Erosion';
 import { runFlowRivers, type FlowResult } from '../gpu/passes/FlowRivers';
 import {
@@ -62,6 +63,10 @@ export class Heightfield {
   flow: FlowResult | null = null;
   /** rgba16f at sim res: moisture, flowStrength, riverDepth, waterSurface W */
   fieldsTex: StorageTexture | null = null;
+  /** rgba8 at full res: biomeId/8, snow, vegDensity, rockExposure */
+  biomeTex: StorageTexture | null = null;
+  /** CPU height mirror for camera clamping / tools (filled by readback) */
+  cpuHeights: Float32Array | null = null;
 
   /** r32float height texture (nearest-sample / textureLoad only) */
   readonly heightTex: StorageTexture;
@@ -139,7 +144,37 @@ export class Heightfield {
     progress(0.82, 'terrain: deriving maps');
     await hf.rebuildDerivedMaps(renderer);
     await hf.buildFieldsTex(renderer);
+
+    progress(0.88, 'terrain: biome + snow classification');
+    if (!hf.fieldsTex) throw new Error('fieldsTex missing before biome pass');
+    hf.biomeTex = await runBiomeSnow(renderer, hf.height, {
+      res: hf.res,
+      mp,
+      normalTex: hf.normalTex,
+      fieldsTex: hf.fieldsTex,
+    });
+
+    progress(0.93, 'terrain: height readback for camera');
+    const ab = await renderer.getArrayBufferAsync(hf.height.value);
+    hf.cpuHeights = new Float32Array(ab);
     return hf;
+  }
+
+  /** CPU height lookup (bilinear) — camera clamping, bookmarks, tools */
+  heightAtCpu(x: number, z: number): number {
+    const hts = this.cpuHeights;
+    if (!hts) return 0;
+    const res = this.res;
+    const gx = Math.min(Math.max(((x / WORLD_SIZE) + 0.5) * res - 0.5, 0), res - 1.001);
+    const gz = Math.min(Math.max(((z / WORLD_SIZE) + 0.5) * res - 0.5, 0), res - 1.001);
+    const x0 = Math.floor(gx);
+    const z0 = Math.floor(gz);
+    const fx = gx - x0;
+    const fz = gz - z0;
+    const i = (xx: number, zz: number): number => hts[Math.min(zz, res - 1) * res + Math.min(xx, res - 1)] ?? 0;
+    const a = i(x0, z0) * (1 - fx) + i(x0 + 1, z0) * fx;
+    const b = i(x0, z0 + 1) * (1 - fx) + i(x0 + 1, z0 + 1) * fx;
+    return a * (1 - fz) + b * fz;
   }
 
   /** pack sim-res hydrology fields into a filterable rgba16f texture */
@@ -250,6 +285,11 @@ export class Heightfield {
    * r32float textures are not filterable).
    */
   sampleHeight(p: NV2): NF {
+    return this.sampleHeightFrom(this.height, p);
+  }
+
+  /** same, from an arbitrary res×res float buffer (e.g. preErosion) */
+  sampleHeightFrom(buf: FloatBuffer, p: NV2): NF {
     const res = this.res;
     const uv = this.uvFromWorld(p);
     const g = clamp(uv, 0, 1).mul(res).sub(0.5);
@@ -259,10 +299,10 @@ export class Heightfield {
     const y0 = clamp(i0.y, 0, res - 1).toInt();
     const x1 = clamp(i0.x.add(1), 0, res - 1).toInt();
     const y1 = clamp(i0.y.add(1), 0, res - 1).toInt();
-    const h00 = this.height.element(y0.mul(res).add(x0));
-    const h10 = this.height.element(y0.mul(res).add(x1));
-    const h01 = this.height.element(y1.mul(res).add(x0));
-    const h11 = this.height.element(y1.mul(res).add(x1));
+    const h00 = buf.element(y0.mul(res).add(x0));
+    const h10 = buf.element(y0.mul(res).add(x1));
+    const h01 = buf.element(y1.mul(res).add(x0));
+    const h11 = buf.element(y1.mul(res).add(x1));
     return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
   }
 

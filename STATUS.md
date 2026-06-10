@@ -55,10 +55,13 @@ feedback comes in chat; the two-frame test is the agent-side acceptance only.
       passed: `shots/phase-0/cmp_sanity_vs_scene1.png`. Proven: compute→storage→instanced draw,
       compute→StorageTexture→sampling, TSL vertex displacement, CPU procedural geometry,
       GPU timestamps, deterministic seeding.
-- [ ] **Phase 1** — heightfield synth (ridged fBm + uplift + tower-karst term) 4096²; pipe-model
-      hydraulic + thermal erosion; flow accumulation → rivers → lakes; moisture; biome + snow
-      classification; quadtree tiles + far-detail synthesis; triplanar/splat terrain material w/
-      macro variation; `?scene=terrain` erosion split view. Gate: silhouette+tiling checks, DELTA.
+- [x] **Phase 1** — DONE 2026-06-11. 4096² synth (macro layout: NE massif/valley/karst/lake w/
+      outlet), pipe erosion 640 it @2048 (hardness-aware thermal), multigrid lake fill, particle
+      flow accumulation → carved rivers, moisture, biome+snow classify (coarse-slope hold +
+      couloirs + ledges + dither), CDLOD instanced tiles + far shell w/ analytic normals +
+      far-detail normal synthesis, PBR splat material (strata/iron bands/lichen/macro variation/
+      wet darkening/snow), erosion split view, ground-clamped camera (`x/z/alt/yaw`), CPU height
+      readback. Gates passed; see docs/DELTA.md Phase 1. Artifacts: shots/phase-1/.
 - [ ] **Phase 2** — Hillaire LUT atmosphere + aerial perspective; EV auto-exposure; IBL from sky;
       CSM×4 + PCSS + screen-space contact shadows; volumetric clouds + temporal reproj + cloud
       shadows; TAA, GTAO, bloom, per-ToD filmic grade (teal-orange golden). Gate: golden vista vs
@@ -81,30 +84,28 @@ feedback comes in chat; the two-frame test is the agent-side acceptance only.
 
 ## Current focus
 
-**Phase 1 — terrain.** Architecture: all terrain state lives in GPU textures owned by
-`src/world/Heightfield.ts`; passes in `src/gpu/passes/`. Sub-steps:
-1. [ ] World constants module (4096 m world, height scale, sea/lake levels, biome zones per D3).
-2. [ ] `HeightfieldSynthesisPass` — 4096² r32float height: continent/uplift macro spectra +
-       domain-warped ridged fBm (alpine NE) + tower-karst term (center-S) + valley carve guide.
-3. [ ] `ErosionPass` — pipe-model hydraulic (height/water/sediment/flux/velocity ping-pong) +
-       thermal talus; ≥500 iters at 2048² active grid (ultra: 4096²); progress to boot UI.
-4. [ ] `FlowPass` — particle-traced flow accumulation (atomics) → river mask → channel carve →
-       lake fill relaxation → moisture field.
-5. [ ] `BiomeClassifyPass` — temperature(altitude,latitude) × moisture × slope × exposure →
-       biome id + snow coverage factor (slope/altitude/exposure + dithered blend + ledge term).
-6. [ ] Normal/curvature/AO-approx maps derived from final height.
-7. [ ] `TerrainTiles` — quadtree CDLOD rings around camera, GPU-displaced, crack-free morphing,
-       skirts; far-detail synthesis term in shader beyond ~1.5 km; frustum culled per tile.
-8. [ ] Terrain material — triplanar TSL: strata rock on steep, soil/litter/grass-color flats,
-       scree fans, snow w/ dithered edge + ledge accumulation, macro variation (2–50 m breakup),
-       cavity dirt, moisture darkening. (Real texture arrays come in Phase 4 TexSynth; Phase 1
-       uses procedural-in-shader splats good enough to judge silhouettes/tiling.)
-9. [ ] `?scene=terrain` debug: erosion before/after split view, biome/moisture/flow view modes.
-10. [ ] Gate: silhouette + tiling checks vs references at vista range; DELTA.md; fix top 3; commit.
+**Phase 2 — atmosphere, shadows, clouds, post.** The biggest visual transformation.
+Plan:
+1. [ ] `src/sky/Atmosphere.ts` — Hillaire LUTs: transmittance (256×64), multiscatter (32²),
+       sky-view (192×108) — compute passes, ToD-driven sun direction; sky background node
+       from sky-view LUT; aerial perspective applied in terrain/far materials (or post fog pass).
+2. [ ] Sun/IBL: scene sun DirectionalLight driven by ToD w/ transmittance-tinted color;
+       IBL via PMREM from a small sky render (refresh on ToD change); EV auto-exposure
+       (luminance histogram compute → smoothed exposure uniform into tone map).
+3. [ ] Shadows: CSMShadowNode (4 cascades, 2048²) + PCSS-style soft filtering near; verify
+       custom-positionNode casting; screen-space contact shadows in post.
+4. [ ] Clouds: 2-layer raymarched Worley–Perlin (3D noise via compute into Storage3DTexture),
+       half-res + temporal reprojection, below-summit placement, cloud shadow map projected
+       on terrain.
+5. [ ] Post stack via `PostProcessing`: TAA (TRAANode), GTAO, bloom, filmic grade w/ per-ToD
+       color script (teal-orange at golden hour), AgX, vignette/grain; photo-mode DoF param.
+6. [ ] Gate: golden-hour alpine vista vs Witcher ref; shadow-color test (chroma in shadows);
+       DELTA + fix top 3; commit.
 
 ## Next actions (always keep current)
 
-- Phase 1 step 1: write `src/world/WorldConst.ts` + macro-layout guide functions, then synthesis pass.
+- Phase 2 step 1: Atmosphere LUT passes + sky background + sun color. Verify CSMShadowNode
+  API from node_modules first (docs/THREE-NOTES "Open questions").
 
 ## Key decisions log
 
@@ -161,6 +162,15 @@ docs/          THREE-NOTES.md (API gotchas), DELTA.md, DEVIATIONS.md, COLOR-SCRI
 - Implied landforms: serrated ridged massif + vertical-walled tower karst + glacial valley.
   Terrain synthesis needs an explicit tower/mesa formation term, not just ridged fBm.
 
+## Phase 1 progress snapshot (2026-06-10)
+
+Done: synthesis (macro layout + karst towers + anisotropic ridges), pipe-model erosion
+(hardness-aware thermal), multigrid lake fill, particle flow accumulation, river carve +
+channel enforcement, lake w/ outlet, moisture; debug hillshade preview + `?view=hydro`.
+Remaining for phase close: TerrainTiles (CDLOD quadtree + far shell), real PBR terrain
+material (triplanar/splats/snow/macro variation), biome+snow classify pass, `?scene=terrain`
+split view, ground-clamped camera helper, silhouette/tiling gate + DELTA.md.
+
 ## Gotchas / lessons learned (append-only)
 
 - WebGPU secure-context + headless-shell traps → see "Verified environment facts".
@@ -173,3 +183,17 @@ docs/          THREE-NOTES.md (API gotchas), DELTA.md, DEVIATIONS.md, COLOR-SCRI
   writes when generateMipmaps). For float data set `.type = FloatType` etc.
 - Verify cast shadows w/ custom `positionNode` on instanced meshes when real shadows land
   (Phase 2) — sanity scene shadows looked absent; may need `material.shadowPositionNode`.
+- Compute storage-buffer limit: default 8 per stage — request more via
+  `requiredLimits` (done in Engine; adapter max here = 10) AND keep kernels lean.
+- TSL atomics: `instancedArray(n,'uint').toAtomic()`; then ALL access via
+  atomicStore/atomicAdd/atomicLoad; `float(atomicLoad(...) as unknown as NU)` for reads
+  (AtomicFunctionNode lacks value-typed methods in @types).
+- mx_noise/mx_fractal outputs are SIGNED — remap explicitly or lowlands sink below
+  lake level ("puddle plague").
+- Relaxation-style fills propagate ~1 cell/iter: ALWAYS multigrid them.
+- A lake without an outlet river floods its valley to the spill saddle.
+- Endless-loop debug rule: when iterating visual passes "with no effect", first verify the
+  served code changed (curl the module), THEN check upstream state assumptions.
+- Per-component Rng streams (seed.rng('x')): adding draws must never re-roll other systems.
+- 1D dispatch >65535 workgroups: three auto-splits to 2D and instanceIndex stays linear —
+  but pad-guard every kernel (`If(i >= N) Return()`).

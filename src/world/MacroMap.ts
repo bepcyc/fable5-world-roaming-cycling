@@ -180,6 +180,34 @@ export function valleyFields(p: NV2, mp: MacroParams): ValleyFields {
   };
 }
 
+export interface ZoneMasks {
+  tAlp: NF;
+  tKarst: NF;
+  tLake: NF;
+}
+
+/** Just the zone falloffs (cheap subset for classification/material passes). */
+export function zoneMasks(p: NV2, mp: MacroParams): ZoneMasks {
+  const o = mp.off;
+  const dAlp = p.sub(vec2(mp.alpC[0], mp.alpC[1])).length();
+  const tAlp = pow(falloff(dAlp, mp.alpR), 1.2);
+  const dLake = p.sub(vec2(mp.lakeC[0], mp.lakeC[1])).length();
+  const tLake = falloff(dLake, mp.lakeR);
+  const kw = vec2(
+    mx_noise_float(p.div(430).add(vec2(o.karst[0], o.karst[1]))),
+    mx_noise_float(p.div(430).add(vec2(o.karst[1], o.karst[0]))),
+  ).mul(190);
+  const pk = p.add(kw);
+  const ca = Math.cos(mp.karstRot);
+  const sa = Math.sin(mp.karstRot);
+  const pkr = vec2(
+    pk.x.sub(mp.karstC[0]).mul(ca).sub(pk.y.sub(mp.karstC[1]).mul(sa)).div(1.3),
+    pk.x.sub(mp.karstC[0]).mul(sa).add(pk.y.sub(mp.karstC[1]).mul(ca)).mul(1.15),
+  );
+  const tKarst = falloff(pkr.length(), mp.karstR);
+  return { tAlp, tKarst, tLake };
+}
+
 export interface MacroNodes {
   /** pre-erosion terrain height (m) */
   height: NF;
@@ -208,25 +236,14 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
   const full = detail === 'full';
   const o = mp.off;
 
-  // --- zone masks -----------------------------------------------------------
-  const dAlp = p.sub(vec2(mp.alpC[0], mp.alpC[1])).length();
-  const tAlp = pow(falloff(dAlp, mp.alpR), 1.2);
-  const dLake = p.sub(vec2(mp.lakeC[0], mp.lakeC[1])).length();
-  const tLake = falloff(dLake, mp.lakeR);
-
-  // karst boundary, warped for organic outline
+  // --- zone masks (shared with classification passes) ------------------------
+  const { tAlp, tKarst, tLake } = zoneMasks(p, mp);
+  // karst-warped domain (towers reuse this)
   const kw = vec2(
     mx_noise_float(p.div(430).add(vec2(o.karst[0], o.karst[1]))),
     mx_noise_float(p.div(430).add(vec2(o.karst[1], o.karst[0]))),
   ).mul(190);
   const pk = p.add(kw);
-  const ca = Math.cos(mp.karstRot);
-  const sa = Math.sin(mp.karstRot);
-  const pkr = vec2(
-    pk.x.sub(mp.karstC[0]).mul(ca).sub(pk.y.sub(mp.karstC[1]).mul(sa)).div(1.3),
-    pk.x.sub(mp.karstC[0]).mul(sa).add(pk.y.sub(mp.karstC[1]).mul(ca)).mul(1.15),
-  );
-  const tKarst = falloff(pkr.length(), mp.karstR);
 
   // --- valley + tributary splines (position-warped; see valleyFields) --------
   const vf = valleyFields(p, mp);
@@ -260,7 +277,7 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
     p.x.add(p.y).mul(0.7071),
     p.y.sub(p.x).mul(0.7071 * 1.65),
   )
-    .div(1750)
+    .div(2100)
     .add(vec2(o.ridge[0], o.ridge[1]).div(1000));
   const ridgeOct = full ? 7 : 5;
   let ridge: NF = float(0);
@@ -277,13 +294,16 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
     }
     ridge = ridge.div(norm);
   }
-  const mountains = tAlp.mul(ridge.pow(1.55).mul(1280).add(tAlp.mul(420)));
+  const mountains = tAlp.mul(ridge.pow(1.5).mul(1380).add(tAlp.mul(470)));
 
   // --- karst towers (full detail only — far shell sees plateau mass) ---------
   let towers: NF = float(0);
   if (full) {
-    const wp = pk.div(80);
-    const f1 = mx_worley_noise_float(wp, 1.0);
+    // two worley scales + wall-line wobble kill the repeating-scallop read
+    const f1a = mx_worley_noise_float(pk.div(80), 1.0);
+    const f1b = mx_worley_noise_float(pk.div(133).add(31.7), 1.0);
+    const wallNoise = mx_noise_float(pk.div(9.5)).mul(0.05);
+    const f1 = min(f1a, f1b.add(0.12)).add(wallNoise);
     // plateau cores high, narrow near-vertical walls; F1 small near cell centers
     const towerMask = smoothstep(0.46, 0.31, f1);
     const towerHNoise = mx_noise_float(p.div(310).add(vec2(o.karst[0] + 99, o.karst[1] - 99)))

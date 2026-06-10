@@ -1,15 +1,16 @@
 /**
- * ?scene=terrain — terrain inspection scene.
- * Phase-1 preview version: a single dense displaced grid over the whole world
- * with a hillshade debug material (palette by altitude/slope + macro masks).
- * Will grow: erosion split view, biome/moisture/flow view modes, real tiles.
+ * ?scene=terrain — terrain inspection scene (also currently ?scene=world).
+ * Real CDLOD tiles + far shell + PBR terrain material, temporary sun/sky
+ * lighting (replaced by the Phase-2 atmosphere stack).
+ *
+ * Views: ?view=hydro paints hydrology diagnostics on a preview grid.
+ * ?alt=N puts the camera N meters above ground (ground-clamped spawn).
  */
 
-import { Mesh, PlaneGeometry } from 'three';
-import { MeshStandardNodeMaterial } from 'three/webgpu';
-import { clamp, dot, mix, normalize, positionLocal, smoothstep, texture, vec3 } from 'three/tsl';
+import { DirectionalLight, HemisphereLight } from 'three';
+import { mix, positionWorldDirection, smoothstep, vec3 } from 'three/tsl';
 import { Heightfield } from '../world/Heightfield';
-import { LAKE_LEVEL, SNOWLINE_BASE, WORLD_SIZE } from '../world/WorldConst';
+import { TerrainTiles } from '../world/TerrainTiles';
 import type { WorldContext } from './Scenes';
 
 export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
@@ -19,72 +20,80 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     engine.renderer,
     params,
     seed,
-    (p, m) => ctx.progress(p * 0.9, m),
+    (p, m) => ctx.progress(p * 0.92, m),
   );
-  // stash for other systems / console poking
   (engine as unknown as { heightfield?: Heightfield }).heightfield = hf;
 
-  const SEGS = 1024;
-  const geo = new PlaneGeometry(WORLD_SIZE, WORLD_SIZE, SEGS, SEGS);
-  geo.rotateX(-Math.PI / 2);
+  if (hf.cpuHeights) {
+    let maxH = -Infinity;
+    for (let i = 0; i < hf.cpuHeights.length; i += 7) {
+      const v = hf.cpuHeights[i] as number;
+      if (v > maxH) maxH = v;
+    }
+    engine.stats.counters['terrain.maxH'] = Math.round(maxH);
+  }
 
-  const mat = new MeshStandardNodeMaterial();
-  const wxz = positionLocal.xz;
-  mat.positionNode = positionLocal.add(vec3(0, hf.sampleHeight(wxz), 0));
+  ctx.progress(0.94, 'terrain: building tiles');
+  const view = new URLSearchParams(window.location.search).get('view');
+  if (view === 'split' && hf.preErosion) {
+    // erosion before/after: pre-erosion clay on the left, eroded on the right
+    const pre = new TerrainTiles(hf, null, {
+      heightBuf: hf.preErosion,
+      neutral: true,
+      screenHalf: 'left',
+    });
+    const post = new TerrainTiles(hf, null, { neutral: true, screenHalf: 'right' });
+    engine.scene.add(pre.mesh, post.mesh);
+    engine.onUpdate(() => {
+      pre.update(engine.camera);
+      post.update(engine.camera);
+    });
+  } else {
+    const tiles = new TerrainTiles(hf, view);
+    engine.scene.add(tiles.mesh);
+    engine.scene.add(tiles.farShell);
+    engine.onUpdate(() => {
+      tiles.update(engine.camera);
+      engine.stats.counters['terrain.tiles'] = tiles.activeTiles;
+    });
+  }
 
-  // hillshade debug shading via emissive (real PBR terrain material comes next)
-  const ns = hf.sampleNormalSlope(wxz);
-  const h = hf.sampleHeight(wxz);
-  const sun = normalize(vec3(0.55, 0.65, 0.32));
-  const light = clamp(dot(ns.normal, sun), 0, 1).mul(0.75).add(0.25);
-
-  const grass = vec3(0.3, 0.42, 0.18);
-  const forest = vec3(0.16, 0.3, 0.14);
-  const rock = vec3(0.45, 0.41, 0.38);
-  const snow = vec3(0.92, 0.94, 0.98);
-  const water = vec3(0.1, 0.22, 0.32);
-
-  const slopeT = smoothstep(0.55, 1.1, ns.slope);
-  let col = mix(mix(grass, forest, smoothstep(220, 420, h)), rock, slopeT);
-  const snowT = smoothstep(SNOWLINE_BASE, SNOWLINE_BASE + 140, h).mul(
-    smoothstep(1.35, 0.7, ns.slope),
+  // temporary Phase-1 lighting: warm sun + cool sky hemisphere + gradient sky
+  // (the real Hillaire atmosphere replaces all of this in Phase 2)
+  const sun = new DirectionalLight(0xfff1de, 3.4);
+  sun.position.set(-2600, 3400, 1400);
+  engine.scene.add(sun);
+  engine.scene.add(new HemisphereLight(0xbcd3ee, 0x474336, 0.85));
+  const horizon = vec3(0.74, 0.82, 0.92);
+  const zenith = vec3(0.22, 0.42, 0.75);
+  engine.scene.backgroundNode = mix(
+    horizon,
+    zenith,
+    smoothstep(-0.02, 0.5, positionWorldDirection.y),
   );
-  col = mix(col, snow, snowT);
-  col = mix(col, water, smoothstep(LAKE_LEVEL + 1.5, LAKE_LEVEL - 1.5, h));
 
-  // hydrology overlay: moisture darkening, rivers + lakes as water
-  const HYDRO_DIAG = new URLSearchParams(window.location.search).get('view') === 'hydro';
-  if (hf.fieldsTex) {
-    const f = texture(hf.fieldsTex, hf.uvFromWorld(wxz));
-    if (HYDRO_DIAG) {
-      // diagnostic: lake=red, river=blue, marsh=yellow, moisture=green tint
-      const lakeM = smoothstep(1.8, 2.4, f.a.sub(h));
-      const riverM = smoothstep(0.25, 0.6, f.z).mul(lakeM.oneMinus());
-      const marshM = smoothstep(0.5, 0.85, f.x).mul(lakeM.oneMinus()).mul(riverM.oneMinus());
-      col = mix(col.mul(0.4).add(f.x.mul(0.2)), vec3(0.9, 0.1, 0.1), lakeM);
-      col = mix(col, vec3(0.1, 0.25, 0.95), riverM);
-      col = mix(col, vec3(0.85, 0.8, 0.1), marshM.mul(0.7));
+  // camera: ground-clamped spawn (?alt=) or a default SE vista
+  const q = new URLSearchParams(window.location.search);
+  const alt = Number(q.get('alt') ?? NaN);
+  if (params.cam === null) {
+    if (Number.isFinite(alt)) {
+      const x = Number(q.get('x') ?? 600);
+      const z = Number(q.get('z') ?? 900);
+      const yaw = Number(q.get('yaw') ?? 2.4); // rad; 0 = looking −z (north)
+      const y = hf.heightAtCpu(x, z) + alt;
+      engine.camera.position.set(x, y, z);
+      engine.camera.lookAt(x - Math.sin(yaw) * 100, y - 4, z - Math.cos(yaw) * 100);
     } else {
-      col = col.mul(f.x.mul(0.35).oneMinus()); // moisture darkens
-      const lake = smoothstep(1.7, 2.3, f.a.sub(h));
-      const river = smoothstep(0.25, 0.6, f.z);
-      col = mix(col, water, clamp(lake.add(river), 0, 1).mul(0.92));
+      engine.camera.position.set(1500, 1000, 1900);
+      engine.camera.lookAt(0, 350, -300);
     }
   }
+  // soft ground collision for fly camera
+  engine.onUpdate(() => {
+    const c = engine.camera.position;
+    const ground = hf.heightAtCpu(c.x, c.z) + 1.4;
+    if (c.y < ground) c.y = ground;
+  });
 
-  mat.colorNode = vec3(0, 0, 0);
-  mat.emissiveNode = col.mul(light);
-
-  const mesh = new Mesh(geo, mat);
-  mesh.frustumCulled = false;
-  engine.scene.add(mesh);
-
-  engine.stats.counters['terrain.previewVerts'] = (SEGS + 1) * (SEGS + 1);
-
-  // default camera: high SE vantage looking NW across valley toward the massif
-  if (params.cam === null) {
-    engine.camera.position.set(1500, 950, 1750);
-    engine.camera.lookAt(0, 350, 0);
-  }
-  ctx.progress(1, 'terrain preview ready');
+  ctx.progress(1, 'terrain ready');
 }
