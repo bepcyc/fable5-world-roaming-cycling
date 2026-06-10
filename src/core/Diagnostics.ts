@@ -16,7 +16,30 @@ const INTERESTING_LIMITS: readonly (keyof GPUSupportedLimits & string)[] = [
   'maxComputeWorkgroupsPerDimension',
   'maxComputeInvocationsPerWorkgroup',
   'maxColorAttachments',
+  'maxStorageBuffersPerShaderStage',
+  'maxStorageTexturesPerShaderStage',
+  'maxSampledTexturesPerShaderStage',
+  'maxUniformBuffersPerShaderStage',
 ];
+
+/**
+ * Limits we ask the device for (clamped to what the adapter reports).
+ * Compute passes bind many storage buffers — the default 8 is not enough.
+ */
+export function buildRequiredLimits(d: GpuDiagnostics): Record<string, number> {
+  const want: Record<string, number> = {
+    maxStorageBuffersPerShaderStage: 16,
+    maxStorageTexturesPerShaderStage: 8,
+    maxBufferSize: 1 << 30,
+    maxStorageBufferBindingSize: 1 << 30,
+  };
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(want)) {
+    const adapterMax = d.limits[k];
+    if (adapterMax !== undefined) out[k] = Math.min(v, adapterMax);
+  }
+  return out;
+}
 
 export async function probeWebGPU(): Promise<GpuDiagnostics> {
   if (!('gpu' in navigator) || !navigator.gpu) {

@@ -6,6 +6,7 @@
 
 import { ACESFilmicToneMapping, PerspectiveCamera, Scene } from 'three';
 import { TimestampQuery, WebGPURenderer } from 'three/webgpu';
+import { buildRequiredLimits } from './Diagnostics';
 import type { EngineStats, LaasHooks } from './Hooks';
 import type { LaasParams } from './Params';
 
@@ -64,6 +65,7 @@ export class Engine {
     const renderer = new WebGPURenderer({
       antialias: false,
       trackTimestamp: true,
+      requiredLimits: hooks.diag ? buildRequiredLimits(hooks.diag) : {},
     });
     await renderer.init();
     const dprCap = params.dpr ?? Math.min(window.devicePixelRatio, 1.5);

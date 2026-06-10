@@ -17,7 +17,10 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/)",
       "Bash(npx tsx *)",
       "Bash(git add *)",
-      "Bash(git commit -q -m 'Phase 0: scaffold, WebGPU engine, Playwright harness, compare tool *)"
+      "Bash(git commit -q -m 'Phase 0: scaffold, WebGPU engine, Playwright harness, compare tool *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(echo \"EXIT-CODE:$?\")",
+      "Bash(git commit -q -m 'Phase 1 WIP: macro layout, 4096 synthesis, pipe-model erosion \\(tuned\\) *)"
     ]
   }
 }
