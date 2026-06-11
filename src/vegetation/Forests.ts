@@ -57,7 +57,7 @@ import type { Heightfield } from '../world/Heightfield';
 import type { ProbeGI } from '../gpu/passes/ProbeGI';
 import { canopyAt, type ScatterLayer, type ScatterResult } from '../gpu/passes/Scatter';
 import { impostorQuad, impostorRuntimeMaterial } from '../render/ImpostorRuntime';
-import { instanceVeg, type RingFade } from '../render/VegInstance';
+import { instanceVeg, updateVegViewPos, type RingFade } from '../render/VegInstance';
 import type { NF, NI, NU, NV3, NV4 } from '../gpu/TSLTypes';
 import type { VegLib } from './VegLibrary';
 
@@ -461,6 +461,7 @@ export class Forests {
   /** per-frame: update frustum/camera uniforms, run cull+indirect computes */
   update(renderer: Renderer, camera: PerspectiveCamera): void {
     this.camU.value.copy(camera.position);
+    updateVegViewPos(camera);
     this.projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.projView);
     const arr = this.planesU.array as Vector4[];

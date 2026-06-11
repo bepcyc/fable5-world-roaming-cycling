@@ -132,13 +132,15 @@ export function setupSunShadows(
     (sun.shadow as unknown as { filterNode: unknown }).filterNode = filter;
   }
 
+  // shadow-debug bisects: ?csmcasc=1 single cascade, ?csmfade=0 hard splits
+  const q = new URLSearchParams(window.location.search);
   const csm = new CSMShadowNode(sun, {
-    cascades: 4,
+    cascades: Math.max(1, Math.min(4, Number(q.get('csmcasc') ?? 4))),
     maxFar,
     mode: 'practical',
     lightMargin,
   });
-  csm.fade = true;
+  csm.fade = q.get('csmfade') !== '0';
   (sun.shadow as unknown as { shadowNode: unknown }).shadowNode = csm;
 
   // CSMShadowNode contract: the APP must call updateFrustums() after camera

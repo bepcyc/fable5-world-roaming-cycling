@@ -12,13 +12,13 @@
  * likewise skipped for normals.
  */
 
-import { DoubleSide } from 'three';
+import { DoubleSide, Vector3 } from 'three';
+import type { PerspectiveCamera } from 'three';
 import type { MeshStandardNodeMaterial } from 'three/webgpu';
 import type { StorageBufferNode } from 'three/webgpu';
 import {
-  Discard,
   Fn,
-  cameraPosition,
+  bool,
   float,
   frontFacing,
   instanceIndex,
@@ -35,6 +35,21 @@ import {
   vec4,
 } from 'three/tsl';
 import type { NF, NU, NV3, NV4 } from '../gpu/TSLTypes';
+
+/**
+ * Main-camera position for LOD-ring fades. NEVER use TSL `cameraPosition`
+ * for fade distances: the shadow pass binds it to the CASCADE shadow camera
+ * (~lightMargin = 700 m from everything), which pushes every ring past its
+ * fade-out → the dither discards 100% of veg fragments in every cascade map
+ * → vegetation casts no shadows anywhere while the main view looks perfect.
+ * A uniform keeps the discard pattern identical across passes.
+ */
+export const vegViewPos = uniform(new Vector3());
+
+/** per-frame update (Forests.update) — feeds every ring-fade distance */
+export function updateVegViewPos(camera: PerspectiveCamera): void {
+  (vegViewPos as unknown as { value: Vector3 }).value.copy(camera.position);
+}
 
 export interface RingFade {
   /** dither IN as distance exceeds this (far ring of a boundary) */
@@ -86,7 +101,13 @@ export function fetchInstance(bind: InstanceBinding): FetchedInstance {
   };
 }
 
-/** dithered LOD crossfade: discard by IGN screen noise vs distance fade */
+/**
+ * Dithered LOD crossfade: discard by IGN screen noise vs distance fade.
+ * Lives in maskNode so it runs in the MAIN pass only — the shadow pass picks
+ * maskShadowNode instead (pinned in instanceVeg). Fading casters with the
+ * same IGN pattern leaves correlated texel holes in the cascade maps where
+ * NEITHER ring writes depth, and shadows visibly thin at every ring band.
+ */
 export function applyDitherFade(
   mat: MeshStandardNodeMaterial,
   dist: NF,
@@ -107,11 +128,9 @@ export function applyDitherFade(
     );
   }
   const fadeV = varying(fadeExpr);
-  const prev = mat.colorNode as unknown as NV3 | null;
-  mat.colorNode = Fn(() => {
-    Discard(fadeV.lessThanEqual(interleavedGradientNoise(screenCoordinate.xy)));
-    return prev ?? vec3(1, 0, 1);
-  })();
+  mat.maskNode = interleavedGradientNoise(screenCoordinate.xy).lessThan(
+    fadeV,
+  ) as unknown as typeof mat.maskNode;
 }
 
 /** per-instance hue/value jitter on top of the per-vertex vdata jitter */
@@ -176,7 +195,7 @@ export function instanceVeg(
   // instance transform or casters render at the pool origin
   (mat as unknown as { castShadowPositionNode: unknown }).castShadowPositionNode = wpos;
 
-  const dist = A.xyz.sub(cameraPosition).length();
+  const dist = A.xyz.sub(vegViewPos as unknown as NV3).length();
 
   const f = bind.fade;
   if (f && (f.fadeInAt !== undefined || f.fadeOutAt !== undefined)) {
@@ -194,6 +213,9 @@ export function instanceVeg(
   // and copies alphaTest over — a vec3 colorNode yields a bogus alpha below
   // the threshold and every shadow fragment silently discards. Pin alpha=1
   // and express alpha-tested cutouts through maskShadowNode instead.
+  // maskShadowNode is ALWAYS set when a ring fade exists: it overrides
+  // maskNode in the shadow pass, so casters keep full density through LOD
+  // bands (the union of both rings' geometry — no shadow thinning).
   const rgb = mat.colorNode as unknown as NV3 | null;
   if (rgb) mat.colorNode = vec4(rgb, 1);
   const op = mat.opacityNode as unknown as NF | null;
@@ -201,6 +223,8 @@ export function instanceVeg(
     (mat as unknown as { maskShadowNode: unknown }).maskShadowNode = op.greaterThan(
       Math.max(mat.alphaTest, 0.1),
     );
+  } else if (mat.maskNode) {
+    (mat as unknown as { maskShadowNode: unknown }).maskShadowNode = bool(true);
   }
 
   return { origin: A.xyz, slot, dist };

@@ -190,37 +190,41 @@ cov 0.62), contact shadows (?ablate=contact to A/B), black facets root-caused to
   micro-displacement on near tiles (verify vs skirts), moss/ground-cover
   volume geometry, per-cluster LOD for hero rocks/trunks if 460 m
   transitions still show.
-- **SHADOWS — OPEN BUG (top priority).** User sees NO cast shadows in their
-  live world session even when camera is STOPPED (post-reload, current
-  build). They describe "starts of shadows that then disappear". My headless
-  verification DOES show shadows (static cam, T 16.5: shots/wip/t-fullfix.png
-  + crop-bench.png — birch/conifer shadows + canopy dapple; gallery too).
-  PROVEN FIXED so far (do NOT revert): (1) sun.shadow.camera.near/far must be
-  set explicitly (near 1, far lightMargin+maxFar·2.2) — CSMShadowNode CLONES
-  sun.shadow per cascade and the DirectionalLight default far=500 <
-  lightMargin=700 left every cascade map EMPTY; (2) CSM lazy _init under
-  TRAA setViewOffset cached NaN cascade extents — ShadowSetup now re-runs
-  updateFrustums jitter-stripped until extents verify finite (probe-csm2
-  confirms finite at boot).
-  NEXT LEADS, in order: (a) **pcssFilter ignores inputs.depthLayer** — with
-  4 cascades in a depth ARRAY, texture(depthTexture, uv) may sample layer 0
-  for ALL cascades → only cascade-0-range (~0–80 m) shadows ever appear =
-  "starts of shadows then disappear" at distance. Check three's own PCSS/CSM
-  examples for the depthLayer call convention and re-test ?ablate=pcss NOW
-  (the earlier no-shadow pcss test predates the near/far fix — STALE
-  evidence). (b) Cloud-shadow gate (?ablate=cloudshadow) in the USER's
-  session — bake-timing/NaN could null direct sun exactly when the cloud
-  shadow map lands. (c) Reproduce user's interactive conditions: headed
-  browser, dpr 1.5, real key-flying — tools/probe-moving.ts is the start
-  (backward-glide edit uncommitted-tested). (d) Have the user A/B
-  ?ablate=pcss / cloudshadow / contact in THEIR session and report which
-  restores shadows.
-  Debug kit built this session: ?scene=shadowtest (plain/CSM × vanilla/
-  colorNode/positionNode/castShadowPositionNode casters — ALL cast on
-  0.184; sun flipped so shadows fall TOWARD camera), ?postmin=1 (+postmrt)
-  PostStack bisect, ?clsdbg=1 per-class flat colors, tools/probe-csm2
-  (extents before/after refresh), tools/probe-state (lights), DON'T re-debug
-  those layers.
+- **SHADOWS — SOLVED (user-confirmed live: "I SEE PLANT SHADOWS").** Root
+  cause: applyDitherFade's ring-fade discard computed fade distance from TSL
+  `cameraPosition`, which the SHADOW pass binds to the cascade shadow camera
+  (~lightMargin=700 m from everything) → every ring's fade-out (26/150/370 m)
+  exceeded → 100% of veg fragments discarded in every cascade map →
+  vegetation NEVER cast, while the main view looked perfect. Terrain proxy
+  still cast (no fade), which produced ALL prior "shadows": the T 16.5
+  "tree shadows" in old verification shots were long proxy cliff shadows
+  (proven: vanish with ?ablate=proxy at 16.5); at high sun proxy shadows are
+  geometrically tiny → "no shadows at T=11". User observations that cracked
+  it: "terrain casts on terrain, vegetation doesn't" + "stones cast but not
+  trees" (stones' fadeOut = clsMaxDist−20 > 700 m survived the discard —
+  exact confirmation). FIX (VegInstance.ts): (1) fade distance now uses
+  `vegViewPos` uniform (main camera, updated in Forests.update) — NEVER use
+  TSL cameraPosition for LOD fades; (2) fade discard moved from a colorNode
+  Discard into `maskNode` (main pass only) with `maskShadowNode` pinned
+  (opacity cutout, else bool(true)) so casters keep FULL density through
+  ring crossfade bands — correlated IGN holes had shadows thinning at every
+  band (user-reported artifact, fix pending user confirm).
+  Earlier proven fixes retained (do NOT revert): sun.shadow.camera.near/far
+  explicit (CSM clones per cascade; default far 500 < lightMargin → empty
+  maps); jitter-stripped updateFrustums retry at boot (NaN extents).
+  Red herrings, recorded so nobody re-chases: pcssFilter depthLayer (CSM =
+  one ShadowNode PER cascade, separate non-array depth textures — depthLayer
+  moot), cloud-shadow gate, PCSS filter, post stack (postmin), GI, terrain
+  splat material (clay ablate), CSM fade/cascade-count, frustum extents
+  (probe-csm3 dumps healthy state at all T).
+  Debug kit: ?ablate=proxy|veg|mat|gi|pcss|cloudshadow|shadows, ?csmcasc=N,
+  ?csmfade=0, ?postmin=1, ?clsdbg=1, ?scene=shadowtest, tools/probe-csm3
+  (full cascade state dump), tools/probe-csm2, tools/probe-state.
+  Verified post-fix: shots/wip/fix-t11.png + fix-t165.png (forest-floor
+  + trunk shadows at both sun angles, bench framing).
+- SHADOW follow-ups (small): re-judge noon GI wash with real shadows in
+  (below); confirm with user the band-crossing artifact is gone; consider
+  per-cascade shadow culling (view-frustum lists currently feed cascades).
 - NOON shadow contrast (after the open bug): probe GI re-lights shadowed
   ground (probes bake unshadowed sun) → noon crown shadows wash. Balance:
   attenuate GI in direct-shadow regions or add sun-visibility to probes.
@@ -401,3 +405,20 @@ split view, ground-clamped camera helper, silhouette/tiling gate + DELTA.md.
   hours of wrong guesses (they were SPECULAR-washed cards: one flat normal
   per card ⇒ uniform silver sheen at glancing sun; foliage cards must be
   near-diffuse, roughness .92).
+- **TSL `cameraPosition` is PER-PASS** — in the shadow pass it's the cascade
+  shadow camera (~lightMargin away from everything). ANY camera-distance
+  logic that discards/collapses geometry (LOD fades, distance culls,
+  billboard shrink) silently deletes those casters from EVERY cascade map
+  while the main view stays perfect ("vegetation casts no shadows" bug —
+  weeks of misdirected CSM debugging). Route fade distances through an
+  explicit main-camera uniform (vegViewPos in VegInstance).
+- maskNode vs maskShadowNode (three 0.184): maskNode discards in the MAIN
+  pass; the shadow pass uses maskShadowNode ?? maskNode. Dither-fades belong
+  in maskNode with maskShadowNode pinned (cutout or bool(true)) — if both
+  rings of an LOD crossfade dither the SHADOW pass with the same IGN,
+  correlated texel holes thin the shadow exactly at every ring band.
+- Differential debugging beats layer-bisection when a system "half works":
+  the user's "terrain casts, vegetation doesn't" + "stones cast, trees
+  don't" observations localized in minutes what ablate-matrix bisection
+  (filter/post/GI/material/cascades) couldn't — ask WHICH objects differ,
+  not WHICH pipeline stage.

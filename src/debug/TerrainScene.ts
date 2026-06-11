@@ -90,7 +90,11 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     const tiles = new TerrainTiles(hf, view, { gi, canopyTex });
     engine.scene.add(tiles.mesh);
     engine.scene.add(tiles.farShell);
-    engine.scene.add(buildTerrainShadowProxy(hf));
+    // ?ablate=proxy — drop the terrain shadow caster (shadow-debug bisect)
+    const ablPre = new Set(
+      (new URLSearchParams(window.location.search).get('ablate') ?? '').split(','),
+    );
+    if (!ablPre.has('proxy')) engine.scene.add(buildTerrainShadowProxy(hf));
     engine.onUpdate(() => {
       tiles.update(engine.camera);
       engine.stats.counters['terrain.tiles'] = tiles.activeTiles;
