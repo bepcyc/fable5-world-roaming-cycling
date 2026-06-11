@@ -11,7 +11,13 @@
  */
 
 import { InstancedMesh, PlaneGeometry, RingGeometry, Mesh, type PerspectiveCamera } from 'three';
-import { IrradianceNode, MeshStandardNodeMaterial, type StorageBufferNode } from 'three/webgpu';
+import {
+  IrradianceNode,
+  MeshStandardNodeMaterial,
+  type StorageBufferNode,
+  type StorageTexture,
+} from 'three/webgpu';
+import { canopyAt } from '../gpu/passes/Scatter';
 import {
   cameraPosition,
   clamp,
@@ -64,6 +70,8 @@ export class TerrainTiles {
       neutral?: boolean;
       screenHalf?: 'left' | 'right';
       gi?: ProbeGI;
+      /** canopy coverage map — attenuates probe ambient under tree crowns */
+      canopyTex?: StorageTexture;
     } = {},
   ) {
     this.hf = hf;
@@ -140,8 +148,15 @@ export class TerrainTiles {
     mat.metalnessNode = float(0);
     if (opts.gi && !ablate.has('gi')) {
       // probe-GI irradiance replaces the hemisphere ambient (Phase 3) —
-      // injected through the lighting context like a light map
-      const irr = opts.gi.irradiance(positionWorld, shading.worldNormalNode);
+      // injected through the lighting context like a light map. Probes only
+      // see the heightfield, so canopy coverage pulls the ambient down under
+      // crowns (keeps shaded interiors colorful but no longer sky-bright).
+      let irr = opts.gi.irradiance(positionWorld, shading.worldNormalNode);
+      if (opts.canopyTex && !ablate.has('canopy')) {
+        irr = irr.mul(
+          canopyAt(opts.canopyTex, positionWorld.xz).mul(0.55).oneMinus(),
+        ) as typeof irr;
+      }
       (mat as unknown as { setupLightMap: () => unknown }).setupLightMap = () =>
         new IrradianceNode(irr as unknown as ConstructorParameters<typeof IrradianceNode>[0]);
     }

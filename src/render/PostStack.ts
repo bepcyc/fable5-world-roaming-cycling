@@ -377,9 +377,10 @@ export class PostStack {
         }
       }
       const avgLum = exp2(logSum.div(wTot));
-      // key 0.125: auto-exposure was normalizing the frame to a washy mid-gray
-      // (it silently cancels albedo changes too — grade/key are the levers)
-      const target = clamp(float(0.125).div(avgLum), 0.18, 7.0);
+      // key: auto-exposure normalizes the frame to mid-gray — the key sets
+      // WHICH gray. 0.125 floated forest scenes into a washy high-key; 0.1
+      // keeps deep canopy darks so the sun reads (user: "washed out").
+      const target = clamp(float(0.1).div(avgLum), 0.18, 7.0);
       const prev = this.exposureBuf.element(0);
       this.exposureBuf.element(0).assign(mix(prev, target, 0.07));
     })().compute(1);

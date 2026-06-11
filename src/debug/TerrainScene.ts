@@ -8,7 +8,7 @@
  */
 
 import { ProbeGI } from '../gpu/passes/ProbeGI';
-import { runScatter } from '../gpu/passes/Scatter';
+import { buildCanopyMap, runScatter } from '../gpu/passes/Scatter';
 import { addScatterDebug } from './ScatterDebug';
 import { Forests } from '../vegetation/Forests';
 import { buildVegLibrary } from '../vegetation/VegLibrary';
@@ -55,8 +55,19 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   sunSky.dimAmbientForGI();
   engine.onUpdate(() => gi.tick(engine.renderer));
 
-  ctx.progress(0.955, 'terrain: building tiles');
+  // vegetation/rock placement (Phase 5): GPU clustered-Poisson scatter +
+  // canopy coverage map (lighting + density field) — BEFORE tiles, which
+  // consume the canopy map for under-crown ambient
+  ctx.progress(0.952, 'vegetation: scattering instances');
+  const scatter = await runScatter(engine.renderer, hf, seed);
+  const canopyTex = await buildCanopyMap(engine.renderer, scatter.trees);
+  engine.stats.counters['veg.trees'] = scatter.trees.count;
+  engine.stats.counters['veg.under'] = scatter.understory.count;
+  engine.stats.counters['veg.extras'] = scatter.extras.count;
+
+  ctx.progress(0.958, 'terrain: building tiles');
   const view = new URLSearchParams(window.location.search).get('view');
+  if (view === 'scatter') addScatterDebug(engine.scene, scatter);
   if (view === 'split' && hf.preErosion) {
     // erosion before/after: pre-erosion clay on the left, eroded on the right
     const pre = new TerrainTiles(hf, null, {
@@ -71,7 +82,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
       post.update(engine.camera);
     });
   } else {
-    const tiles = new TerrainTiles(hf, view, { gi });
+    const tiles = new TerrainTiles(hf, view, { gi, canopyTex });
     engine.scene.add(tiles.mesh);
     engine.scene.add(tiles.farShell);
     engine.scene.add(buildTerrainShadowProxy(hf));
@@ -81,14 +92,6 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     });
   }
 
-  // vegetation/rock placement (Phase 5): GPU clustered-Poisson scatter
-  ctx.progress(0.962, 'vegetation: scattering instances');
-  const scatter = await runScatter(engine.renderer, hf, seed);
-  engine.stats.counters['veg.trees'] = scatter.trees.count;
-  engine.stats.counters['veg.under'] = scatter.understory.count;
-  engine.stats.counters['veg.extras'] = scatter.extras.count;
-  if (view === 'scatter') addScatterDebug(engine.scene, scatter);
-
   // Phase 5: variant pools + GPU cull → compacted indirect draws
   const ablate = new Set(
     (new URLSearchParams(window.location.search).get('ablate') ?? '').split(','),
@@ -97,7 +100,13 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     const lib = await buildVegLibrary(engine.renderer, seed, (p, m) =>
       ctx.progress(0.963 + p * 0.006, m),
     );
-    const forests = new Forests(hf, scatter, lib, ablate.has('gi') ? null : gi);
+    const forests = new Forests(
+      hf,
+      scatter,
+      lib,
+      ablate.has('gi') ? null : gi,
+      canopyTex,
+    );
     forests.init(engine.renderer);
     engine.scene.add(forests.group);
     updateSunUniforms(sunSky.sun);

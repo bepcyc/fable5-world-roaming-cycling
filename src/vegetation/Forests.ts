@@ -28,6 +28,7 @@ import {
   type MeshStandardNodeMaterial,
   type Renderer,
   type StorageBufferNode,
+  type StorageTexture,
 } from 'three/webgpu';
 import { IrradianceNode } from 'three/webgpu';
 import {
@@ -52,7 +53,7 @@ import {
 } from 'three/tsl';
 import type { Heightfield } from '../world/Heightfield';
 import type { ProbeGI } from '../gpu/passes/ProbeGI';
-import type { ScatterLayer, ScatterResult } from '../gpu/passes/Scatter';
+import { canopyAt, type ScatterLayer, type ScatterResult } from '../gpu/passes/Scatter';
 import { impostorQuad, impostorRuntimeMaterial } from '../render/ImpostorRuntime';
 import { instanceVeg, type RingFade } from '../render/VegInstance';
 import type { NF, NI, NU, NV3, NV4 } from '../gpu/TSLTypes';
@@ -117,12 +118,23 @@ export class Forests {
     private scatter: ScatterResult,
     private lib: VegLib,
     private gi: ProbeGI | null,
+    private canopyTex: StorageTexture | null = null,
   ) {}
 
   private patchGI(mat: MeshStandardNodeMaterial): void {
     const gi = this.gi;
     if (!gi) return;
-    const irr = gi.irradiance(positionWorld as unknown as NV3, normalWorld as unknown as NV3);
+    let irr = gi.irradiance(positionWorld as unknown as NV3, normalWorld as unknown as NV3);
+    if (this.canopyTex) {
+      // probes don't see trees — canopy coverage pulls ambient down inside
+      // the forest (veg gets a lighter clamp than ground: crowns curve up
+      // into open sky)
+      irr = irr.mul(
+        canopyAt(this.canopyTex, (positionWorld as unknown as NV3).xz)
+          .mul(0.4)
+          .oneMinus(),
+      ) as typeof irr;
+    }
     (mat as unknown as { setupLightMap: () => unknown }).setupLightMap = () =>
       new IrradianceNode(irr as unknown as ConstructorParameters<typeof IrradianceNode>[0]);
   }

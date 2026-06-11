@@ -161,22 +161,23 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   // cavity dirt: concave-ish micro band darkening
   rockCol = rockCol.mul(meso.mul(0.22).add(0.89)).mul(micro.mul(0.1).add(0.95));
 
-  const scree = vec3(0.45, 0.43, 0.4).mul(meso.mul(0.35).add(0.78));
-  const soil = mix(vec3(0.2, 0.15, 0.1), vec3(0.32, 0.25, 0.16), meso).mul(
+  const scree = vec3(0.36, 0.345, 0.325).mul(meso.mul(0.35).add(0.78));
+  const soil = mix(vec3(0.155, 0.12, 0.085), vec3(0.24, 0.195, 0.135), meso).mul(
     micro.mul(0.2).add(0.9),
   );
-  // grass field color: green with dry yellowish macro patches
-  const grassG = mix(vec3(0.19, 0.28, 0.1), vec3(0.3, 0.36, 0.13), macroA);
-  const grassDry = vec3(0.42, 0.4, 0.2);
-  const grassCol = mix(grassG, grassDry, smoothstep(0.62, 0.85, macroB)).mul(
+  // grass field color: deep cool greens (must sit BELOW the foliage palette
+  // in value or planted greens read pasted-on); dry patches are accents
+  const grassG = mix(vec3(0.082, 0.155, 0.045), vec3(0.155, 0.23, 0.072), macroA);
+  const grassDry = vec3(0.26, 0.225, 0.1);
+  const grassCol = mix(grassG, grassDry, smoothstep(0.7, 0.92, macroB)).mul(
     meso.mul(0.25).add(0.85),
   );
   // forest floor: litter brown blended w/ moss by moisture
-  const litter = mix(soil, vec3(0.23, 0.2, 0.12), meso);
-  const mossy = vec3(0.13, 0.2, 0.08);
+  const litter = mix(soil, vec3(0.18, 0.15, 0.095), meso);
+  const mossy = vec3(0.11, 0.185, 0.065);
   const forestFloor = mix(litter, mossy, smoothstep(0.45, 0.8, moisture).mul(0.7));
   // gravel/cobble tint in stream channels
-  const gravel = mix(vec3(0.4, 0.39, 0.37), vec3(0.55, 0.53, 0.5), micro);
+  const gravel = mix(vec3(0.34, 0.33, 0.31), vec3(0.47, 0.45, 0.43), micro);
   const snowCol = mix(vec3(0.86, 0.88, 0.94), vec3(0.93, 0.95, 0.99), macroA).mul(
     meso.mul(0.08).add(0.95),
   );
