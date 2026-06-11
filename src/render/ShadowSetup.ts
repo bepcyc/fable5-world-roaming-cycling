@@ -22,9 +22,15 @@ import type { NF, NV2, NV4 } from '../gpu/TSLTypes';
 
 const BLOCKER_TAPS = 6;
 const PCF_TAPS = 9;
-/** light angular size factor: penumbra growth per unit blocker–receiver gap */
-const PENUMBRA_SCALE = 38;
-const MAX_PENUMBRA_TEXELS = 14;
+/**
+ * Penumbra is WORLD-metric: tan of the artistic sun angular radius (~0.6°,
+ * slightly wider than the real 0.27° disc). The old texel-metric cap meant
+ * a fixed 14-texel blur per cascade — ≈21 m of mush in the far cascade, so
+ * every crown shadow at distance became a giant soft blob (user-reported).
+ */
+const SUN_TAN = 0.011;
+const MIN_PENUMBRA_M = 0.05;
+const MAX_PENUMBRA_M = 3.0;
 
 interface ShadowFilterInputs {
   depthTexture: Texture;
@@ -41,6 +47,14 @@ export const pcssFilter = Fn((inputs: unknown) => {
   const { depthTexture, shadowCoord, shadow } = inputs as ShadowFilterInputs;
   const mapSize = reference('mapSize', 'vec2', shadow);
   const radius = reference('radius', 'float', shadow);
+  const cam = (shadow as { camera?: object }).camera ?? {};
+  // cascade ortho extent + depth range → world-metric conversions
+  const camL = reference('left', 'float', cam);
+  const camR = reference('right', 'float', cam);
+  const camN = reference('near', 'float', cam);
+  const camF = reference('far', 'float', cam);
+  const span = camR.sub(camL).max(1); // world meters across the map
+  const depthRange = camF.sub(camN).max(1); // world meters across depth 0..1
   const texel = float(1).div(mapSize.x);
   const phi = interleavedGradientNoise(screenCoordinate.xy).mul(6.28318530718);
 
@@ -62,12 +76,13 @@ export const pcssFilter = Fn((inputs: unknown) => {
   const result = float(1).toVar();
   If(blockerCount.greaterThan(0.5), () => {
     const avgBlocker = blockerSum.div(blockerCount);
-    // orthographic cascades: penumbra ∝ depth gap
-    const penumbra = receiver
-      .sub(avgBlocker)
-      .mul(PENUMBRA_SCALE)
-      .clamp(0.75, MAX_PENUMBRA_TEXELS)
-      .mul(texel)
+    // sun-disk penumbra: world gap × tan(sun radius), clamped in METERS,
+    // then to uv via the cascade span — consistent blur across cascades
+    const gapM = receiver.sub(avgBlocker).mul(depthRange);
+    const penumbraM = gapM.mul(SUN_TAN).clamp(MIN_PENUMBRA_M, MAX_PENUMBRA_M);
+    const penumbra = penumbraM
+      .div(span)
+      .max(texel.mul(0.75))
       .mul(radius.max(1));
     const sum = float(0).toVar();
     for (let i = 0; i < PCF_TAPS; i++) {

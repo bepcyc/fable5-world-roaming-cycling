@@ -65,10 +65,10 @@ import {
   instanceIndex,
   instancedArray,
   int,
-  interleavedGradientNoise,
   normalWorld,
-  screenCoordinate,
+  positionLocal,
   positionWorld,
+  smoothstep,
   storage,
   uint,
   uniform,
@@ -78,6 +78,7 @@ import {
   vec4,
 } from 'three/tsl';
 import type { Heightfield } from '../world/Heightfield';
+import { hash12 } from '../gpu/noise/NoiseTSL';
 import type { ProbeGI } from '../gpu/passes/ProbeGI';
 import { canopyAt, type ScatterLayer, type ScatterResult } from '../gpu/passes/Scatter';
 import { impostorQuad, impostorRuntimeMaterial } from '../render/ImpostorRuntime';
@@ -108,10 +109,18 @@ const CAP_EX_R1 = 1024;
 const CAP_EX_R2 = 2048;
 
 const MAIN_GROUPS = 170;
-/** per-cascade caster groups: trees r1/r2 (48) + hero r0 (24) + extras/stones (64) */
-const CASC_LOCALS = 136;
+/**
+ * Per-cascade caster groups: trees r1/r2 (48) + hero r0 (24) + extras/stones
+ * (64) + impostor-band crown proxies per species (6). The impostor band
+ * casts so tree shadows don't end in a hard circle at the R2 boundary —
+ * they fade out by IMP_CAST_FAR instead.
+ */
+const CASC_LOCALS = 142;
 const CASCADES = 4;
 const GROUPS = MAIN_GROUPS + CASCADES * CASC_LOCALS;
+/** crown-proxy shadows fade out across this band (m from camera) */
+const IMP_CAST_FADE0 = 620;
+const IMP_CAST_FAR = 1100;
 
 function groupOf(cls: number, variant: number, ring: 0 | 1 | 2 | 3): number {
   if (cls < 6) {
@@ -130,9 +139,15 @@ function groupOf(cls: number, variant: number, ring: 0 | 1 | 2 | 3): number {
  *   48..71  hero r0 per pool
  *   72..135 extras/stones pe × rings  (72 + pe*2 + ring-1)
  */
-function casterGroupOf(c: number, cls: number, variant: number, ring: 0 | 1 | 2): number {
+function casterGroupOf(
+  c: number,
+  cls: number,
+  variant: number,
+  ring: 0 | 1 | 2 | 3,
+): number {
   const base = MAIN_GROUPS + c * CASC_LOCALS;
   if (cls < 6) {
+    if (ring === 3) return base + 136 + cls;
     const pool = cls * 4 + variant;
     if (ring === 0) return base + 48 + pool;
     return base + pool * 2 + (ring - 1);
@@ -146,7 +161,8 @@ function capOf(g: number): number {
     // caster regions: a cascade box covers a slice of the frustum, so the
     // worst case is well under the main-view caps
     const local = (g - MAIN_GROUPS) % CASC_LOCALS;
-    if (local < 48) return local % 2 === 0 ? 3072 : 4096; // tree r1/r2
+    if (local >= 136) return 8192; // impostor-band crown proxies (per cls)
+    if (local < 48) return local % 2 === 0 ? 3072 : 6144; // tree r1/r2
     if (local < 72) return CAP_HERO;
     const pe = (local - 72) >> 1;
     const cls = 16 + (pe >> 2);
@@ -180,35 +196,33 @@ function capOf(g: number): number {
  * ragged in the near ring. Snag crowns are bare — no core.
  */
 const CROWN_SHADOW_DENSITY = [0.9, 0.84, 0.92, 0.74, 0.85, 0] as const;
-/** crown core params per class: center/ryAxis as height fractions, rxz as radius fraction */
-const CROWN_CORE = [
-  { cy: 0.55, ry: 0.4, rxz: 0.62 }, // spruce — tall narrow cone-ish
-  { cy: 0.62, ry: 0.33, rxz: 0.65 }, // pine
-  { cy: 0.62, ry: 0.32, rxz: 0.72 }, // beech — broad dome
-  { cy: 0.6, ry: 0.31, rxz: 0.64 }, // birch
-  { cy: 0.6, ry: 0.3, rxz: 0.68 }, // karst gnarl
-  { cy: 0.6, ry: 0.25, rxz: 0.4 }, // snag (unused — density 0)
-] as const;
+
+/** crown proxy dims, FITTED to a pool's actual ring geometry (meters, scale 1) */
+interface CrownDims {
+  cy: number;
+  ry: number;
+  rxz: number;
+}
 
 /**
- * Shadow-proxy tree: 80-tri ellipsoid crown + 12-tri trunk prism, sized from
- * the class cull bounds (instance scale applies in the vertex stage). This is
- * the ONLY tree caster beyond R1 (a cascade texel out there is ≥0.5 m — card
- * raggedness is invisible) and the bulk-density core inside R1's card edges.
+ * Shadow-proxy tree: 80-tri ellipsoid crown + 12-tri trunk prism, fitted to
+ * the pool's own geometry bounds (class-max dims made small variants throw
+ * giant blob shadows — user-reported). This is the ONLY tree caster beyond
+ * R1 (a cascade texel out there is ≥0.5 m — card raggedness is invisible)
+ * and the bulk-density core inside R1's card edges.
  */
-function crownProxyGeometry(cls: number, height: number, radius: number): BufferGeometry {
-  const p = CROWN_CORE[cls] ?? (CROWN_CORE[2] as (typeof CROWN_CORE)[number]);
+function crownProxyGeometry(d: CrownDims): BufferGeometry {
   // PolyhedronGeometry is non-indexed: 80 faces × 3 verts at detail 1
   const core = new IcosahedronGeometry(1, 1);
   const cpos = core.attributes.position as BufferAttribute;
-  const cy = p.cy * height;
+  const cy = d.cy;
   const nCore = cpos.count;
-  const tr = 0.045 * radius + 0.03;
+  const tr = 0.035 * d.rxz + 0.03;
   const merged = new Float32Array(nCore * 3 + 6 * 3);
   for (let i = 0; i < nCore; i++) {
-    merged[i * 3] = cpos.getX(i) * p.rxz * radius;
-    merged[i * 3 + 1] = cpos.getY(i) * p.ry * height + cy;
-    merged[i * 3 + 2] = cpos.getZ(i) * p.rxz * radius;
+    merged[i * 3] = cpos.getX(i) * d.rxz;
+    merged[i * 3 + 1] = cpos.getY(i) * d.ry + cy;
+    merged[i * 3 + 2] = cpos.getZ(i) * d.rxz;
   }
   // trunk prism: 3 quads, base→crown center
   const idx: number[] = [];
@@ -376,6 +390,39 @@ export class Forests {
             ? this.scatter.extras
             : this.scatter.stones;
 
+    /**
+     * Shadow-proxy caster material: world-anchored hash dither (screen-space
+     * IGN swims when CSM refits its boxes — user-visible shadow flicker) at
+     * species density, with a crown-edge falloff so the rim breaks up into
+     * a ragged crown instead of a solid oval. Impostor-band proxies fade out
+     * toward IMP_CAST_FAR (fade distance uses vegViewPos via instanceVeg).
+     */
+    const proxyCasterMat = (
+      bind: Parameters<typeof instanceVeg>[1],
+      density: number,
+      dims: CrownDims,
+      impostorBand: boolean,
+    ): MeshStandardNodeMaterial => {
+      const pmat = new MeshStandardNodeMaterial();
+      const handles = instanceVeg(pmat, bind);
+      const e = positionLocal
+        .sub(vec3(0, dims.cy, 0))
+        .div(vec3(dims.rxz, dims.ry, dims.rxz))
+        .length();
+      let dens: NF = float(density).mul(
+        float(1).sub(e.pow(3).mul(0.55)),
+      );
+      if (impostorBand) {
+        dens = dens.mul(
+          float(1).sub(smoothstep(IMP_CAST_FADE0, IMP_CAST_FAR - 50, handles.dist)),
+        );
+      }
+      (pmat as unknown as { maskShadowNode: unknown }).maskShadowNode = hash12(
+        positionWorld.xz.mul(13.73).add(positionWorld.yy.mul(5.19)),
+      ).lessThan(dens);
+      return pmat;
+    };
+
     const fadeFor = (cls: number, ring: 0 | 1 | 2 | 3): RingFade => {
       if (cls < 6) {
         if (ring === 0) return { fadeOutAt: R0_FAR, band: BAND0 };
@@ -405,6 +452,35 @@ export class Forests {
       // understory is grounded by contact shadows + AO instead
       const ringCasts = pool.cls < 6 ? true : pool.cls < 15 ? false : true;
       const crownDensity = pool.cls < 6 ? CROWN_SHADOW_DENSITY[pool.cls] ?? 0 : 0;
+      // fit the shadow proxy to THIS pool's real extents (R1 union bbox)
+      let poolDims: CrownDims | null = null;
+      if (crownDensity > 0) {
+        const fitParts = pool.r1 ?? pool.r2 ?? null;
+        if (fitParts) {
+          let top = 2;
+          let rxz = 0.8;
+          for (const part of fitParts) {
+            part.geo.computeBoundingBox();
+            const bb = part.geo.boundingBox;
+            if (!bb) continue;
+            top = Math.max(top, bb.max.y);
+            rxz = Math.max(
+              rxz,
+              Math.abs(bb.min.x),
+              bb.max.x,
+              Math.abs(bb.min.z),
+              bb.max.z,
+            );
+          }
+          // cards overhang the foliage mass — pull the core in
+          const bot = top * 0.32;
+          poolDims = {
+            cy: (top + bot) / 2,
+            ry: ((top - bot) / 2) * 0.95,
+            rxz: rxz * 0.74,
+          };
+        }
+      }
       for (const { ring, parts } of rings) {
         if (!parts) continue;
         const g = groupOf(pool.cls, pool.variant, ring);
@@ -451,27 +527,42 @@ export class Forests {
         // cards alone leak 40%+ and PCSS flattens the speckle into a half-lit
         // wash; the core brings noon interiors down to real 5–15% so dapple
         // pools only survive at TRUE crown gaps
-        if (ring > 0 && ringCasts && crownDensity > 0) {
-          const proxyGeo = crownProxyGeometry(
-            pool.cls,
-            lib.clsHeight[pool.cls] ?? 20,
-            lib.clsRadius[pool.cls] ?? 3,
-          );
+        if (ring > 0 && ringCasts && crownDensity > 0 && poolDims) {
+          const proxyGeo = crownProxyGeometry(poolDims);
           for (let c = 0; c < CASCADES; c++) {
             const cg = casterGroupOf(c, pool.cls, pool.variant, ring);
-            const pmat = new MeshStandardNodeMaterial();
-            instanceVeg(pmat, {
-              bufA: layer.bufA,
-              bufB: layer.bufB,
-              compact: this.compact,
-              groupBase: offsets[cg] ?? 0,
-              fade: null,
-            });
-            (pmat as unknown as { maskShadowNode: unknown }).maskShadowNode =
-              interleavedGradientNoise(screenCoordinate.xy).lessThan(
-                float(crownDensity),
-              );
+            const pmat = proxyCasterMat(
+              {
+                bufA: layer.bufA,
+                bufB: layer.bufB,
+                compact: this.compact,
+                groupBase: offsets[cg] ?? 0,
+                fade: null,
+              },
+              crownDensity,
+              poolDims,
+              false,
+            );
             addDraw(geoView(proxyGeo), pmat, cg, 0, 2 + c);
+          }
+          // impostor band (variant 0 carries it: one caster group per cls)
+          if (ring === 2 && pool.variant === 0) {
+            for (let c = 0; c < CASCADES; c++) {
+              const cg = casterGroupOf(c, pool.cls, 0, 3);
+              const pmat = proxyCasterMat(
+                {
+                  bufA: layer.bufA,
+                  bufB: layer.bufB,
+                  compact: this.compact,
+                  groupBase: offsets[cg] ?? 0,
+                  fade: null,
+                },
+                crownDensity,
+                poolDims,
+                true,
+              );
+              addDraw(geoView(crownProxyGeometry(poolDims)), pmat, cg, 0, 2 + c);
+            }
           }
         }
       }
@@ -535,12 +626,17 @@ export class Forests {
     };
 
     const planesCsmU = this.planesCsmU;
+    // +30 m slack: the planes are one frame stale (CSM fits its boxes during
+    // the upcoming render) — without it, casters at box edges pop while the
+    // camera moves
     const inCascade = (c: number, center: NV3, rad: NF): NF => {
       let inside: NF = float(1);
       for (let p = 0; p < 6; p++) {
         const pl = planesCsmU.element(int(c * 6 + p)) as unknown as NV4;
         const d = pl.xyz.dot(center).add(pl.w);
-        inside = inside.mul(d.greaterThan(rad.negate()).select(float(1), float(0)));
+        inside = inside.mul(
+          d.greaterThan(rad.add(30).negate()).select(float(1), float(0)),
+        );
       }
       return inside;
     };
@@ -656,6 +752,17 @@ export class Forests {
                 () => {
                   appendTo(
                     pool.mul(2).add(base + 1) as unknown as NI,
+                    i as unknown as NU,
+                  );
+                },
+              );
+              // impostor band: crown proxies keep casting past R2 so the
+              // shadow field fades out instead of ending in a camera circle
+              If(
+                dist.greaterThanEqual(R2_FAR - BAND2).and(dist.lessThan(IMP_CAST_FAR)),
+                () => {
+                  appendTo(
+                    cls.add(base + 136).toInt() as unknown as NI,
                     i as unknown as NU,
                   );
                 },
