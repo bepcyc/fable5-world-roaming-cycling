@@ -18,6 +18,7 @@ import { buildCanopyShell } from '../world/CanopyShell';
 import { Heightfield } from '../world/Heightfield';
 import { buildTerrainShadowProxy } from '../world/ShadowProxy';
 import { TerrainTiles } from '../world/TerrainTiles';
+import { WaterSurface } from '../world/WaterSurface';
 import { PostStack } from '../render/PostStack';
 import { setupSunShadows } from '../render/ShadowSetup';
 import { Clouds } from '../sky/Clouds';
@@ -106,6 +107,13 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
       tiles.update(engine.camera);
       engine.stats.counters['terrain.tiles'] = tiles.activeTiles;
     });
+  }
+
+  // Phase 6: stream/lake water clipmap (?ablate=water to A/B)
+  if (view !== 'split' && !ablate.has('water')) {
+    const water = new WaterSurface(hf, sunSky.atmosphere, canopyTex);
+    engine.scene.add(water.group);
+    engine.onUpdate(() => water.update(engine.camera));
   }
 
   // Phase 5: variant pools + GPU cull → compacted indirect draws

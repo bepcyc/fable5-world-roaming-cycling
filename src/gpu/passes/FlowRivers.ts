@@ -50,10 +50,14 @@ export interface FlowResult {
   flowStrength: FloatBuffer;
   /** river water depth (m) at river cells, 0 elsewhere */
   riverDepth: FloatBuffer;
-  /** flow direction (unit-ish vec2 per cell) */
+  /** flow direction × speed (|v| = log-flow strength 0..1; ZERO in lakes) */
   flowDir: Vec2Buffer;
   /** moisture 0..1 */
   moisture: FloatBuffer;
+  /** renderable water surface: fill level W in lakes/ponds (FLAT per pond —
+   *  bed+blurredDepth built 30 m water towers where deep pots abut high
+   *  ground), carved bed + gated depth on rivers, −1e4 sentinel when dry */
+  waterYRaw: FloatBuffer;
 }
 
 export interface FlowOpts {
@@ -89,6 +93,7 @@ export async function runFlowRivers(
   const accumU = instancedArray(N, 'uint').toAtomic();
   const flowStrength = instancedArray(N, 'float');
   const riverDepth = instancedArray(N, 'float');
+  const waterYRaw = instancedArray(N, 'float');
   const flowDir = instancedArray(N, 'vec2');
   const moistA = instancedArray(N, 'float');
   const moistB = instancedArray(N, 'float');
@@ -407,7 +412,16 @@ export async function runFlowRivers(
   };
 
   // --- 3a. flow strength from accumulation ------------------------------------
-  const RIVER_T = particles / N + 14; // accumulation threshold (≈ +14 upstream cells)
+  // TWO thresholds with very different jobs (user: "40-60% of cliff sides
+  // end up being rivers"):
+  //  - RIVER_T (low) → flowStrength: drives CARVING, moisture, splat beds,
+  //    boulder affinity. The dense drainage texture is good terrain.
+  //  - WATER_T (≈15× stricter) → waterStrength: drives VISIBLE open water
+  //    only. Small gullies stay dry cobbled scars; the main river, big
+  //    tributaries and ravine runs keep their streams.
+  const RIVER_T = particles / N + 14;
+  const WATER_T = particles / N + 220;
+  const waterStrength = instancedArray(N, 'float');
   const strengthK = guard(() => {
     const { i } = cellXY();
     // @types/three models AtomicFunctionNode without value semantics; at
@@ -416,6 +430,9 @@ export async function runFlowRivers(
     const t = clamp(acc.div(RIVER_T), 1e-5, 60);
     const s = clamp(t.log2().mul(0.18), 0, 1).mul(t.greaterThan(1).select(1, 0));
     flowStrength.element(i).assign(s);
+    const tw = clamp(acc.div(WATER_T), 1e-5, 60);
+    const sw = clamp(tw.log2().mul(0.21), 0, 1).mul(tw.greaterThan(1).select(1, 0));
+    waterStrength.element(i).assign(sw);
   })().compute(N);
   strengthK.setName('flowStrength');
 
@@ -426,6 +443,8 @@ export async function runFlowRivers(
     strengthK,
     makeBlur(flowStrength, moistB, 1, 0, 2),
     makeBlur(moistB, flowStrength, 0, 1, 2),
+    makeBlur(waterStrength, moistB, 1, 0, 2),
+    makeBlur(moistB, waterStrength, 0, 1, 2),
   ]);
 
   // lake-depth field, blurred: post-erosion hummocks leave 2–6 m potholes
@@ -455,17 +474,38 @@ export async function runFlowRivers(
     // wander pattern into the basin floor (user-flagged artifact)
     const lakeFade = smoothstep(LAKE_DELTA * 0.7, 0.12, lakeD);
     const depth = sB.pow(1.35).mul(7.5).mul(lakeFade);
-    height.element(i).assign(height.element(i).sub(depth));
-    riverDepth.element(i).assign(
-      isLake.select(lakeD, sB.greaterThan(0.02).select(depth.mul(0.45).add(0.12), float(0))),
-    );
-    // flow direction: downhill gradient of W
+    const hNew = height.element(i).sub(depth).toVar();
+    height.element(i).assign(hNew);
     const wl = W.element(at(x, y, -1, 0));
     const wr = W.element(at(x, y, 1, 0));
     const wd = W.element(at(x, y, 0, -1));
     const wu = W.element(at(x, y, 0, 1));
     const g = vec2(wl.sub(wr), wd.sub(wu));
-    flowDir.element(i).assign(g.div(g.length().max(1e-5)));
+    // open water only where the run is gentle: steep reaches are whitewater
+    // chutes/falls, not standing sheets — they carve but render dry
+    const slopeW = g.length().div(2 * opts.texel);
+    const rdGate = smoothstep(0.5, 0.24, slopeW);
+    const rdRiver = depth.mul(0.45).add(0.12).mul(rdGate);
+    riverDepth.element(i).assign(
+      isLake.select(lakeD, sB.greaterThan(0.02).select(rdRiver, float(0))),
+    );
+    // render surface: ponds sit at their FILL level W (flat, meets terrain
+    // at the true shoreline — bed+blurredDepth towers over pot rims); rivers
+    // at carved bed + a depth from the STRICT water threshold, minus the
+    // widen-blur's 0.12 m apron floor. Carve-only gullies stay dry.
+    const wB = clamp(waterStrength.element(i).mul(2.1), 0, 1);
+    const rSurf = wB.pow(1.35).mul(7.5).mul(lakeFade).mul(0.45).add(0.12)
+      .mul(rdGate).sub(0.12).max(0);
+    const riverWet = wB.greaterThan(0.04).and(rSurf.greaterThan(0.04));
+    waterYRaw.element(i).assign(
+      isLake.select(W.element(i), riverWet.select(hNew.add(rSurf), float(-1e4))),
+    );
+    // flow direction × speed: downhill gradient of W scaled by strength.
+    // Lakes get ZERO — their filled W is flat so the raw gradient is noise,
+    // and Phase-6 water reads |flowDir| as the ripple-advection speed
+    // (still lakes vs streaming rivers).
+    const spd = isLake.select(float(0), sB);
+    flowDir.element(i).assign(g.div(g.length().max(1e-5)).mul(spd));
     // moisture source: lakes + marshes + rivers + residual erosion water
     const marsh = lakeD.greaterThan(MARSH_DELTA).select(float(0.8), float(0));
     const src = isLake
@@ -527,5 +567,6 @@ export async function runFlowRivers(
     riverDepth,
     flowDir,
     moisture: moistA,
+    waterYRaw,
   };
 }

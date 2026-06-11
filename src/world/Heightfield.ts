@@ -8,7 +8,7 @@
  */
 
 import { FloatType, HalfFloatType, NearestFilter, RedFormat } from 'three';
-import type { Renderer } from 'three/webgpu';
+import type { ComputeNode, Renderer } from 'three/webgpu';
 import { StorageTexture } from 'three/webgpu';
 import {
   Fn,
@@ -32,7 +32,7 @@ import type { LaasParams } from '../core/Params';
 import type { WorldSeed } from '../core/Seed';
 import { bilerpFloatBuffer, uvToGrid } from '../gpu/BufferSample';
 import { bakeNoiseTextures } from '../gpu/passes/NoiseBake';
-import type { NF, NV2, NV3 } from '../gpu/TSLTypes';
+import type { NF, NI, NV2, NV3 } from '../gpu/TSLTypes';
 import { runBiomeSnow } from '../gpu/passes/BiomeSnow';
 import { runErosion } from '../gpu/passes/Erosion';
 import { runFlowRivers, type FlowResult } from '../gpu/passes/FlowRivers';
@@ -62,6 +62,16 @@ export class Heightfield {
   simRes = 0;
   /** hydrology outputs at sim res */
   flow: FlowResult | null = null;
+  /** renderable water surface (m) at sim res: carved bed + riverDepth at
+   *  water cells; DRY cells hold simBed − 2 so bilinear shorelines cut
+   *  below the banks (f32 buffer — f16 textures quantize ~1 m up here) */
+  waterY: FloatBuffer | null = null;
+  /** min-reduced waterY (simRes/8) for FAR clipmap levels: coarse vertices
+   *  sampling the full field stretch one wet texel across a whole 48 m
+   *  cell — "mountains half covered in water" from afar. The min makes
+   *  distance conservative: narrow channels vanish, lakes survive. */
+  waterYFar: FloatBuffer | null = null;
+  waterFarRes = 0;
   /** rgba16f at sim res: moisture, flowStrength, riverDepth, waterSurface W */
   fieldsTex: StorageTexture | null = null;
   /** rgba8 at full res: biomeId/8, snow, vegDensity, rockExposure */
@@ -147,6 +157,17 @@ export class Heightfield {
       onProgress: (msg, frac) => progress(0.55 + frac * 0.12, msg),
     });
 
+    // water render surface from the CARVED sim bed (runFlowRivers mutates
+    // erosion.eroded in place: carve + talus relax)
+    hf.waterY = await Heightfield.buildWaterY(
+      renderer,
+      erosion.eroded,
+      hf.flow.waterYRaw,
+      cfg.simRes,
+    );
+    hf.waterFarRes = Math.floor(cfg.simRes / 8);
+    hf.waterYFar = await Heightfield.reduceWaterY(renderer, hf.waterY, cfg.simRes, 8);
+
     progress(0.7, 'terrain: composing eroded field');
     await hf.composeEroded(renderer, synthSim.height, erosion.eroded);
 
@@ -184,6 +205,134 @@ export class Heightfield {
     const a = i(x0, z0) * (1 - fx) + i(x0 + 1, z0) * fx;
     const b = i(x0, z0 + 1) * (1 - fx) + i(x0 + 1, z0 + 1) * fx;
     return a * (1 - fz) + b * fz;
+  }
+
+  private static async buildWaterY(
+    renderer: Renderer,
+    bed: FloatBuffer,
+    waterYRaw: FloatBuffer,
+    res: number,
+  ): Promise<FloatBuffer> {
+    const out = instancedArray(res * res, 'float');
+    const wet = instancedArray(res * res, 'float');
+    const kernel = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(res * res), () => {
+        Return();
+      });
+      // Hydrology already decided where open water exists (waterYRaw: pond
+      // fill level / river surface / −1e4 dry sentinel). Here: encode DRY
+      // cells as 3×3 NEIGHBORHOOD-MIN bed − 2 — a raised bank texel at
+      // bankBed−2 can still sit ABOVE the channel's water level, and the
+      // bilinear then builds standing water walls up every bank (user-
+      // reported "spikes"). With the min, wet→dry spans always cross under
+      // the waterline.
+      const x = i.mod(res).toInt();
+      const y = i.div(res).toInt();
+      const xm = clamp(float(x).sub(1), 0, res - 1).toInt();
+      const xp = clamp(float(x).add(1), 0, res - 1).toInt();
+      const ym = clamp(float(y).sub(1), 0, res - 1).toInt();
+      const yp = clamp(float(y).add(1), 0, res - 1).toInt();
+      const b = bed.element(i).toVar();
+      const hl = bed.element(y.mul(res).add(xm)).toVar();
+      const hr = bed.element(y.mul(res).add(xp)).toVar();
+      const hd = bed.element(ym.mul(res).add(x)).toVar();
+      const hu = bed.element(yp.mul(res).add(x)).toVar();
+      const d00 = bed.element(ym.mul(res).add(xm));
+      const d10 = bed.element(ym.mul(res).add(xp));
+      const d01 = bed.element(yp.mul(res).add(xm));
+      const d11 = bed.element(yp.mul(res).add(xp));
+      const bMin = b
+        .min(hl).min(hr).min(hd).min(hu)
+        .min(d00).min(d10).min(d01).min(d11);
+      const raw = waterYRaw.element(i);
+      const isWet = raw.greaterThan(-1e3);
+      wet.element(i).assign(isWet.select(float(1), float(0)));
+      out.element(i).assign(isWet.select(raw, bMin.sub(2)));
+    })().compute(res * res);
+    kernel.setName('waterY');
+    await renderer.computeAsync(kernel);
+
+    // smooth WET cells toward their wet neighbors: steep cascade reaches
+    // otherwise render as 2 m staircase shards — real chutes are slides.
+    // Dry cells and lake flats are untouched (neighbors equal the mean).
+    const tmp = instancedArray(res * res, 'float');
+    const mkSmooth = (src: FloatBuffer, dst: FloatBuffer): ComputeNode => {
+      const k = Fn(() => {
+        const i = instanceIndex;
+        If(i.greaterThanEqual(res * res), () => {
+          Return();
+        });
+        const x = i.mod(res).toInt();
+        const y = i.div(res).toInt();
+        const xm = clamp(float(x).sub(1), 0, res - 1).toInt();
+        const xp = clamp(float(x).add(1), 0, res - 1).toInt();
+        const ym = clamp(float(y).sub(1), 0, res - 1).toInt();
+        const yp = clamp(float(y).add(1), 0, res - 1).toInt();
+        const c = src.element(i).toVar();
+        const sum = c.toVar();
+        const wsum = float(1).toVar();
+        for (const [ox, oy] of [[xm, y], [xp, y], [x, ym], [x, yp]] as const) {
+          const ni = (oy as NI).mul(res).add(ox as NI);
+          const wn = wet.element(ni);
+          sum.addAssign(src.element(ni).mul(wn));
+          wsum.addAssign(wn);
+        }
+        const sm = sum.div(wsum);
+        dst.element(i).assign(wet.element(i).greaterThan(0.5).select(sm, c));
+      })().compute(res * res);
+      k.setName('waterYSmooth');
+      return k;
+    };
+    for (let it = 0; it < 2; it++) {
+      await renderer.computeAsync([mkSmooth(out, tmp), mkSmooth(tmp, out)]);
+    }
+    return out;
+  }
+
+  private static async reduceWaterY(
+    renderer: Renderer,
+    src: FloatBuffer,
+    res: number,
+    factor: number,
+  ): Promise<FloatBuffer> {
+    const farRes = Math.floor(res / factor);
+    const out = instancedArray(farRes * farRes, 'float');
+    const kernel = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(farRes * farRes), () => {
+        Return();
+      });
+      const bx = i.mod(farRes).mul(factor).toInt();
+      const by = i.div(farRes).mul(factor).toInt();
+      const m = float(1e9).toVar();
+      for (let oy = 0; oy < factor; oy++) {
+        for (let ox = 0; ox < factor; ox++) {
+          const v = src.element(by.add(oy).mul(res).add(bx.add(ox)));
+          m.assign(m.min(v));
+        }
+      }
+      out.element(i).assign(m);
+    })().compute(farRes * farRes);
+    kernel.setName('waterYFar');
+    await renderer.computeAsync(kernel);
+    return out;
+  }
+
+  /** bilinear water-surface sample (vertex/fragment safe — buffer reads) */
+  sampleWaterY(p: NV2): NF {
+    const wy = this.waterY;
+    if (!wy) throw new Error('waterY not built');
+    const uv = clamp(this.uvFromWorld(p), 0, 1);
+    return bilerpFloatBuffer(wy, this.simRes, uvToGrid(uv, this.simRes));
+  }
+
+  /** same, from the min-reduced far field (distant clipmap levels) */
+  sampleWaterYFar(p: NV2): NF {
+    const wy = this.waterYFar;
+    if (!wy) throw new Error('waterYFar not built');
+    const uv = clamp(this.uvFromWorld(p), 0, 1);
+    return bilerpFloatBuffer(wy, this.waterFarRes, uvToGrid(uv, this.waterFarRes));
   }
 
   /** pack sim-res hydrology fields into a filterable rgba16f texture */

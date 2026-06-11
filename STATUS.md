@@ -192,12 +192,22 @@ cov 0.62), contact shadows (?ablate=contact to A/B), black facets root-caused to
 ## Next actions (always keep current)
 
 - **PHASE 6 — water, wind, volumetrics, particles (task #7 in_progress).**
-  Order: (1) STREAM WATER first — gate is streambed close-up vs scene1/2:
-  surface mesh along river channels (fields fl.y/fl.z + carved beds exist),
-  depth-tinted refraction (screen-space), flow-aligned normal ripples
-  (flow dir from FlowRivers), foam at drops/obstacles, wet-margin darkening
-  already in splat; kettle ponds render dark (carried fix). (2) LAKES:
-  planar reflection at LAKE_LEVEL (one clip-plane pass) + shore blend.
+  (1) STREAM WATER v1 LANDED (commit pending tag): WaterSurface 6-level
+  clipmap (shared 128² grid, world-pos vertex from waterY f32 buffer,
+  inner-rect fragment cutout, min-reduced far field, world-bounds mask) +
+  WaterMaterial (viewportSharedTexture refraction w/ depth-validated uv,
+  Beer–Lambert absorption, SSR reflections w/ canopy-attenuated sky
+  fallback, two-phase flowmap ripples from fbm gradients, slope-keyed
+  rapid foam + shore foam, depth-feathered shoreline). Hydrology:
+  waterYRaw in carve kernel (ponds at FILL level W — flat; rivers at
+  bed+gated depth; slope-gated: steep reaches dry), SPLIT thresholds
+  (RIVER_T 14 carve/moisture unchanged; WATER_T +220 visible water only),
+  flowDir = dir × speed (0 in lakes). User-confirmed fixed: water spikes,
+  far half-flooded mountains, border sheets, foam stripes. REMAINING for
+  stream-water close: caustics on submerged beds, gate shots vs scene1/2,
+  underwater camera guard maybe, WATER_T fine-tune with user live.
+  (2) LAKES: planar reflection at LAKE_LEVEL (one clip-plane pass) +
+  shore blend.
   (3) HIERARCHICAL WIND: trunk sway (low-freq) + branch/card flutter
   (per-instance phase from slot hash) + grass bend (GroundRing positionNode)
   — one global wind uniform field (dir + gust fbm), amplitude by exposure
@@ -429,3 +439,21 @@ split view, ground-clamped camera helper, silhouette/tiling gate + DELTA.md.
   Also: tubes have no ring-0 cap — fine attached to a parent, an OPEN HOLE
   on free-lying deadfall (capBase opt). Verify new closed geometry with
   ?facedbg=1 (front green / back red) before shipping it.
+- flowStrength is a SHARED driver (carve depth, moisture, splat beds, veg
+  gates, boulder affinity). NEVER retune its threshold for rendering — the
+  whole world re-layouts (rivers move, forests shift). Split thresholds:
+  RIVER_T = terrain texture, WATER_T = visible water (FlowRivers).
+- Pond/lake water surface must be the FILL LEVEL W (flat per pond, meets
+  terrain at the true shoreline). bed + blurred(depth) builds 30 m faceted
+  water towers wherever deep pots abut high ground (blur smears depth onto
+  ridge cells). Dry cells in the render field sink below the 3×3
+  NEIGHBORHOOD-MIN bed (own-bed−2 still stands above channel water on tall
+  banks = water walls). Wet cells get 2 smoothing iterations (wet-masked)
+  or cascades render as 2 m staircase shards.
+- Water clipmap traps: (a) far levels MUST sample a min-reduced field —
+  coarse verts on the full field stretch one wet texel across a 48 m cell
+  ("mountains half under water" from afar, gone up close); (b) clamp-to-
+  border sampling extends any wet border texel into an infinite off-world
+  sheet — hard world-bounds mask in the material; (c) animated foam must
+  advect with the TWO-PHASE flowmap like the normals — linear time
+  advection slides thresholded fbm level sets into hard white stripes.
