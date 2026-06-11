@@ -30,6 +30,7 @@ import {
 import type { DataTexture, PerspectiveCamera } from 'three';
 import {
   IndirectStorageBufferAttribute,
+  IrradianceNode,
   MeshStandardNodeMaterial,
   StorageBufferAttribute,
   type Renderer,
@@ -53,6 +54,7 @@ import {
   mix,
   normalLocal,
   positionLocal,
+  positionWorld,
   screenCoordinate,
   smoothstep,
   storage,
@@ -69,6 +71,7 @@ import { canopyAt, cellHash, cellHash2 } from '../gpu/passes/Scatter';
 import { grassTranslucency, rockMaterial } from '../render/VegMaterials';
 import type { NF, NI, NU, NV2, NV3, NV4 } from '../gpu/TSLTypes';
 import type { Heightfield } from '../world/Heightfield';
+import type { ProbeGI } from '../gpu/passes/ProbeGI';
 import { WORLD_SIZE } from '../world/WorldConst';
 import {
   barkChipGeometry,
@@ -260,7 +263,30 @@ export class GroundRing {
     private hf: Heightfield,
     private canopyTex: StorageTexture,
     private seed: WorldSeed,
+    private gi: ProbeGI | null = null,
   ) {}
+
+  /**
+   * Probe ambient for the carpets (same field as terrain/veg — without it
+   * the grass keeps the dimmed hemisphere and reads as a pale glowing mat
+   * inside canopy-shadowed interiors). Up-normal: a carpet integrates the
+   * down-welling irradiance.
+   */
+  private patchGI(mat: MeshStandardNodeMaterial): void {
+    const gi = this.gi;
+    if (!gi) return;
+    let irr = gi.irradiance(
+      positionWorld as unknown as NV3,
+      vec3(0, 1, 0) as unknown as NV3,
+    );
+    irr = irr.mul(
+      canopyAt(this.canopyTex, (positionWorld as unknown as NV3).xz)
+        .mul(0.12)
+        .oneMinus(),
+    ) as typeof irr;
+    (mat as unknown as { setupLightMap: () => unknown }).setupLightMap = () =>
+      new IrradianceNode(irr as unknown as ConstructorParameters<typeof IrradianceNode>[0]);
+  }
 
   init(beechAtlas: DataTexture | null): void {
     const hf = this.hf;
@@ -502,6 +528,7 @@ export class GroundRing {
         salt,
       };
       const mat = this.grassMaterial(bindL, grassFades[l] ?? [null, null], l === 2);
+      this.patchGI(mat);
       draws.push({ geo: grassGeos[l] as BufferGeometry, mat, g: l });
     }
 
@@ -528,6 +555,7 @@ export class GroundRing {
         salt: salt ^ 0x5dd5,
       };
       this.debrisTransform(mat, bindD, debrisScale[t] ?? 1);
+      this.patchGI(mat);
       draws.push({ geo: debrisGeos[t] as BufferGeometry, mat, g: 3 + t });
     }
 
@@ -613,9 +641,16 @@ export class GroundRing {
       vec3(0.21, 0.17, 0.075),
       t,
     ) as unknown as NV3;
-    const dryK = smoothstep(0.7, 0.95, patch.x);
+    // shade-grown grass: under crowns the sward stays deep cool green (dry
+    // straw patches are a full-sun phenomenon) — without this the carpet
+    // reads as a pale glowing mat inside forest interiors
+    const cov = canopyAt(this.canopyTex, wpos);
+    const dryK = smoothstep(0.7, 0.95, patch.x).mul(
+      float(1).sub(cov.mul(0.85)),
+    );
     let albedo = mix(fresh, dry, dryK) as unknown as NV3;
     albedo = albedo.mul(patch.y.sub(0.5).mul(0.3).add(1)) as unknown as NV3;
+    albedo = mix(albedo, vec3(0.018, 0.052, 0.014), cov.mul(0.55)) as unknown as NV3;
     mat.colorNode = albedo;
     mat.emissiveNode = grassTranslucency(albedo, t);
     mat.aoNode = smoothstep(0.0, 0.55, t).mul(0.55).add(0.45);

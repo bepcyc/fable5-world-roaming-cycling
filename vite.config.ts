@@ -1,8 +1,8 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from "vite";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   build: {
-    target: 'esnext',
+    target: "esnext",
     chunkSizeWarningLimit: 4096,
   },
   server: {
@@ -13,6 +13,7 @@ export default defineConfig({
     watch: { usePolling: true, interval: 200 },
   },
   esbuild: {
-    target: 'esnext',
+    target: "esnext",
   },
-});
+  base: command === "build" ? "/laas/" : "/",
+}));

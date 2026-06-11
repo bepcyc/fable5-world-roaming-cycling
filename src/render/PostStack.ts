@@ -413,7 +413,11 @@ export class PostStack {
       // key: auto-exposure normalizes the frame to mid-gray — the key sets
       // WHICH gray. 0.125 floated forest scenes into a washy high-key; 0.1
       // keeps deep canopy darks so the sun reads (user: "washed out").
-      const target = clamp(float(0.1).div(avgLum), 0.18, 7.0);
+      // Gain cap 4 (was 7): a fully canopy-shadowed interior must STAY a
+      // dark frame (scene1 value structure: dark frame → lit mid → bright
+      // bg) — at ×7 the meter dragged it to pastel mid-gray and noon
+      // interiors read overcast.
+      const target = clamp(float(0.1).div(avgLum), 0.18, 4.0);
       const prev = this.exposureBuf.element(0);
       this.exposureBuf.element(0).assign(mix(prev, target, 0.07));
     })().compute(1);

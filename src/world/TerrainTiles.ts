@@ -148,13 +148,14 @@ export class TerrainTiles {
     mat.metalnessNode = float(0);
     if (opts.gi && !ablate.has('gi')) {
       // probe-GI irradiance replaces the hemisphere ambient (Phase 3) —
-      // injected through the lighting context like a light map. Probes only
-      // see the heightfield, so canopy coverage pulls the ambient down under
-      // crowns (keeps shaded interiors colorful but no longer sky-bright).
+      // injected through the lighting context like a light map. The probe
+      // field is canopy-aware (crown-slab extinction in the gather); this
+      // receiver factor only adds the 4 m-texel spatial detail the 16 m
+      // probe grid can't resolve.
       let irr = opts.gi.irradiance(positionWorld, shading.worldNormalNode);
       if (opts.canopyTex && !ablate.has('canopy')) {
         irr = irr.mul(
-          canopyAt(opts.canopyTex, positionWorld.xz).mul(0.55).oneMinus(),
+          canopyAt(opts.canopyTex, positionWorld.xz).mul(0.18).oneMinus(),
         ) as typeof irr;
       }
       (mat as unknown as { setupLightMap: () => unknown }).setupLightMap = () =>

@@ -65,7 +65,12 @@
       "WebSearch",
       "Bash(sed -n 348,360p src/render/PostStack.ts)",
       "Bash(sed -n 1,60p node_modules/three/examples/jsm/tsl/display/TRAANode.js)",
-      "Bash(curl -s \"http://localhost:5173/src/debug/ShadowTestScene.ts\")"
+      "Bash(curl -s \"http://localhost:5173/src/debug/ShadowTestScene.ts\")",
+      "Bash(magick compare *)",
+      "Bash(magick diff-t11.png -auto-level diff-t11v.png)",
+      "Bash(magick diff-t165.png -auto-level diff-t165v.png)",
+      "Bash(magick shots/wip/p5-meadow-b.png shots/wip/p5-int-canopygi.png -compose difference -composite -evaluate multiply 5 -crop 1600x1080+320+0 +repage shots/wip/p5-gi-diff.png)",
+      "Bash(magick shots/wip/p5-gi-diff.png -resize 599x shots/wip/p5-gi-diff-small.png)"
     ]
   }
 }

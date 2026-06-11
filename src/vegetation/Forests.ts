@@ -12,6 +12,19 @@
  * Cull granularity = instance (tree/shrub/rock), not 64-tri meshlets — the
  * deviation and rationale are documented in DEVIATIONS D-5.
  *
+ * SHADOW CASTERS ARE CULLED PER CASCADE, not by the view frustum: the same
+ * cull kernel also tests every instance against each CSM cascade's ortho
+ * frustum (24 extra plane uniforms, refreshed from the cascade cameras each
+ * frame — one frame stale, hidden inside the CSM lightMargin slack) and
+ * appends into per-(pool,ring,cascade) caster regions. Each casting draw
+ * gets 4 shadow-only sibling meshes on layers 2+c that ONLY cascade c's
+ * shadow camera renders (ShadowNode keeps a custom camera layer mask), while
+ * the main meshes stop casting. This fixes shadows of off-screen casters
+ * (sun behind you, golden-hour edges) — the view-frustum compact lists used
+ * to silently drop them from every cascade map — and skips the
+ * camera-occlusion march for casters (a ridge-hidden tree still casts into
+ * the visible slope).
+ *
  * LOD rings (dithered crossfades in the materials):
  *   trees:  R0 hero ≤26 m (full bark + cards + real mesh leaves, ≥100k tris)
  *           → R1 full cards ≤150 m → R2 branch-cards ≤460 m → octahedral
@@ -20,13 +33,22 @@
  *   extras: boulders/slabs swap to low-detail rock at 120 m, live to 700 m
  */
 
-import { Color, Group, Mesh, Vector3, Vector4 } from 'three';
+import {
+  BufferAttribute,
+  BufferGeometry,
+  Color,
+  Group,
+  IcosahedronGeometry,
+  Mesh,
+  Vector3,
+  Vector4,
+} from 'three';
 import type { PerspectiveCamera } from 'three';
 import { Frustum, Matrix4 } from 'three';
 import {
   IndirectStorageBufferAttribute,
+  MeshStandardNodeMaterial,
   StorageBufferAttribute,
-  type MeshStandardNodeMaterial,
   type Renderer,
   type StorageBufferNode,
   type StorageTexture,
@@ -43,7 +65,9 @@ import {
   instanceIndex,
   instancedArray,
   int,
+  interleavedGradientNoise,
   normalWorld,
+  screenCoordinate,
   positionWorld,
   storage,
   uint,
@@ -83,7 +107,11 @@ const CAP_UNDER = 4096;
 const CAP_EX_R1 = 1024;
 const CAP_EX_R2 = 2048;
 
-const GROUPS = 170;
+const MAIN_GROUPS = 170;
+/** per-cascade caster groups: trees r1/r2 (48) + hero r0 (24) + extras/stones (64) */
+const CASC_LOCALS = 136;
+const CASCADES = 4;
+const GROUPS = MAIN_GROUPS + CASCADES * CASC_LOCALS;
 
 function groupOf(cls: number, variant: number, ring: 0 | 1 | 2 | 3): number {
   if (cls < 6) {
@@ -96,7 +124,39 @@ function groupOf(cls: number, variant: number, ring: 0 | 1 | 2 | 3): number {
   return 82 + pe * 2 + (ring - 1);
 }
 
+/**
+ * Caster-group index for cascade c. Local layout:
+ *   0..47   tree pools × rings r1/r2  (pool*2 + ring-1)
+ *   48..71  hero r0 per pool
+ *   72..135 extras/stones pe × rings  (72 + pe*2 + ring-1)
+ */
+function casterGroupOf(c: number, cls: number, variant: number, ring: 0 | 1 | 2): number {
+  const base = MAIN_GROUPS + c * CASC_LOCALS;
+  if (cls < 6) {
+    const pool = cls * 4 + variant;
+    if (ring === 0) return base + 48 + pool;
+    return base + pool * 2 + (ring - 1);
+  }
+  const pe = (cls - 16) * 4 + variant;
+  return base + 72 + pe * 2 + (ring - 1);
+}
+
 function capOf(g: number): number {
+  if (g >= MAIN_GROUPS) {
+    // caster regions: a cascade box covers a slice of the frustum, so the
+    // worst case is well under the main-view caps
+    const local = (g - MAIN_GROUPS) % CASC_LOCALS;
+    if (local < 48) return local % 2 === 0 ? 3072 : 4096; // tree r1/r2
+    if (local < 72) return CAP_HERO;
+    const pe = (local - 72) >> 1;
+    const cls = 16 + (pe >> 2);
+    const isR1 = (local - 72) % 2 === 0;
+    if (cls < 20) return isR1 ? 512 : 1024; // extras
+    if (cls === 20) return isR1 ? 2048 : 12288; // StoneL → 900 m
+    if (cls === 21) return isR1 ? 4096 : 8192; // StoneM
+    if (cls === 22) return isR1 ? 12288 : 64; // StoneS — single ring
+    return 4096; // Branch
+  }
   if (g < 48) return g % 2 === 0 ? CAP_TREE_R1 : CAP_TREE_R2;
   if (g < 54) return CAP_IMPOSTOR;
   if (g < 82) return CAP_UNDER;
@@ -111,6 +171,74 @@ function capOf(g: number): number {
   return 8192; // Branch
 }
 
+/**
+ * Crown shadow density per tree class (spruce/pine/beech/birch/karst/snag).
+ * Real closed canopy transmits 2–5% at noon; hollow card-shell crowns leak
+ * 40%+ through their alpha gradients and PCSS averages the speckle into a
+ * flat half-lit wash (no dapple, no dark interior). The shadow proxy core
+ * (dithered to this density) restores bulk occlusion; cards keep the edges
+ * ragged in the near ring. Snag crowns are bare — no core.
+ */
+const CROWN_SHADOW_DENSITY = [0.9, 0.84, 0.92, 0.74, 0.85, 0] as const;
+/** crown core params per class: center/ryAxis as height fractions, rxz as radius fraction */
+const CROWN_CORE = [
+  { cy: 0.55, ry: 0.4, rxz: 0.62 }, // spruce — tall narrow cone-ish
+  { cy: 0.62, ry: 0.33, rxz: 0.65 }, // pine
+  { cy: 0.62, ry: 0.32, rxz: 0.72 }, // beech — broad dome
+  { cy: 0.6, ry: 0.31, rxz: 0.64 }, // birch
+  { cy: 0.6, ry: 0.3, rxz: 0.68 }, // karst gnarl
+  { cy: 0.6, ry: 0.25, rxz: 0.4 }, // snag (unused — density 0)
+] as const;
+
+/**
+ * Shadow-proxy tree: 80-tri ellipsoid crown + 12-tri trunk prism, sized from
+ * the class cull bounds (instance scale applies in the vertex stage). This is
+ * the ONLY tree caster beyond R1 (a cascade texel out there is ≥0.5 m — card
+ * raggedness is invisible) and the bulk-density core inside R1's card edges.
+ */
+function crownProxyGeometry(cls: number, height: number, radius: number): BufferGeometry {
+  const p = CROWN_CORE[cls] ?? (CROWN_CORE[2] as (typeof CROWN_CORE)[number]);
+  // PolyhedronGeometry is non-indexed: 80 faces × 3 verts at detail 1
+  const core = new IcosahedronGeometry(1, 1);
+  const cpos = core.attributes.position as BufferAttribute;
+  const cy = p.cy * height;
+  const nCore = cpos.count;
+  const tr = 0.045 * radius + 0.03;
+  const merged = new Float32Array(nCore * 3 + 6 * 3);
+  for (let i = 0; i < nCore; i++) {
+    merged[i * 3] = cpos.getX(i) * p.rxz * radius;
+    merged[i * 3 + 1] = cpos.getY(i) * p.ry * height + cy;
+    merged[i * 3 + 2] = cpos.getZ(i) * p.rxz * radius;
+  }
+  // trunk prism: 3 quads, base→crown center
+  const idx: number[] = [];
+  for (let i = 0; i < nCore; i++) idx.push(i);
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2;
+    const o = (nCore + k * 2) * 3;
+    merged[o] = Math.cos(a) * tr;
+    merged[o + 1] = 0;
+    merged[o + 2] = Math.sin(a) * tr;
+    merged[o + 3] = Math.cos(a) * tr * 0.6;
+    merged[o + 4] = cy;
+    merged[o + 5] = Math.sin(a) * tr * 0.6;
+  }
+  for (let k = 0; k < 3; k++) {
+    const n = (k + 1) % 3;
+    idx.push(
+      nCore + k * 2, nCore + n * 2, nCore + k * 2 + 1,
+      nCore + n * 2, nCore + n * 2 + 1, nCore + k * 2 + 1,
+    );
+  }
+  const nrm = new Float32Array(merged.length);
+  for (let i = 0; i < nrm.length; i += 3) nrm[i + 1] = 1;
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(merged, 3));
+  g.setAttribute('normal', new BufferAttribute(nrm, 3));
+  g.setIndex(idx);
+  return g;
+}
+
 export class Forests {
   readonly group = new Group();
 
@@ -121,8 +249,15 @@ export class Forests {
   private planesU = uniformArray(
     Array.from({ length: 6 }, () => new Vector4()),
   );
+  /** 6 planes × 4 cascade ortho frusta; w=-1e9 ⇒ reject-all until CSM exists */
+  private planesCsmU = uniformArray(
+    Array.from({ length: 6 * CASCADES }, () => new Vector4(0, 0, 0, -1e9)),
+  );
+  private csm: object | null = null;
   private frustum = new Frustum();
   private projView = new Matrix4();
+  private cascM = new Matrix4();
+  private cascFrustum = new Frustum();
   private indirectAttr!: IndirectStorageBufferAttribute;
   private groupTris = new Float32Array(GROUPS);
   private groupCaps = new Uint32Array(GROUPS);
@@ -143,12 +278,11 @@ export class Forests {
     if (!gi) return;
     let irr = gi.irradiance(positionWorld as unknown as NV3, normalWorld as unknown as NV3);
     if (this.canopyTex) {
-      // probes don't see trees — canopy coverage pulls ambient down inside
-      // the forest (veg gets a lighter clamp than ground: crowns curve up
-      // into open sky)
+      // probe field is canopy-aware (crown-slab extinction in the gather) —
+      // this is only the 4 m-texel residual the 16 m probe grid can't carry
       irr = irr.mul(
         canopyAt(this.canopyTex, (positionWorld as unknown as NV3).xz)
-          .mul(0.4)
+          .mul(0.12)
           .oneMinus(),
       ) as typeof irr;
     }
@@ -201,17 +335,36 @@ export class Forests {
       mat: MeshStandardNodeMaterial,
       g: number,
       tris: number,
-      castShadow: boolean,
+      shadowLayer: number | null = null,
     ): void => {
       const indexCount = geo.index ? geo.index.count : geo.attributes.position?.count ?? 0;
       draws.push({ group: g, indexCount });
-      this.groupTris[g] += tris;
       const mesh = new Mesh(geo, mat);
       mesh.frustumCulled = false;
-      mesh.castShadow = castShadow;
-      mesh.receiveShadow = true;
+      if (shadowLayer === null) {
+        // visible draw — casting is owned by the per-cascade sibling meshes
+        this.groupTris[g] += tris;
+        mesh.castShadow = false;
+        mesh.receiveShadow = true;
+      } else {
+        // shadow-only caster: lives on the cascade's layer, so ONLY that
+        // cascade's shadow camera ever renders it
+        mesh.castShadow = true;
+        mesh.receiveShadow = false;
+        mesh.layers.set(shadowLayer);
+      }
       meshes.push(mesh);
       this.group.add(mesh);
+    };
+
+    /** geometry view sharing attributes/index but with its own indirect slot */
+    const geoView = (src: import('three').BufferGeometry): BufferGeometry => {
+      const g = new BufferGeometry();
+      for (const [name, attr] of Object.entries(src.attributes)) {
+        g.setAttribute(name, attr as import('three').BufferAttribute);
+      }
+      if (src.index) g.setIndex(src.index);
+      return g;
     };
 
     const layerOf = (cls: number): ScatterLayer =>
@@ -248,13 +401,13 @@ export class Forests {
       if (pool.r0) rings.push({ ring: 0, parts: pool.r0 });
       if (pool.r1) rings.push({ ring: 1, parts: pool.r1 });
       if (pool.r2) rings.push({ ring: 2, parts: pool.r2 });
+      // shadow budget: tree rings 0–2 cast (per-cascade caster lists);
+      // understory is grounded by contact shadows + AO instead
+      const ringCasts = pool.cls < 6 ? true : pool.cls < 15 ? false : true;
+      const crownDensity = pool.cls < 6 ? CROWN_SHADOW_DENSITY[pool.cls] ?? 0 : 0;
       for (const { ring, parts } of rings) {
         if (!parts) continue;
         const g = groupOf(pool.cls, pool.variant, ring);
-        // shadow budget: tree rings 1+2 cast (≤370 m — cascades 0–2 reach;
-        // impostors beyond don't); understory is grounded by contact
-        // shadows + AO instead
-        const ringCasts = pool.cls < 6 ? true : pool.cls < 15 ? false : true;
         for (const part of parts) {
           const mat = part.make();
           instanceVeg(mat, {
@@ -274,7 +427,52 @@ export class Forests {
             mat.colorNode = vec4(vec3(cdbg.r, cdbg.g, cdbg.b), 1);
             if (op) mat.opacityNode = op;
           }
-          addDraw(part.geo, mat, g, part.tris, part.castShadow && ringCasts);
+          addDraw(part.geo, mat, g, part.tris);
+          // per-cascade caster siblings. Tree R2 skips its card/bark parts —
+          // the crown proxy below carries the whole far shadow (a cascade
+          // texel ≥0.5 m out there; 1.8k-tri cards bought nothing but raster)
+          const proxyOwnsRing = pool.cls < 6 && ring === 2 && crownDensity > 0;
+          if (part.castShadow && ringCasts && !proxyOwnsRing) {
+            for (let c = 0; c < CASCADES; c++) {
+              const cg = casterGroupOf(c, pool.cls, pool.variant, ring);
+              const cmat = part.make();
+              instanceVeg(cmat, {
+                bufA: layer.bufA,
+                bufB: layer.bufB,
+                compact: this.compact,
+                groupBase: offsets[cg] ?? 0,
+                fade: null,
+              });
+              addDraw(geoView(part.geo), cmat, cg, 0, 2 + c);
+            }
+          }
+        }
+        // crown shadow proxy (rings 1+2): bulk occlusion at CROWN density —
+        // cards alone leak 40%+ and PCSS flattens the speckle into a half-lit
+        // wash; the core brings noon interiors down to real 5–15% so dapple
+        // pools only survive at TRUE crown gaps
+        if (ring > 0 && ringCasts && crownDensity > 0) {
+          const proxyGeo = crownProxyGeometry(
+            pool.cls,
+            lib.clsHeight[pool.cls] ?? 20,
+            lib.clsRadius[pool.cls] ?? 3,
+          );
+          for (let c = 0; c < CASCADES; c++) {
+            const cg = casterGroupOf(c, pool.cls, pool.variant, ring);
+            const pmat = new MeshStandardNodeMaterial();
+            instanceVeg(pmat, {
+              bufA: layer.bufA,
+              bufB: layer.bufB,
+              compact: this.compact,
+              groupBase: offsets[cg] ?? 0,
+              fade: null,
+            });
+            (pmat as unknown as { maskShadowNode: unknown }).maskShadowNode =
+              interleavedGradientNoise(screenCoordinate.xy).lessThan(
+                float(crownDensity),
+              );
+            addDraw(geoView(proxyGeo), pmat, cg, 0, 2 + c);
+          }
         }
       }
     }
@@ -290,7 +488,7 @@ export class Forests {
         fade: fadeFor(cls, 3),
       });
       this.patchGI(mat);
-      addDraw(impostorQuad(), mat, g, 2, false);
+      addDraw(impostorQuad(), mat, g, 2);
     }
 
     // ---- indirect buffer -------------------------------------------------------
@@ -336,6 +534,17 @@ export class Forests {
       return inside;
     };
 
+    const planesCsmU = this.planesCsmU;
+    const inCascade = (c: number, center: NV3, rad: NF): NF => {
+      let inside: NF = float(1);
+      for (let p = 0; p < 6; p++) {
+        const pl = planesCsmU.element(int(c * 6 + p)) as unknown as NV4;
+        const d = pl.xyz.dot(center).add(pl.w);
+        inside = inside.mul(d.greaterThan(rad.negate()).select(float(1), float(0)));
+      }
+      return inside;
+    };
+
     const appendTo = (g: NI | NU, slot: NU): void => {
       const idx = atomicAdd(counters.element(g), uint(1)) as unknown as NU;
       If(idx.lessThan(capBuf.element(g) as unknown as NU), () => {
@@ -368,67 +577,130 @@ export class Forests {
         const dist = A.xyz.sub(camU).length();
 
         if (kind !== 'trees') {
+          // hard reach bound — applies to main view AND casters (beyond it
+          // no ring geometry exists at all)
           If(dist.greaterThanEqual(info.z), () => {
             Return();
           });
         }
-        If(inFrustum(center, rad).lessThan(0.5), () => {
-          Return();
-        });
 
-        // terrain occlusion: march the sight line to the crown top
-        if (kind !== 'under') {
-          If(dist.greaterThan(140), () => {
-            const top = vec3(A.x, A.y.add(hgt), A.z);
-            const occ = float(0).toVar();
-            for (let st = 1; st <= 7; st++) {
-              const t = st / 8;
-              const sp = camU.mul(1 - t).add(top.mul(t)) as unknown as NV3;
-              const th = hf.sampleHeightNearest(vec2(sp.x, sp.z));
-              occ.assign(occ.max(th.sub(sp.y)));
-            }
-            If(occ.greaterThan(4), () => {
-              Return();
-            });
+        if (kind === 'under') {
+          // understory never casts — keep the cheap early-out path
+          If(inFrustum(center, rad).lessThan(0.5), () => {
+            Return();
           });
+          const g = cls.sub(8).mul(4).add(variant).add(54).toInt();
+          appendTo(g as unknown as NI, i as unknown as NU);
+          return;
         }
+
+        // main-view visibility: frustum + terrain-occlusion march (camera
+        // sight line) — casters intentionally skip BOTH (an off-screen or
+        // ridge-hidden tree still casts into the visible scene)
+        const visMain = inFrustum(center, rad).toVar();
+        If(visMain.greaterThan(0.5).and(dist.greaterThan(140)), () => {
+          const top = vec3(A.x, A.y.add(hgt), A.z);
+          const occ = float(0).toVar();
+          for (let st = 1; st <= 7; st++) {
+            const t = st / 8;
+            const sp = camU.mul(1 - t).add(top.mul(t)) as unknown as NV3;
+            const th = hf.sampleHeightNearest(vec2(sp.x, sp.z));
+            occ.assign(occ.max(th.sub(sp.y)));
+          }
+          If(occ.greaterThan(4), () => {
+            visMain.assign(0);
+          });
+        });
 
         if (kind === 'trees') {
           const pool = cls.mul(4).add(variant).toInt();
-          If(dist.lessThan(R0_FAR + BAND0), () => {
-            appendTo(pool.add(146) as unknown as NI, i as unknown as NU);
+          If(visMain.greaterThan(0.5), () => {
+            If(dist.lessThan(R0_FAR + BAND0), () => {
+              appendTo(pool.add(146) as unknown as NI, i as unknown as NU);
+            });
+            If(
+              dist.greaterThanEqual(R0_FAR - BAND0).and(dist.lessThan(R1_FAR + BAND1)),
+              () => {
+                appendTo(pool.mul(2) as unknown as NI, i as unknown as NU);
+              },
+            );
+            If(
+              dist.greaterThanEqual(R1_FAR - BAND1).and(dist.lessThan(R2_FAR + BAND2)),
+              () => {
+                appendTo(pool.mul(2).add(1) as unknown as NI, i as unknown as NU);
+              },
+            );
+            If(dist.greaterThanEqual(R2_FAR - BAND2), () => {
+              appendTo(cls.add(48).toInt() as unknown as NI, i as unknown as NU);
+            });
           });
-          If(
-            dist.greaterThanEqual(R0_FAR - BAND0).and(dist.lessThan(R1_FAR + BAND1)),
-            () => {
-              appendTo(pool.mul(2) as unknown as NI, i as unknown as NU);
-            },
-          );
-          If(
-            dist.greaterThanEqual(R1_FAR - BAND1).and(dist.lessThan(R2_FAR + BAND2)),
-            () => {
-              appendTo(pool.mul(2).add(1) as unknown as NI, i as unknown as NU);
-            },
-          );
-          If(dist.greaterThanEqual(R2_FAR - BAND2), () => {
-            appendTo(cls.add(48).toInt() as unknown as NI, i as unknown as NU);
-          });
-        } else if (kind === 'under') {
-          const g = cls.sub(8).mul(4).add(variant).add(54).toInt();
-          appendTo(g as unknown as NI, i as unknown as NU);
+          // casters per cascade — same ring choice as the main view so the
+          // shadow silhouette matches the rendered crown
+          for (let c = 0; c < CASCADES; c++) {
+            const base = MAIN_GROUPS + c * CASC_LOCALS;
+            If(inCascade(c, center, rad).greaterThan(0.5), () => {
+              If(dist.lessThan(R0_FAR + BAND0), () => {
+                appendTo(
+                  pool.add(base + 48) as unknown as NI,
+                  i as unknown as NU,
+                );
+              });
+              If(
+                dist.greaterThanEqual(R0_FAR - BAND0).and(dist.lessThan(R1_FAR + BAND1)),
+                () => {
+                  appendTo(pool.mul(2).add(base) as unknown as NI, i as unknown as NU);
+                },
+              );
+              If(
+                dist.greaterThanEqual(R1_FAR - BAND1).and(dist.lessThan(R2_FAR + BAND2)),
+                () => {
+                  appendTo(
+                    pool.mul(2).add(base + 1) as unknown as NI,
+                    i as unknown as NU,
+                  );
+                },
+              );
+            });
+          }
         } else {
           const pe = cls.sub(16).mul(4).add(variant);
           const hasR2 = info.w.greaterThan(0.5);
-          If(hasR2, () => {
-            If(dist.lessThan(EX_R1_FAR + EX_BAND), () => {
+          If(visMain.greaterThan(0.5), () => {
+            If(hasR2, () => {
+              If(dist.lessThan(EX_R1_FAR + EX_BAND), () => {
+                appendTo(pe.mul(2).add(82).toInt() as unknown as NI, i as unknown as NU);
+              });
+              If(dist.greaterThanEqual(EX_R1_FAR - EX_BAND), () => {
+                appendTo(pe.mul(2).add(83).toInt() as unknown as NI, i as unknown as NU);
+              });
+            }).Else(() => {
               appendTo(pe.mul(2).add(82).toInt() as unknown as NI, i as unknown as NU);
             });
-            If(dist.greaterThanEqual(EX_R1_FAR - EX_BAND), () => {
-              appendTo(pe.mul(2).add(83).toInt() as unknown as NI, i as unknown as NU);
-            });
-          }).Else(() => {
-            appendTo(pe.mul(2).add(82).toInt() as unknown as NI, i as unknown as NU);
           });
+          for (let c = 0; c < CASCADES; c++) {
+            const base = MAIN_GROUPS + c * CASC_LOCALS + 72;
+            If(inCascade(c, center, rad).greaterThan(0.5), () => {
+              If(hasR2, () => {
+                If(dist.lessThan(EX_R1_FAR + EX_BAND), () => {
+                  appendTo(
+                    pe.mul(2).add(base).toInt() as unknown as NI,
+                    i as unknown as NU,
+                  );
+                });
+                If(dist.greaterThanEqual(EX_R1_FAR - EX_BAND), () => {
+                  appendTo(
+                    pe.mul(2).add(base + 1).toInt() as unknown as NI,
+                    i as unknown as NU,
+                  );
+                });
+              }).Else(() => {
+                appendTo(
+                  pe.mul(2).add(base).toInt() as unknown as NI,
+                  i as unknown as NU,
+                );
+              });
+            });
+          }
         }
       })().compute(Math.max(N, 1));
       k.setName(`vegCull_${kind}`);
@@ -458,6 +730,11 @@ export class Forests {
     ];
   }
 
+  /** wire the CSM rig (cascade cameras feed the caster cull) */
+  setCSM(csm: object | null): void {
+    this.csm = csm;
+  }
+
   /** per-frame: update frustum/camera uniforms, run cull+indirect computes */
   update(renderer: Renderer, camera: PerspectiveCamera): void {
     this.camU.value.copy(camera.position);
@@ -469,6 +746,39 @@ export class Forests {
       const pl = this.frustum.planes[p];
       if (!pl) continue;
       (arr[p] as Vector4).set(pl.normal.x, pl.normal.y, pl.normal.z, pl.constant);
+    }
+    // cascade ortho frusta → caster-cull planes (read one frame stale —
+    // CSMShadowNode positions its lwLights during the upcoming render; the
+    // lightMargin slack swallows the lag). Also pins each cascade camera to
+    // its caster layer once the lazy CSM init has built the lights.
+    interface CascCam {
+      projectionMatrix: Matrix4;
+      matrixWorldInverse: Matrix4;
+      layers: { enable(ch: number): void };
+      left?: number;
+    }
+    const lights = (
+      this.csm as { lights?: { shadow?: { camera?: CascCam } }[] } | null
+    )?.lights;
+    if (lights) {
+      const carr = this.planesCsmU.array as Vector4[];
+      for (let c = 0; c < CASCADES; c++) {
+        const cam = lights[c]?.shadow?.camera;
+        if (!cam || !Number.isFinite(cam.left ?? NaN)) continue;
+        cam.layers.enable(2 + c);
+        this.cascM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+        this.cascFrustum.setFromProjectionMatrix(this.cascM);
+        for (let p = 0; p < 6; p++) {
+          const pl = this.cascFrustum.planes[p];
+          if (!pl) continue;
+          (carr[c * 6 + p] as Vector4).set(
+            pl.normal.x,
+            pl.normal.y,
+            pl.normal.z,
+            pl.constant,
+          );
+        }
+      }
     }
     for (const k of this.kernels) {
       renderer.compute(k as Parameters<Renderer['compute']>[0]);
@@ -498,11 +808,14 @@ export class Forests {
       let imp = 0;
       let under = 0;
       let extras = 0;
+      let cast = 0;
       let tris = 0;
       for (let g = 0; g < GROUPS; g++) {
         const n = Math.min(counts[g] ?? 0, this.groupCaps[g] ?? 0);
         tris += n * (this.groupTris[g] ?? 0);
-        if (g < 48) {
+        if (g >= MAIN_GROUPS) {
+          cast += n;
+        } else if (g < 48) {
           if (g % 2 === 0) r1 += n;
           else r2 += n;
         } else if (g < 54) imp += n;
@@ -517,6 +830,7 @@ export class Forests {
         'veg.imp': imp,
         'veg.underDrawn': under,
         'veg.extraDrawn': extras,
+        'veg.cast': cast,
         'veg.tris': Math.round(tris),
       };
     } finally {

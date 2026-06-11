@@ -216,12 +216,21 @@ export function instanceVeg(
   // maskShadowNode is ALWAYS set when a ring fade exists: it overrides
   // maskNode in the shadow pass, so casters keep full density through LOD
   // bands (the union of both rings' geometry — no shadow thinning).
+  //
+  // Caster cutout threshold runs HIGH (0.45 vs the visual alphaTest): a
+  // crown's shadow is the union of many card cutouts along the sun ray, so
+  // the silhouette stays solid, while the half-transparent card gradients
+  // stop stamping airtight slabs into the cascade maps — the noon forest
+  // floor gets its dappled sun pools back (?shadcut=N to tune).
   const rgb = mat.colorNode as unknown as NV3 | null;
   if (rgb) mat.colorNode = vec4(rgb, 1);
   const op = mat.opacityNode as unknown as NF | null;
   if (op) {
+    const cut = Number(
+      new URLSearchParams(window.location.search).get('shadcut') ?? 0.35,
+    );
     (mat as unknown as { maskShadowNode: unknown }).maskShadowNode = op.greaterThan(
-      Math.max(mat.alphaTest, 0.1),
+      Math.max(mat.alphaTest, Number.isFinite(cut) ? cut : 0.35),
     );
   } else if (mat.maskNode) {
     (mat as unknown as { maskShadowNode: unknown }).maskShadowNode = bool(true);

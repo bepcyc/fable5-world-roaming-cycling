@@ -52,23 +52,33 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   // tooling probe handle (tools/probe-state.ts) — light/scene state triage
   (window as unknown as { __laasDbg?: unknown }).__laasDbg = { engine, sunSky };
 
-  // irradiance probe field (Phase 3 GI)
-  ctx.progress(0.945, 'gi: gathering irradiance probes');
-  const gi = new ProbeGI(hf, sunSky.atmosphere);
-  await gi.init(engine.renderer);
-  sunSky.dimAmbientForGI();
-  engine.onUpdate(() => gi.tick(engine.renderer));
-
   // vegetation/rock placement (Phase 5): GPU clustered-Poisson scatter +
-  // canopy coverage map (lighting + density field) — BEFORE tiles, which
-  // consume the canopy map for under-crown ambient
-  ctx.progress(0.952, 'vegetation: scattering instances');
+  // canopy coverage map — BEFORE the probe field (probes ray-march the bare
+  // heightfield; the canopy map is their only knowledge of the forest) and
+  // before tiles (under-crown ambient)
+  ctx.progress(0.94, 'vegetation: scattering instances');
   const scatter = await runScatter(engine.renderer, hf, seed);
   const canopyTex = await buildCanopyMap(engine.renderer, scatter.trees);
   engine.stats.counters['veg.trees'] = scatter.trees.count;
   engine.stats.counters['veg.under'] = scatter.understory.count;
   engine.stats.counters['veg.extras'] = scatter.extras.count;
   engine.stats.counters['veg.stones'] = scatter.stones.count;
+
+  const ablate = new Set(
+    (new URLSearchParams(window.location.search).get('ablate') ?? '').split(','),
+  );
+
+  // irradiance probe field (Phase 3 GI; canopy-aware since Phase 5 —
+  // ?ablate=canopygi rebuilds the bare-heightfield field for A/B)
+  ctx.progress(0.95, 'gi: gathering irradiance probes');
+  const gi = new ProbeGI(
+    hf,
+    sunSky.atmosphere,
+    ablate.has('canopygi') ? null : canopyTex,
+  );
+  await gi.init(engine.renderer);
+  sunSky.dimAmbientForGI();
+  engine.onUpdate(() => gi.tick(engine.renderer));
 
   ctx.progress(0.958, 'terrain: building tiles');
   const view = new URLSearchParams(window.location.search).get('view');
@@ -91,10 +101,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     engine.scene.add(tiles.mesh);
     engine.scene.add(tiles.farShell);
     // ?ablate=proxy — drop the terrain shadow caster (shadow-debug bisect)
-    const ablPre = new Set(
-      (new URLSearchParams(window.location.search).get('ablate') ?? '').split(','),
-    );
-    if (!ablPre.has('proxy')) engine.scene.add(buildTerrainShadowProxy(hf));
+    if (!ablate.has('proxy')) engine.scene.add(buildTerrainShadowProxy(hf));
     engine.onUpdate(() => {
       tiles.update(engine.camera);
       engine.stats.counters['terrain.tiles'] = tiles.activeTiles;
@@ -102,9 +109,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   }
 
   // Phase 5: variant pools + GPU cull → compacted indirect draws
-  const ablate = new Set(
-    (new URLSearchParams(window.location.search).get('ablate') ?? '').split(','),
-  );
+  let forestsRef: Forests | null = null;
   if (view !== 'scatter' && !ablate.has('veg')) {
     const lib = await buildVegLibrary(engine.renderer, seed, (p, m) =>
       ctx.progress(0.963 + p * 0.006, m),
@@ -117,6 +122,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
       canopyTex,
     );
     forests.init(engine.renderer);
+    forestsRef = forests;
     engine.scene.add(forests.group);
     updateSunUniforms(sunSky.sun);
     engine.onUpdate(() => {
@@ -126,7 +132,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
 
     // near-field carpets: 800k-blade grass ring + 80k debris ring
     if (!ablate.has('grass')) {
-      const ring = new GroundRing(hf, canopyTex, seed);
+      const ring = new GroundRing(hf, canopyTex, seed, ablate.has('gi') ? null : gi);
       ring.init(lib.atlases.get('beech') ?? null);
       engine.scene.add(ring.group);
       engine.onUpdate(() => {
@@ -150,6 +156,8 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   const shadowRig = setupSunShadows(sunSky.sun, engine.camera, (wxz) =>
     clouds.shadowAt(wxz),
   );
+  // cascade cameras drive the per-cascade caster cull in Forests
+  forestsRef?.setCSM(shadowRig.csm ?? null);
   (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = {
     engine,
     sunSky,
