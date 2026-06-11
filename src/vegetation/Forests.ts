@@ -449,8 +449,15 @@ export class Forests {
       if (pool.r1) rings.push({ ring: 1, parts: pool.r1 });
       if (pool.r2) rings.push({ ring: 2, parts: pool.r2 });
       // shadow budget: tree rings 0–2 cast (per-cascade caster lists);
-      // understory is grounded by contact shadows + AO instead
-      const ringCasts = pool.cls < 6 ? true : pool.cls < 15 ? false : true;
+      // understory is grounded by contact shadows + AO instead.
+      // ?ablate=casters drops ALL veg caster draws (perf attribution).
+      const ablateCasters = (
+        new URLSearchParams(window.location.search).get('ablate') ?? ''
+      )
+        .split(',')
+        .includes('casters');
+      const ringCasts =
+        !ablateCasters && (pool.cls < 6 ? true : pool.cls < 15 ? false : true);
       const crownDensity = pool.cls < 6 ? CROWN_SHADOW_DENSITY[pool.cls] ?? 0 : 0;
       // fit the shadow proxy to THIS pool's real extents (R1 union bbox)
       let poolDims: CrownDims | null = null;
@@ -513,8 +520,14 @@ export class Forests {
           // the crown proxy below carries the whole far shadow (a cascade
           // texel ≥0.5 m out there; 1.8k-tri cards bought nothing but raster)
           const proxyOwnsRing = pool.cls < 6 && ring === 2 && crownDensity > 0;
+          // far cascades have 0.5–21 m texels — card-level caster geometry
+          // buys nothing there; the crown proxies (added below for rings
+          // 1+2 in EVERY cascade) own the far shadow. Ring-1 real casters
+          // only feed the two near cascades (~15 ms → ~7 ms caster raster).
+          const cascadeMax =
+            pool.cls < 6 && ring === 1 && crownDensity > 0 ? 2 : CASCADES;
           if (part.castShadow && ringCasts && !proxyOwnsRing) {
-            for (let c = 0; c < CASCADES; c++) {
+            for (let c = 0; c < cascadeMax; c++) {
               const cg = casterGroupOf(c, pool.cls, pool.variant, ring);
               const cmat = part.make();
               instanceVeg(cmat, {

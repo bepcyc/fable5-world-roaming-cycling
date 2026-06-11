@@ -35,6 +35,7 @@ import {
   output,
   pass,
   rtt,
+  screenSize,
   screenUV,
   smoothstep,
   texture,
@@ -259,21 +260,49 @@ export class PostStack {
       samples: { value: number };
       radius: { value: number };
       distanceFallOff: { value: number };
+      resolutionScale: number;
     };
     aoCfg.samples.value = 8;
     aoCfg.radius.value = 1.6;
     aoCfg.distanceFallOff.value = 0.6;
+    // HALF-RES AO (was ~20 ms of a 48 ms frame at 1080p — the single
+    // hottest post pass). Plain bilinear at 0.5 printed row streaks on
+    // grazing terrain (Phase-2 note); the JOINT-BILATERAL upsample below
+    // (full-res depth as guide) is what makes half res viable.
+    aoCfg.resolutionScale = 0.5;
+    const aoTexNode = aoPass.getTextureNode();
     // AO is a near-field cue — fade it out with distance (far AO from a
     // 1.6 m radius is subpixel anyway and only adds instability)
     const aoFaded = Fn((): NF => {
-      const dist = getViewPosition(screenUV, depthTex.x, uProjInv).length();
+      const viewC = getViewPosition(screenUV, depthTex.x, uProjInv);
+      const dist = viewC.length();
       const k = smoothstep(700, 1800, dist);
       // indirect-only approximation: sun-lit pixels (high HDR luminance)
       // shed most of the post-AO — occlusion belongs to ambient light.
       // (True aoNode-into-lighting wiring lands with the Phase-4 material
       // restructure; see DEVIATIONS.md.)
       const directK = smoothstep(1.2, 4.0, luminance(beauty.rgb)).mul(0.75);
-      const aoRaw = aoPass.getTextureNode().x;
+      // joint-bilateral 4-tap upsample: weight half-res AO taps by view-Z
+      // similarity against the full-res depth — edges stay crisp, flats
+      // stay smooth, no streaks
+      const halfTexel = vec2(1).div(screenSize.mul(0.5));
+      const zC = viewC.z;
+      const acc = float(0).toVar();
+      const wsum = float(1e-4).toVar();
+      for (const [ox, oy] of [
+        [-0.5, -0.5],
+        [0.5, -0.5],
+        [-0.5, 0.5],
+        [0.5, 0.5],
+      ] as const) {
+        const uvi = screenUV.add(halfTexel.mul(vec2(ox, oy)));
+        const ai = (aoTexNode.sample(uvi) as unknown as NV4).x;
+        const zi = getViewPosition(uvi, (depthTex.sample(uvi) as unknown as NV4).x, uProjInv).z;
+        const w = exp2(zi.sub(zC).abs().mul(-3.5));
+        acc.addAssign(ai.mul(w));
+        wsum.addAssign(w);
+      }
+      const aoRaw = acc.div(wsum);
       return mix(mix(aoRaw, float(1), directK), float(1), k);
     })();
     // --- screen-space contact shadows (spec §2 floor) ---------------------------
