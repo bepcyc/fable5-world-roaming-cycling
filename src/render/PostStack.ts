@@ -213,7 +213,24 @@ export class PostStack {
             // march alpha as magenta overlay
             scenePart.assign(mix(scenePart, vec3(1, 0, 1), clamp(cl4.a, 0, 1)));
           } else {
-            scenePart.assign(scenePart.mul(float(1).sub(cl4.a)).add(cl4.rgb));
+            // depth-aware upsample gate: the cloud RTT is half-res, and
+            // bilinear upsampling smears sky texels (visible through leaf
+            // gaps) onto near geometry — clouds painted over close trees in
+            // a woven pattern (user screenshot). A solid surface nearer
+            // than the cloud-slab entry can have no cloud in front of it:
+            // zero the contribution there. 300 m floor covers downward /
+            // near-horizontal rays where the slab math degenerates.
+            const t0 = float(CLOUD_BOTTOM).sub(camPosW.y).div(dirW.y);
+            const t1 = float(CLOUD_TOP).sub(camPosW.y).div(dirW.y);
+            const ins = camPosW.y
+              .greaterThan(CLOUD_BOTTOM)
+              .and(camPosW.y.lessThan(CLOUD_TOP));
+            const tEnter = ins.select(float(0), t0.min(t1).max(0));
+            const nearSolid = isSky.not().and(dist.lessThan(tEnter.max(300)));
+            const k = nearSolid.select(float(0), float(1));
+            scenePart.assign(
+              scenePart.mul(float(1).sub(cl4.a.mul(k))).add(cl4.rgb.mul(k)),
+            );
           }
         }
       }

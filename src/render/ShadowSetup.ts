@@ -118,10 +118,15 @@ export function setupSunShadows(
   sun.shadow.camera.far = lightMargin + maxFar * 2.2;
 
   if (!ablate.has('pcss')) {
-    const filter = cloudShadow
+    const gate = ablate.has('cloudshadow') ? undefined : cloudShadow;
+    const filter = gate
       ? Fn((inputs: unknown) => {
           const base = (pcssFilter as unknown as (i: unknown) => NF)(inputs);
-          return base.mul(cloudShadow(positionWorld.xz));
+          // clamp + self-equality guard: a single NaN from the cloud-shadow
+          // sample poisons the multiply and erases ALL cast shadows
+          const c = gate(positionWorld.xz);
+          const safe = c.equal(c).select(c.clamp(0, 1), float(1));
+          return base.mul(safe);
         })
       : pcssFilter;
     (sun.shadow as unknown as { filterNode: unknown }).filterNode = filter;

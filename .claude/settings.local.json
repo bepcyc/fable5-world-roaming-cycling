@@ -64,7 +64,8 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebSearch",
       "Bash(sed -n 348,360p src/render/PostStack.ts)",
-      "Bash(sed -n 1,60p node_modules/three/examples/jsm/tsl/display/TRAANode.js)"
+      "Bash(sed -n 1,60p node_modules/three/examples/jsm/tsl/display/TRAANode.js)",
+      "Bash(curl -s \"http://localhost:5173/src/debug/ShadowTestScene.ts\")"
     ]
   }
 }
