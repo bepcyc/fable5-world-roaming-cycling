@@ -84,42 +84,55 @@ feedback comes in chat; the two-frame test is the agent-side acceptance only.
 
 ## Current focus
 
-**Phase 2 — atmosphere, shadows, clouds, post.** STATE AS OF 2026-06-11 (checkpoint for
-context compaction — everything below is BUILT, COMPILING, and RENDERING unless noted):
+**Phase 2 — atmosphere, shadows, clouds, post** + USER FEEDBACK BATCH 1 (2026-06-11).
 
-1. [x] `src/sky/Atmosphere.ts` — Hillaire LUTs (transmittance 256×64, multiscatter 32²,
-       sky-view 192×108 w/ ground-lit horizon term), sun disc, SUN_E=8 unit contract
-       (LUT samples ×SUN_E; sun light = SUN_E·CPU-transmittance), aerial() = analytic
-       atmosphere + boundary-layer height fog (FOG_K 0.22, H0 0.16 km, HF 0.38 km).
-2. [x] `src/sky/SunSky.ts` — ToD sun model (sunDirection static fn), transmittance-tinted
-       DirectionalLight, sky backgroundNode, CubeCamera IBL (NOT visibly contributing —
-       hemisphere ambient stopgap added; Phase 3 probes replace it), `[`/`]` keys step ToD.
-3. [x] `src/render/ShadowSetup.ts` — CSMShadowNode 4×2048 + custom PCSS filterNode
-       (blocker search → penumbra Vogel PCF) + optional cloudShadow multiplier (gates sun
-       only). VERIFIED: cast shadows + blue ambient fill in shots/wip/shadows-v4.png.
-4. [x] `src/sky/Clouds.ts` — perlin-worley 96³ + detail 32³ noise baked, layer 1250–1900 m,
-       march() with Beer–Powder + dual-HG, top-down cloud shadow map (768²) sampled via
-       shadowAt() in the PCSS filter. INTEGRATED into post; **NOT YET VISIBLE in test shot**
-       (shots/wip/clouds-v1.png) — next step: tune coverage/density/weather mapping, verify
-       the slab intersection math, possibly raise coverage 0.46→0.6 to debug.
-5. [x] `src/render/PostStack.ts` — RenderPipeline: scene MRT pass (output/normal/velocity/
-       depth) → aerial+clouds (depth-reconstructed world pos) → GTAO ×mul → TRAA → bloom →
-       GPU auto-exposure (12×12 log-avg into storage buffer, no readback; meter() each
-       frame) → ColorScript grade (per-ToD keyframes in `src/render/ColorScript.ts`,
-       teal-orange at golden) → AgX. Engine renders via `engine.post`.
-6. [ ] REMAINING for Phase 2 close: clouds visible + tuned (incl. shots with cloud sea below
-       summits per Witcher ref), screen-space contact shadows in post, golden-hour gate shot
-       vs reference + shadow-color test (sample 16 shadowed px, chroma must not be gray),
-       DELTA + fix top 3, commit, mark task #3 done.
+User feedback (all four addressed, commits e939266/575b621/next):
+1. PERF "~40fps before objects": root-caused via new `?ablate=` + `--gpusample` median
+   harness → terrain splat material was ~52 ms of a 73.5 ms GPU frame (35 live noise
+   evals/px). Fixed: `NoiseBake.ts` baked value/fbm/ridged + PRE-DERIVED GRADIENT
+   textures; GTAO samples 16→8 (defaults cost ~50 ms on vistas); clouds half-res RTT +
+   baked weather; 3D-distance quadtree split; castShadowPositionNode (nearest, no morph);
+   CSM maxFar 3200. NOW: 19–23 ms GPU @1080p all views (was 73–134). Phase 7 finishes
+   (vsync-real fps; spikes re-check on live flythrough).
+2. EROSION "sharp diagonal/straight 1-cell trenches, predictable lake patterns": particle
+   trace was D8 (8-direction snap) → continuous bilinear-gradient descent w/ inertia;
+   strength field blurred before carve (channels have width); carve faded inside lakes;
+   particles STOP on filled flats (ε-tilt alignment printed parallel lines) and in lakes;
+   hardness-aware talus relax (26 it) post-carve rounds trench walls, towers protected;
+   trench enforcement got V-profile (was rectangular select) + fine meander warp octave
+   (61 m / ±16 m) so spline trenches aren't ruler-straight; kettle ponds render dark
+   (were gravel-gray dots). VERIFIED shots/wip/fix-round2-*.png.
+3. LOD "center always high detail": VERIFIED FALSE for the quadtree (live setPose test:
+   rings follow camera; `?view=lod` debug added). Real causes user saw: far shell beyond
+   world edge + coarse cliffs (see 4). 3D split distance stops altitude over-refine.
+4. MESHING "stretched verts on slopes": skirted patches (PlaneGeometry +2 ring, clamp +
+   drop in shader → crack-proof) + error-biased splits (height-range mip pyramid; rough
+   tiles split earlier and down to 32 m → 0.5 m quads on cliff close-ups). Snow dither
+   gated near boundary (white speckle on rock fixed).
+
+Phase 2 items: 1–5 BUILT as before (atmosphere LUTs, SunSky, CSM+PCSS, clouds, post).
+CLOUDS NOW VISIBLE AND CORRECT — root causes were (a) quad-pass camera uniforms
+(cameraPosition/WorldMatrix/ProjectionMatrixInverse are the POST QUAD camera inside
+RenderPipeline.outputNode → explicit uCamPos/uProjInv/uCamWorld uniforms now) and
+(b) depth convention is CLASSIC here (sky d=1.0, not reversed) → isSky + maxD fixed.
+Aerial perspective only became truly distance-correct with the same fix.
+`?cloudview=1..9` probe ladder kept (tone mapping auto-off when probing).
+
+REMAINING for Phase 2 close:
+- Cloud ART pass: recalibrate weather→coverage so default ~0.5 gives scattered cumulus
+  (currently needs ?cov=0.6–0.75 to look populated); lighting punch (sun silver lining);
+  cloud-sea-below-summits composition for the Witcher golden-hour gate.
+- Screen-space contact shadows post node.
+- Black faceted shadow patches on some peaks (PCSS at grazing angles) — fix before gate.
+- Golden-hour gate vs Witcher ref + shadow-color test (16 px chroma sample), DELTA.md
+  Phase 2 + fix top 3, commit, task #3 done.
 
 ## Next actions (always keep current)
 
-- Debug cloud visibility: shoot with coverage uniform pushed up (e.g. 0.75); check march()
-  slab intersection (camera ABOVE layer looking down = tEnter/tExit both behind? handled),
-  weather field sign, density scale. Then golden-hour vista with clouds among peaks.
-- Then: contact shadows post node; gate battery; close Phase 2.
-- KNOWN visual debts: scene still washy/low-contrast (tune exposure key/grade at gate);
-  IBL env-map path dead (hemisphere covers it); snow on south hero face sparse (gate call).
+- Cloud coverage/lighting art pass (see above), then contact shadows, then gate battery.
+- KNOWN visual debts: washy/low-contrast grade (tune at gate); IBL env path dead
+  (hemisphere covers); snow sparse on S hero face; kettle-pond field density (re-judge
+  after Phase 6 water); terrain tris 20 M at massif view (shadow-pass culling in Ph 5).
 
 ## Key decisions log
 
@@ -211,3 +224,19 @@ split view, ground-clamped camera helper, silhouette/tiling gate + DELTA.md.
 - Per-component Rng streams (seed.rng('x')): adding draws must never re-roll other systems.
 - 1D dispatch >65535 workgroups: three auto-splits to 2D and instanceIndex stays linear —
   but pad-guard every kernel (`If(i >= N) Return()`).
+- RenderPipeline.outputNode runs on a QUAD camera: `cameraPosition`/`cameraWorldMatrix`/
+  `cameraProjectionMatrixInverse` resolve to THAT camera (silently wrong values, no error).
+  Pass scene-camera uniforms explicitly (this is why three's GTAO/TRAA take `camera`).
+- Depth here is CLASSIC convention (sky/clear = 1.0). Verify per pass — don't assume
+  reversed-z. Probe in-shader (paint values) rather than reasoning from docs.
+- Tooling traps: vite fsevents misses tool-driven writes → `server.watch.usePolling` in
+  vite.config; esbuild strips comments from served TS → grep served code for IDENTIFIERS
+  only; numeric literals get rewritten (1000 → 1e3).
+- `fps` in headless ≠ GPU throughput (CPU submits ahead). Use gpuPasses timestamps,
+  median over many samples (`tools/shoot.ts --gpusample N`), plus `?ablate=` attribution.
+- GTAONode defaults (16 samples) cost ~50 ms on 1080p terrain vistas; resolutionScale 0.5
+  produced row-streak artifacts — keep full res, 8 samples.
+- Filled-DEM flats have a UNIFORM ε-tilt: particles crossing them all align to it and
+  print parallel straight lines. Stop particles below ~2× the ε slope (and in lakes).
+- device.onuncapturederror is wired in Engine — silent black frames usually mean a
+  LOGIC bug (wrong uniforms), not a validation error.

@@ -179,17 +179,24 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     .mul(rockW.oneMinus());
   const riverW = smoothstep(0.12, 0.5, flowStrength).mul(smoothstep(0.45, 0.2, slope));
 
-  // snow with hash-dithered edge (reads as crisp organic boundary, not gradient)
-  const dither = hash12(wxz.mul(7.31)).sub(0.5).mul(0.34);
+  // snow with hash-dithered edge (reads as crisp organic boundary, not
+  // gradient). Dither only near the boundary — ungated it sprinkled white
+  // pixels over bare rock wherever snowField hovered above zero.
+  const ditherGate = smoothstep(0.06, 0.22, snowField).mul(smoothstep(0.95, 0.6, snowField));
+  const dither = hash12(wxz.mul(7.31)).sub(0.5).mul(0.34).mul(ditherGate);
   const snowW = smoothstep(0.2, 0.58, snowField.add(dither)).toVar();
 
   // ---------- composite -----------------------------------------------------------
+  // standing water (kettle ponds, lake) — dark sediment + sky-ish film until
+  // Phase 6 real water; painting these as bright gravel read as gray blobs
+  const pondK = smoothstep(1.1, 2.6, riverDepth).mul(smoothstep(0.3, 0.12, slope));
   let col: NV3 = soil;
   col = mix(col, grassCol, grassW);
   col = mix(col, forestFloor, forestW);
   col = mix(col, scree, screeW);
   col = mix(col, rockCol, rockW);
-  col = mix(col, gravel, riverW.mul(0.85));
+  col = mix(col, gravel, riverW.mul(0.85).mul(pondK.oneMinus()));
+  col = mix(col, vec3(0.045, 0.075, 0.07), pondK);
   col = mix(col, snowCol, snowW);
   col = col.mul(macroTint.add(1));
 

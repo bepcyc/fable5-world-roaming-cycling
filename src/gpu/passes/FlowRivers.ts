@@ -62,6 +62,8 @@ export interface FlowOpts {
   seed: number;
   /** designed carving splines — enforced through erosion-deposited dams */
   mp: MacroParams;
+  /** rock hardness 0..1 — post-carve talus relax respects it (protects towers) */
+  hardness: FloatBuffer;
   fillIters?: number;
   particles?: number;
   onProgress?: (msg: string, frac: number) => void;
@@ -145,11 +147,20 @@ export async function runFlowRivers(
     const dLake = wpos.sub(vec2(opts.mp.lakeC[0], opts.mp.lakeC[1])).length();
     const tLake = smoothstep(opts.mp.lakeR, opts.mp.lakeR * 0.25, dLake);
     const trenchFade = smoothstep(0.5, 0.12, tLake);
-    const mainCore = vf.valleyDist.lessThan(22);
-    const tribCore = vf.tribDist.lessThan(9);
+    // V-profile: deepest at the centerline, rim allowance rises smoothly —
+    // a hard select() at fixed distance cut razor-walled rectangular canyons.
+    // Beyond the rim the ceiling exceeds local terrain → constraint inactive.
+    const mainProf = smoothstep(34, 4, vf.valleyDist);
+    const tribProf = smoothstep(14, 1.5, vf.tribDist);
     const enforced = min(
-      mainCore.select(vf.valleyFloor.sub(float(15.2).mul(trenchFade)), float(1e9)),
-      tribCore.select(vf.tribFloor.add(0.4), float(1e9)),
+      vf.valleyFloor
+        .sub(float(15.2).mul(trenchFade).mul(mainProf))
+        .add(mainProf.oneMinus().mul(46))
+        .add(max(vf.valleyDist.sub(30), 0).mul(3)),
+      vf.tribFloor
+        .add(0.4)
+        .add(tribProf.oneMinus().mul(30))
+        .add(max(vf.tribDist.sub(12), 0).mul(3)),
     );
     height.element(i).assign(min(height.element(i), enforced));
   })().compute(N);
@@ -322,31 +333,44 @@ export async function runFlowRivers(
     const px = spawn.mod(res).add(jx).toVar();
     const py = spawn.div(res).floor().add(jy).toVar();
 
-    // steepest-descent walk on the filled DEM (runtime loop — not unrolled)
+    // continuous gradient descent on the filled DEM with directional inertia.
+    // Discrete 8-neighbor steepest descent locked every path onto axis/45°
+    // polylines — the carved rivers read as straight grid scars (user-flagged).
+    const dirX = float(0).toVar();
+    const dirY = float(0).toVar();
     Loop(STEPS, () => {
       const xi = clamp(px, 1, res - 2).toInt();
       const yi = clamp(py, 1, res - 2).toInt();
       const i = yi.mul(res).add(xi);
       atomicAdd(accumU.element(i), uint(1));
-      const wHere = W.element(i).toVar();
-      // pick lowest of 8 neighbors (unrolled fold)
-      let bestDrop: NF = float(-1e9);
-      let bx: NF = float(0);
-      let by: NF = float(0);
-      for (const [ox, oy] of OFFS) {
-        const wn = W.element(at(xi, yi, ox, oy));
-        const drop = wHere.sub(wn).div(Math.hypot(ox, oy));
-        const better = drop.greaterThan(bestDrop);
-        bx = better.select(float(ox), bx);
-        by = better.select(float(oy), by);
-        bestDrop = max(bestDrop, drop);
-      }
-      // stop in flats/lakes; stop at borders
-      If(bestDrop.lessThanEqual(1e-5), () => {
+      // sediment settles where the water column is deep — stop in lakes
+      If(W.element(i).sub(height.element(i)).greaterThan(LAKE_DELTA), () => {
         Break();
       });
-      px.addAssign(bx);
-      py.addAssign(by);
+      // central differences of bilinear W around the continuous position
+      const gp = vec2(px, py);
+      const e = 0.65;
+      const gx = bilerpFloatBuffer(W, res, gp.add(vec2(e, 0))).sub(
+        bilerpFloatBuffer(W, res, gp.sub(vec2(e, 0))),
+      );
+      const gy = bilerpFloatBuffer(W, res, gp.add(vec2(0, e))).sub(
+        bilerpFloatBuffer(W, res, gp.sub(vec2(0, e))),
+      );
+      // flatness cutoff well above the fill's ε-tilt (~0.006/cell): on filled
+      // flats the tilt is uniform, so surviving particles all walk the same
+      // direction and print parallel straight lines across the marsh
+      const gLen = vec2(gx, gy).length();
+      If(gLen.lessThan(0.012), () => {
+        Break();
+      });
+      // inertia keeps channels coherent through grid noise (gentle meanders)
+      const nx = gx.div(gLen).negate();
+      const ny = gy.div(gLen).negate();
+      dirX.assign(dirX.mul(0.45).add(nx.mul(0.55)));
+      dirY.assign(dirY.mul(0.45).add(ny.mul(0.55)));
+      const dLen = vec2(dirX, dirY).length().max(1e-6);
+      px.addAssign(dirX.div(dLen));
+      py.addAssign(dirY.div(dLen));
       If(
         px.lessThan(1).or(px.greaterThan(res - 2)).or(py.lessThan(1)).or(py.greaterThan(res - 2)),
         () => {
@@ -359,46 +383,14 @@ export async function runFlowRivers(
   opts.onProgress?.('hydrology: tracing flow', 0.55);
   await renderer.computeAsync(traceK);
 
-  // --- 3. rivers: strength, carve depth, direction, lakes ---------------------
-  const RIVER_T = particles / N + 14; // accumulation threshold (≈ +14 upstream cells)
-  const carveK = guard(() => {
-    const { x, y, i } = cellXY();
-    // @types/three models AtomicFunctionNode without value semantics; at
-    // runtime atomicLoad yields a u32 expression — cast for the converter
-    const acc = float(atomicLoad(accumU.element(i)) as unknown as NU).toVar();
-    const lakeD = W.element(i).sub(height.element(i)).toVar();
-    const isLake = lakeD.greaterThan(LAKE_DELTA);
-    const t = clamp(acc.div(RIVER_T), 1e-5, 60).toVar();
-    const strength = clamp(t.log2().mul(0.18), 0, 1).mul(t.greaterThan(1).select(1, 0)).toVar();
-    flowStrength.element(i).assign(isLake.select(float(1), strength));
-    // carve: up to ~7 m for the largest rivers, soft-edged via neighbors later
-    const depth = strength.pow(1.4).mul(7);
-    const hNew = height.element(i).sub(depth);
-    height.element(i).assign(hNew);
-    riverDepth.element(i).assign(
-      isLake.select(lakeD, strength.greaterThan(0.01).select(depth.mul(0.45).add(0.12), float(0))),
-    );
-    // flow direction: downhill gradient of W
-    const wl = W.element(at(x, y, -1, 0));
-    const wr = W.element(at(x, y, 1, 0));
-    const wd = W.element(at(x, y, 0, -1));
-    const wu = W.element(at(x, y, 0, 1));
-    const g = vec2(wl.sub(wr), wd.sub(wu));
-    flowDir.element(i).assign(g.div(g.length().max(1e-5)));
-    // moisture source: lakes + marshes + rivers + residual erosion water
-    const marsh = lakeD.greaterThan(MARSH_DELTA).select(float(0.8), float(0));
-    const src = isLake
-      .select(float(1), max(strength.mul(0.85), marsh))
-      .add(clamp(erosionWater.element(i).mul(2), 0, 0.35));
-    moistA.element(i).assign(clamp(src, 0, 1));
-  })().compute(N);
-  carveK.setName('riverCarve');
-  opts.onProgress?.('hydrology: carving rivers', 0.7);
-  await renderer.computeAsync(carveK);
-
-  // --- 4. moisture: separable max-blur then average-blur ----------------------
-  const R = 10; // taps each side; effective radius ~R·texel·passes
-  const makeBlur = (src: FloatBuffer, dst: FloatBuffer, dx: number, dy: number): ComputeNode => {
+  // shared separable triangle blur builder
+  const makeBlur = (
+    src: FloatBuffer,
+    dst: FloatBuffer,
+    dx: number,
+    dy: number,
+    R: number,
+  ): ComputeNode => {
     const k = guard(() => {
       const { x, y, i } = cellXY();
       let sum: NF = float(0);
@@ -410,15 +402,123 @@ export async function runFlowRivers(
       }
       dst.element(i).assign(sum.div(wsum));
     })().compute(N);
-    k.setName('moistBlur');
+    k.setName('sepBlur');
     return k;
   };
+
+  // --- 3a. flow strength from accumulation ------------------------------------
+  const RIVER_T = particles / N + 14; // accumulation threshold (≈ +14 upstream cells)
+  const strengthK = guard(() => {
+    const { i } = cellXY();
+    // @types/three models AtomicFunctionNode without value semantics; at
+    // runtime atomicLoad yields a u32 expression — cast for the converter
+    const acc = float(atomicLoad(accumU.element(i)) as unknown as NU).toVar();
+    const t = clamp(acc.div(RIVER_T), 1e-5, 60);
+    const s = clamp(t.log2().mul(0.18), 0, 1).mul(t.greaterThan(1).select(1, 0));
+    flowStrength.element(i).assign(s);
+  })().compute(N);
+  strengthK.setName('flowStrength');
+
+  // --- 3b. widen: blur the strength field (channels get real width — the
+  //         raw particle lines are one cell wide and carve grid scars) --------
+  opts.onProgress?.('hydrology: widening channels', 0.68);
+  await renderer.computeAsync([
+    strengthK,
+    makeBlur(flowStrength, moistB, 1, 0, 2),
+    makeBlur(moistB, flowStrength, 0, 1, 2),
+  ]);
+
+  // lake-depth field, blurred: post-erosion hummocks leave 2–6 m potholes
+  // everywhere in the wetland — per-cell W−H painted them as dotted ponds.
+  // Blur kills isolated pits; the real lake's interior depth is unaffected.
+  const lakeDepthB = instancedArray(N, 'float');
+  const lakeDepthK = guard(() => {
+    const { i } = cellXY();
+    lakeDepthB.element(i).assign(W.element(i).sub(height.element(i)));
+  })().compute(N);
+  lakeDepthK.setName('lakeDepth');
+  await renderer.computeAsync([
+    lakeDepthK,
+    makeBlur(lakeDepthB, moistB, 1, 0, 3),
+    makeBlur(moistB, lakeDepthB, 0, 1, 3),
+  ]);
+
+  // --- 3c. carve from the blurred field, fade out inside lakes ----------------
+  const carveK = guard(() => {
+    const { x, y, i } = cellXY();
+    const lakeD = lakeDepthB.element(i).toVar();
+    const isLake = lakeD.greaterThan(LAKE_DELTA);
+    // ×2.1 recovers the pre-blur peak so big rivers still reach full depth
+    const sB = clamp(flowStrength.element(i).mul(2.1), 0, 1).toVar();
+    flowStrength.element(i).assign(isLake.select(float(1), sB));
+    // lakebeds keep their filled profile — carving there printed the particle
+    // wander pattern into the basin floor (user-flagged artifact)
+    const lakeFade = smoothstep(LAKE_DELTA * 0.7, 0.12, lakeD);
+    const depth = sB.pow(1.35).mul(7.5).mul(lakeFade);
+    height.element(i).assign(height.element(i).sub(depth));
+    riverDepth.element(i).assign(
+      isLake.select(lakeD, sB.greaterThan(0.02).select(depth.mul(0.45).add(0.12), float(0))),
+    );
+    // flow direction: downhill gradient of W
+    const wl = W.element(at(x, y, -1, 0));
+    const wr = W.element(at(x, y, 1, 0));
+    const wd = W.element(at(x, y, 0, -1));
+    const wu = W.element(at(x, y, 0, 1));
+    const g = vec2(wl.sub(wr), wd.sub(wu));
+    flowDir.element(i).assign(g.div(g.length().max(1e-5)));
+    // moisture source: lakes + marshes + rivers + residual erosion water
+    const marsh = lakeD.greaterThan(MARSH_DELTA).select(float(0.8), float(0));
+    const src = isLake
+      .select(float(1), max(sB.mul(0.85), marsh))
+      .add(clamp(erosionWater.element(i).mul(2), 0, 0.35));
+    moistA.element(i).assign(clamp(src, 0, 1));
+  })().compute(N);
+  carveK.setName('riverCarve');
+  opts.onProgress?.('hydrology: carving rivers', 0.72);
+  await renderer.computeAsync(carveK);
+
+  // --- 3d. talus relax: carved walls collapse to angle of repose --------------
+  // The carve (and any residual erosion notching) leaves near-vertical cell
+  // walls; real channels are flanked by talus. Hardness raises the stable
+  // angle so karst towers and hard strata keep their cliffs.
+  const hT = instancedArray(N, 'float');
+  const hardness = opts.hardness;
+  const texel = opts.texel;
+  const mkRelax = (src: FloatBuffer, dst: FloatBuffer): ComputeNode => {
+    const k = guard(() => {
+      const { x, y, i } = cellXY();
+      const hC = src.element(i).toVar();
+      const hardC = hardness.element(i).toVar();
+      const talusC = float(texel).mul(hardC.mul(hardC).mul(2.8).add(0.62));
+      let delta: NF = float(0);
+      for (const [ox, oy] of OFFS.slice(0, 4)) {
+        const ni = at(x, y, ox, oy);
+        const hN = src.element(ni);
+        const hardN = hardness.element(ni);
+        const talusN = float(texel).mul(hardN.mul(hardN).mul(2.8).add(0.62));
+        const dOut = hC.sub(hN).sub(talusC).max(0); // we shed downhill
+        const dIn = hN.sub(hC).sub(talusN).max(0); // neighbor sheds onto us
+        delta = delta.add(dIn.sub(dOut));
+      }
+      dst.element(i).assign(hC.add(delta.mul(0.12)));
+    })().compute(N);
+    k.setName('talusRelax');
+    return k;
+  };
+  const relaxAB = mkRelax(height, hT);
+  const relaxBA = mkRelax(hT, height);
+  opts.onProgress?.('hydrology: talus relax', 0.78);
+  for (let it = 0; it < 13; it++) {
+    await renderer.computeAsync([relaxAB, relaxBA]);
+  }
+
+  // --- 4. moisture: separable blur --------------------------------------------
   opts.onProgress?.('hydrology: moisture field', 0.85);
   await renderer.computeAsync([
-    makeBlur(moistA, moistB, 1, 0),
-    makeBlur(moistB, moistA, 0, 1),
-    makeBlur(moistA, moistB, 1, 0),
-    makeBlur(moistB, moistA, 0, 1),
+    makeBlur(moistA, moistB, 1, 0, 10),
+    makeBlur(moistB, moistA, 0, 1, 10),
+    makeBlur(moistA, moistB, 1, 0, 10),
+    makeBlur(moistB, moistA, 0, 1, 10),
   ]);
 
   return {

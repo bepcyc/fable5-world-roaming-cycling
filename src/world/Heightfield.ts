@@ -143,6 +143,7 @@ export class Heightfield {
       texel: WORLD_SIZE / cfg.simRes,
       seed: seed.sub('hydrology'),
       mp,
+      hardness: synthSim.hardness,
       onProgress: (msg, frac) => progress(0.55 + frac * 0.12, msg),
     });
 

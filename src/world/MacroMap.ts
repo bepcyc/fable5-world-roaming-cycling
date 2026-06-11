@@ -169,7 +169,13 @@ export function valleyFields(p: NV2, mp: MacroParams): ValleyFields {
     mx_noise_float(p.div(290).add(vec2(o.warp[0], o.warp[1]))),
     mx_noise_float(p.div(290).add(vec2(o.warp[1] + 53, o.warp[0] - 53))),
   ).mul(85);
-  const pWarped = p.add(vWarpV);
+  // fine meander octave: spline segments are straight lines — without this
+  // the carved trenches read as long ruler-straight scars (user-flagged)
+  const vWarpF = vec2(
+    mx_noise_float(p.div(61).add(vec2(o.warp[0] + 211, o.warp[1] - 97))),
+    mx_noise_float(p.div(61).add(vec2(o.warp[1] - 131, o.warp[0] + 173))),
+  ).mul(16);
+  const pWarped = p.add(vWarpV).add(vWarpF);
   const valley = splineField(pWarped, mp.valley, mp.valleyFloors);
   const trib = splineField(pWarped, mp.trib, mp.tribFloors);
   return {
