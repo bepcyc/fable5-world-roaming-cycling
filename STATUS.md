@@ -419,3 +419,13 @@ split view, ground-clamped camera helper, silhouette/tiling gate + DELTA.md.
 - An "identical render" after a lighting change usually means auto-exposure
   re-normalized it away: judge lighting work by ablate A/B DIFFS and the
   ?view=probes ambient view, not by absolute frame brightness.
+- MeshGrower enforces NO winding convention — every generator owns its own.
+  Tube basis (N, B=T×N) needs base-ring-first quads (a[k], a[k+1], b[k+1],
+  b[k]) for outward fronts; an x/z lathe param (cos a, ·, sin a) is LEFT-
+  handed → the MIRROR order; caps advancing along −T flip handedness again.
+  DoubleSide masks reversed winding silently (bark "insurance" hid the tube
+  bug for two phases) — FrontSide materials (deadwood/mushroom/rock) expose
+  it. User-reported on logs/stumps/branches; fixed at source 1a80f86.
+  Also: tubes have no ring-0 cap — fine attached to a parent, an OPEN HOLE
+  on free-lying deadfall (capBase opt). Verify new closed geometry with
+  ?facedbg=1 (front green / back red) before shipping it.
