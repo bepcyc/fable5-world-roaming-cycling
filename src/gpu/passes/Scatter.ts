@@ -384,7 +384,7 @@ export async function runScatter(
     });
 
     const clump = clumpField(wpos, sT ^ 0x51f3);
-    const dens = byBiome(s.bioId, [0, 0.18, 0.72, 0.78, 0.045, 0.22]);
+    const dens = byBiome(s.bioId, [0, 0.22, 0.8, 0.85, 0.06, 0.26]);
     const clumpFloor = byBiome(s.bioId, [0, 0.15, 0.3, 0.35, 0.04, 0.12]);
     const slopeFade = float(1).sub(smoothstep(0.5, 0.95, s.slope));
     const treelineFade = float(1).sub(
@@ -397,7 +397,7 @@ export async function runScatter(
       .mul(treelineFade)
       .mul(snowFade)
       .mul(s.vegDens.mul(0.85).add(0.15))
-      .mul(float(1).sub(s.rockExp.mul(0.8)));
+      .mul(float(1).sub(s.rockExp.mul(0.65)));
     If(cellHash(cell, sT ^ 0x1234f).greaterThanEqual(accept), () => {
       Return();
     });

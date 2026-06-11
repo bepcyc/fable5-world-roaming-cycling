@@ -81,11 +81,19 @@ import { buildRock } from './RockBuilder';
 import type { WorldSeed } from '../core/Seed';
 
 const GRASS_GRID = 3072;
-const GRASS_CELL = 0.0858; // m → ±132 m ring, ~136 slots/m² (800k-blade floor)
-const GRASS_R = 124;
+const GRASS_CELL = 0.105; // m → ±161 m ring, ~90 slots/m²
+const GRASS_R = 155;
 const G_NEAR = 30;
 const G_MID = 70;
 const GRASS_CAPS = [327680, 655360, 1572864]; // near/mid/far compact regions
+
+/**
+ * Continuous distance thinning, conserved by blade widening (1/√thin in the
+ * vertex stage). thin(0..~40 m) = 1; ~0.45 at 100 m; ~0.3 at 155 m.
+ */
+function grassThin(dist: NF): NF {
+  return float(58).div(dist.max(1).add(42)).min(1).pow(1.15);
+}
 
 const DEB_GRID = 448;
 const DEB_CELL = 0.3; // ±67 m ring
@@ -209,7 +217,7 @@ function tuftGeometry(): BufferGeometry {
   const nrm: number[] = [];
   const uvA: number[] = [];
   const idx: number[] = [];
-  const W = 0.055;
+  const W = 0.04;
   for (let k = 0; k < 2; k++) {
     const a = k * 1.92 + 0.4;
     const c = Math.cos(a);
@@ -365,17 +373,22 @@ export class GroundRing {
       const canopy = canopyAt(canopyTex, wpos);
       // soft bank margin — a hard depth cut prints a razor arc along streams
       const bank = float(1).sub(smoothstep(0.08, 0.28, fl.z));
-      const dens = byBio(bioId, [0.04, 0.55, 0.5, 0.55, 1.3, 1.0])
+      const dens = byBio(bioId, [0.12, 0.6, 0.55, 0.6, 1.3, 1.0])
         .mul(bank)
         .mul(bio.z.mul(0.85).add(0.15))
-        .mul(float(1).sub(bio.w.mul(0.7)))
+        .mul(float(1).sub(bio.w.mul(0.55)))
         .mul(float(1).sub(bio.y.mul(0.95)))
         .mul(float(1).sub(canopy.mul(0.45)))
         .mul(float(1).sub(smoothstep(0.55, 0.95, ns.w)))
         .mul(fl.x.mul(0.35).add(0.75));
-      const edge = float(1).sub(smoothstep(GRASS_R * 0.85, GRASS_R, dist));
-      const lodK = float(1); // tufts are 4 tris — full density to the ring edge
-      If(cellHash(wc, salt ^ 0x77a1).greaterThanEqual(dens.mul(edge).mul(lodK)), () => {
+      // coverage-conserving continuous LOD ("cheap nanite for aggregates"):
+      // accept thins SMOOTHLY with distance — survivors widen by 1/sqrt(thin)
+      // in the vertex stage, so screen coverage stays constant and there are
+      // no density bands; the ring then dissolves into the field-matched
+      // terrain splat instead of ending at an edge.
+      const thin = grassThin(dist);
+      const edge = float(1).sub(smoothstep(GRASS_R * 0.9, GRASS_R, dist));
+      If(cellHash(wc, salt ^ 0x77a1).greaterThanEqual(dens.mul(edge).mul(thin)), () => {
         Return();
       });
       If(inFrustum(vec3(wpos.x, h.add(0.5), wpos.y), 1.4).lessThan(0.5), () => {
@@ -561,11 +574,21 @@ export class GroundRing {
     // patch-level (≈1.6 m) dryness/hue so meadows read as drifts, not noise
     const patch = cellHash2(wc.mul(0.125).floor(), bind.salt ^ 0x3333);
     const tilt = cellHash2(wc, bind.salt ^ 0x4545).sub(0.5).mul(0.5);
-    const bladeH = h2.x.pow(1.3).mul(0.3).add(0.2).mul(tuft ? 2.3 : 1);
+    const dist = wpos.sub(vec2(cameraPosition.x, cameraPosition.z)).length();
+    // width compensation for the continuous thinning — coverage conserved
+    const widen = float(1).div(grassThin(dist).sqrt()).clamp(1, 2.6);
+    const bladeH = h2.x
+      .pow(1.3)
+      .mul(0.3)
+      .add(0.2)
+      .mul(tuft ? 2.0 : 1)
+      .mul(widen.sub(1).mul(0.3).add(1));
     const yawA = h2.y.mul(6.2831853);
     const c = yawA.cos();
     const s = yawA.sin();
-    const ls = positionLocal.mul(vec3(tuft ? 1.7 : 0.9, bladeH, 1));
+    const ls = positionLocal.mul(
+      vec3(widen.mul(tuft ? 1.5 : 1.15), bladeH, 1),
+    );
     const rx = ls.x.mul(c).add(ls.z.mul(s));
     const rz = ls.z.mul(c).sub(ls.x.mul(s));
     // random lean (shear) — vertical uniform blades read as planted corn
@@ -595,8 +618,7 @@ export class GroundRing {
     mat.roughness = 0.88;
     mat.metalness = 0;
     mat.side = DoubleSide;
-    const dist = wpos.sub(vec2(cameraPosition.x, cameraPosition.z)).length();
-    bandFade(mat, dist, fades[0], fades[1], fades[0] === null && fades[1] === G_NEAR ? 3 : 6);
+    bandFade(mat, dist, fades[0], fades[1], 12);
     return mat;
   }
 

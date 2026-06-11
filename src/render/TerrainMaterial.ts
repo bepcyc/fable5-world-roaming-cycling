@@ -165,13 +165,18 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const soil = mix(vec3(0.155, 0.12, 0.085), vec3(0.24, 0.195, 0.135), meso).mul(
     micro.mul(0.2).add(0.9),
   );
-  // grass field color: deep cool greens (must sit BELOW the foliage palette
-  // in value or planted greens read pasted-on); dry patches are accents
-  const grassG = mix(vec3(0.082, 0.155, 0.045), vec3(0.155, 0.23, 0.072), macroA);
-  const grassDry = vec3(0.26, 0.225, 0.1);
-  const grassCol = mix(grassG, grassDry, smoothstep(0.7, 0.92, macroB)).mul(
-    meso.mul(0.25).add(0.85),
-  );
+  // grass field color = the FINAL grass LOD: matched to the blade-ring
+  // palette (screen-average of the blade ramps) with the SAME ~1.6 m patch
+  // dryness, so the geometric grass dissolves into this instead of ending
+  // at a visible ring edge ("empty terrain" feedback)
+  const patchN = val(1.6, 0.23, 0.77);
+  const grassG = mix(vec3(0.036, 0.094, 0.019), vec3(0.06, 0.13, 0.028), macroA);
+  const grassDry = vec3(0.15, 0.122, 0.052);
+  const grassCol = mix(
+    grassG,
+    grassDry,
+    smoothstep(0.6, 0.92, patchN.mul(0.55).add(macroB.mul(0.45))),
+  ).mul(meso.mul(0.25).add(0.85));
   // forest floor: litter brown blended w/ moss by moisture
   const litter = mix(soil, vec3(0.18, 0.15, 0.095), meso);
   const mossy = vec3(0.11, 0.185, 0.065);
