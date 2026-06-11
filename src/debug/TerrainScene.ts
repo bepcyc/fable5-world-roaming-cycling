@@ -192,6 +192,13 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   ctx.progress(0.97, 'sky: baking cloud noise');
   const clouds = new Clouds(sunSky.atmosphere);
   await clouds.init(engine.renderer);
+  // weather motion (Pillar F): drift on WORLD time so ?freeze=1 shots stay
+  // deterministic; the drifted shadow map re-bakes itself every ~2.5 s
+  let lastWt = 0;
+  engine.onUpdate((_dt, wt) => {
+    clouds.tick(engine.renderer, wt - lastWt);
+    lastWt = wt;
+  });
 
   // 4-cascade CSM + PCSS contact hardening; cloud shadows gate the sun term
   const shadowRig = setupSunShadows(sunSky.sun, engine.camera, (wxz) =>

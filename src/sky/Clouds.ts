@@ -9,7 +9,7 @@
  *    material and the light shaft pass
  */
 
-import { HalfFloatType, RedFormat } from 'three';
+import { HalfFloatType, RedFormat, Vector2 } from 'three';
 import type { Renderer } from 'three/webgpu';
 import { Storage3DTexture, StorageTexture } from 'three/webgpu';
 import {
@@ -37,6 +37,7 @@ import {
   vec4,
 } from 'three/tsl';
 import type { NF, NI, NV2, NV3 } from '../gpu/TSLTypes';
+import { windU } from '../render/Wind';
 import { WORLD_SIZE } from '../world/WorldConst';
 import type { Atmosphere } from './Atmosphere';
 import { SUN_E } from './Atmosphere';
@@ -65,6 +66,18 @@ export class Clouds {
   private shadowKernel: Parameters<Renderer['computeAsync']>[0] | null = null;
   /** ?cloudflat=1 — constant density slab, bypasses noise textures (bisect) */
   private flatDebug = false;
+  /**
+   * Weather motion (Phase 6 / Pillar F "clouds evolve"): the whole field
+   * translates downwind at cloud-layer speed; the detail erosion drifts
+   * 1.35× faster, so masses churn instead of sliding as a rigid sheet.
+   * CPU-owned clock (uniform) so the periodic shadow re-bake and the live
+   * lookup agree exactly.
+   */
+  private readonly uTime = uniform(0);
+  private readonly uDriftBase = uniform(new Vector2());
+  private timeAcc = 0;
+  private lastBakeT = -1e9;
+  private readonly DRIFT_V = 22; // m/s at the cloud layer
 
   constructor(atmosphere: Atmosphere) {
     this.atmosphere = atmosphere;
@@ -175,7 +188,7 @@ export class Clouds {
         // shift sample along the sun's horizontal direction as we ascend
         const k = h.sub(CLOUD_BOTTOM).div(sunDir.y.abs().max(0.15));
         const sp = wpos.add(vec2(sunDir.x, sunDir.z).mul(k).negate());
-        tau.addAssign(this.sampleDensity(vec3(sp.x, h, sp.y), false).mul(dh));
+        tau.addAssign(this.sampleDensity(vec3(sp.x, h, sp.y), false, true).mul(dh));
       });
       const trans = exp(tau.mul(-0.045));
       textureStore(this.shadowMap, uvec2(x.toUint(), y.toUint()), vec4(trans, 0, 0, 1)).toWriteOnly();
@@ -187,25 +200,60 @@ export class Clouds {
 
   /** re-bake the shadow map (call after sun changes) */
   async refreshShadow(renderer: Renderer): Promise<void> {
+    this.uDriftBase.value
+      .set(windU.dir.value.x, windU.dir.value.y)
+      .multiplyScalar(this.timeAcc * this.DRIFT_V);
+    this.lastBakeT = this.timeAcc;
     if (this.shadowKernel) await renderer.computeAsync(this.shadowKernel);
   }
 
-  /** cloud density at a world position (m). detail=false for cheap shadow march */
-  sampleDensity(wp: NV3, detail: boolean): NF {
+  /** per-frame: advance the weather clock; re-bake the drifted shadow ~2.5 s */
+  tick(renderer: Renderer, dt: number): void {
+    this.timeAcc += dt;
+    this.uTime.value = this.timeAcc;
+    if (this.timeAcc - this.lastBakeT > 2.5 && this.shadowKernel) {
+      this.uDriftBase.value
+        .set(windU.dir.value.x, windU.dir.value.y)
+        .multiplyScalar(this.timeAcc * this.DRIFT_V);
+      this.lastBakeT = this.timeAcc;
+      renderer.compute(this.shadowKernel as Parameters<Renderer['compute']>[0]);
+    }
+  }
+
+  /** downwind translation of the cloud field at time t (m) */
+  private driftAt(t: NF): NV2 {
+    return vec2(windU.dir as unknown as NV2).mul(t.mul(this.DRIFT_V));
+  }
+
+  /**
+   * cloud density at a world position (m). detail=false for the shadow
+   * march. `frozen=true` bakes with the drift FIXED at uDriftBase (the
+   * shadow map re-bakes every few seconds; shadowAt applies the residual).
+   */
+  sampleDensity(wp: NV3, detail: boolean, frozen = false): NF {
     const hNorm = wp.y.sub(CLOUD_BOTTOM).div(CLOUD_TOP - CLOUD_BOTTOM);
     const inLayer = smoothstep(0, 0.12, hNorm).mul(smoothstep(1, 0.55, hNorm));
     if (this.flatDebug) return inLayer.mul(0.3).mul(float(this.density));
+    const drift = frozen
+      ? (vec2(this.uDriftBase) as unknown as NV2)
+      : this.driftAt(this.uTime as unknown as NF);
+    const xz = wp.xz.sub(drift);
     // weather/coverage field: large-scale variation breaks the layer into
     // cumulus masses with clear lanes (baked texture — fbm here was the
     // hottest math in the march: 40 steps × 4 sun taps × 3 octaves)
-    const wUv = wp.xz.div(WEATHER_WORLD).add(0.5).fract();
+    const wUv = xz.div(WEATHER_WORLD).add(0.5).fract();
     // contrast-stretch: raw fbm hovers near 0.5 — dense cores + clear lanes
     const weather = smoothstep(0.3, 0.78, texture(this.weatherMap, wUv, 0).x);
     const cov = clamp(weather.sub(float(1).sub(float(this.coverage))), 0, 1).mul(2.2);
-    const base = texture3D(this.baseNoise, wp.div(3600).fract(), 0).x;
+    const base = texture3D(this.baseNoise, vec3(xz.x, wp.y, xz.y).div(3600).fract(), 0).x;
     let dens = clamp(base.mul(cov).sub(float(0.32).mul(hNorm.add(0.45))), 0, 1).mul(inLayer);
     if (detail) {
-      const det = texture3D(this.detailNoise, wp.div(420).fract(), 0).x;
+      // detail erodes at a different drift rate — shapes churn, not slide
+      const drift2 = frozen
+        ? (vec2(this.uDriftBase) as unknown as NV2)
+        : this.driftAt((this.uTime as unknown as NF).mul(1.35));
+      const xz2 = wp.xz.sub(drift2);
+      const det = texture3D(this.detailNoise, vec3(xz2.x, wp.y, xz2.y).div(420).fract(), 0).x;
       dens = clamp(dens.sub(det.mul(0.22).mul(float(1).sub(dens))), 0, 1);
     }
     return dens.mul(float(this.density));
@@ -213,7 +261,12 @@ export class Clouds {
 
   /** sample the top-down cloud shadow transmittance at a world xz */
   shadowAt(wxz: NV2): NF {
-    const uv = wxz.div(SHADOW_WORLD).add(0.5);
+    // shift by the drift accumulated since the last shadow bake (kept ≤ a
+    // few seconds by tick() — the offset never nears the map border)
+    const resid = this.driftAt(this.uTime as unknown as NF).sub(
+      vec2(this.uDriftBase) as unknown as NV2,
+    );
+    const uv = wxz.sub(resid).div(SHADOW_WORLD).add(0.5);
     const inside = smoothstep(0.0, 0.02, uv.x)
       .mul(smoothstep(1.0, 0.98, uv.x))
       .mul(smoothstep(0.0, 0.02, uv.y))
