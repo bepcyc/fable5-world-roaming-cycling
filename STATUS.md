@@ -196,6 +196,80 @@ cov 0.62), contact shadows (?ablate=contact to A/B), black facets root-caused to
 
 ## Next actions (always keep current)
 
+- **USER FEEDBACK BATCH 2 (2026-06-12, live session after Phase 6 +
+  bookmarks) — WORK THIS LIST FIRST, in roughly this order. User wording
+  preserved; agent root-cause notes inline.**
+  1. WIND REPETITIVE (trees/shrubs): "move slower for a bit, then they
+     shake two times, over and over... very unrealistic". Grass is
+     "semi-okay". ROOT CAUSE: flutter/pump are pure fixed-frequency sines
+     (Wind.ts: pump 1.1 Hz, f1 ~3.4+gust·1.6, f2 2.3) → global beat
+     envelope every few seconds, same rhythm on every plant (phase
+     offsets don't break the shared TEMPO). FIX: replace sin oscillators
+     with advected-noise sampling (aperiodic — e.g. fbm at 2 speeds via
+     noiseA like gustAt but faster/smaller), add per-INSTANCE frequency
+     jitter (not just phase), amplitude driven by the traveling gust
+     field. Keep grass as-is mostly.
+  2. FOG WASHES OUT THE SCENE: "so global that it simply washes out the
+     scene... already washed out feeling". FIX: cut Froxels base density
+     (fogK default 1.0 → ~0.4), make it valley/moisture-SELECTIVE
+     (stronger ground-hug, much weaker altitude layer), near-zero at
+     noon; reduce the flat ambient in-scatter term (it lifts blacks
+     everywhere = wash). Also consider scene contrast generally (user
+     says scene already felt washed out BEFORE fog — grade/exposure may
+     need a contrast pass; check ColorScript noon curve).
+  3. WATER NEAR-CAMERA REPETITIVE PATTERN: "the water thing you did
+     recently added a weird very repetitive pattern close to the camera.
+     i get the idea" — = CAUSTICS (6 m tile, integer wave lattice is
+     periodic INSIDE the tile too). FIX: domain-warp the caustic sample
+     uv (fbm gradient offset), bigger tile (6→11 m?), second decorrelated
+     tap (different scale/rotation) blended — kill visible tiling. Maybe
+     also slightly lower gain near camera.
+  4. SNOW PARTICLES: fine, leave.
+  5. IMPOSTOR OUTLINE (older bug): "blurrying... at edges turns into an
+     outline effect... easy to distinguish impostors from actual trees".
+     ROOT CAUSE: atlas alpha-edge bleed — bilinear samples across the
+     alpha boundary mix in background/empty texel RGB → halo. FIX:
+     post-capture RGB DILATION into transparent texels (flood edge colors
+     outward, Impostors.ts capture step) + check alphaTest/mip settings
+     on the impostor material.
+  6. LOD RING TRANSPARENCY BANDS (older bug): "two easy to distinguish
+     rings around the camera where things are more transparent, no
+     overlap". ROOT CAUSE CONFIRMED IN CODE: applyDitherFade masks BOTH
+     rings with IGN.lessThan(fade) — incoming ring's drawn pixel set is a
+     SUBSET of outgoing's (both small-IGN), so at a 50/50 crossover 50%
+     of pixels draw NEITHER ring = hole bands. FIX: COMPLEMENTARY dither —
+     fade-IN rings must use the inverted pattern (draw when IGN >
+     1−fade) so out+in partition the pixels exactly. VegInstance
+     applyDitherFade: invert for fadeInAt edge. Re-check band widths
+     after (holes were probably most of the visible banding).
+  7. GRASS NORMALS: user asks if blade normals point UP (terrain-normal
+     trick). CHECK GroundRing grass: if using geometric blade normals,
+     switch to up/terrain-blended.
+  8. GRASS DISTANCE: render much farther, cheaply — "bake a texture of
+     what grass would look like from afar... or industry best tricks".
+     PLAN: extend the tuft-cross band (g2) far beyond 155 m with
+     aggressive coverage-conserving thinning+widening; strengthen the
+     splat match (it IS the baked far layer) + consider a view-dependent
+     grass sheen term on the splat so distant meadows get the directional
+     brightness real grass fields have.
+  9. ROUNDED BLADE NORMALS (Ghost of Tsushima trick): curve the normal
+     across blade width (half-cylinder shading) instead of flat card
+     normal — do together with 7.
+  10. SUN DISC TOO SMALL: "small dot instead of a normal sized sun" —
+     Atmosphere background sun disc: render 2.5–4× angular size with a
+     soft limb (games oversize the disc; 0.53° physical reads tiny).
+  11. SUNLIT FOLIAGE TURNS SILVER: "sunlight... makes things SILVER...
+     loses color, grayish". ROOT CAUSE: white dielectric specular at
+     glancing sun on foliage cards (F0 0.04 + roughness still lets a
+     desaturating white sheen through; cards have one flat normal each =
+     coherent sheen). FIX: cut specularIntensity on foliage/card
+     materials to ~0.2–0.3 (keep a little for life), rely on
+     translucency+diffuse for the lit look. Check grass too.
+  Suggested order: 6 (pure win, small), 1 (top complaint), 2, 3, 11, 10,
+  7+9, 5, 8. Re-shoot canonical framings after each; commit per item or
+  small groups. These fold INTO Phase 7 (user-feedback loop is part of
+  the phase's "final delta" work).
+
 - **PHASE 6 COMPLETE (2026-06-12, commits eef662f..51aba85) — all six
   systems built, verified by shots, gate DELTA written.** What landed
   this session (beyond the user-confirmed water v1):
