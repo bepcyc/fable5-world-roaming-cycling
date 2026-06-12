@@ -7,3 +7,4 @@ shots/*
 !shots/phase-*
 !shots/phase-*/**
 *.log
+.claude/

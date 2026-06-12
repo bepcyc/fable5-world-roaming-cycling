@@ -106,11 +106,17 @@ async function main(): Promise<void> {
   let px: number | null = null;
   let pz: number | null = null;
   let scan = false;
+  let poses: string | null = null;
+  let yawOne = 0;
+  let pitchOne = 0;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--T') T = Number(argv[++i]);
     if (argv[i] === '--x') px = Number(argv[++i]);
     if (argv[i] === '--z') pz = Number(argv[++i]);
     if (argv[i] === '--scan') scan = true;
+    if (argv[i] === '--poses') poses = String(argv[++i]);
+    if (argv[i] === '--yaw') yawOne = Number(argv[++i]);
+    if (argv[i] === '--pitch') pitchOne = Number(argv[++i]);
     if (argv[i] === '--extra') {
       const [k, v] = String(argv[++i]).split('=');
       if (k && v !== undefined) extra[k] = v;
@@ -130,6 +136,34 @@ async function main(): Promise<void> {
     await page.waitForFunction(() => window.__laas && window.__laas.ready === true, undefined, {
       timeout: 240_000,
     });
+
+    // --poses "x,z;x,z;..." --yaw N [--pitch P]: one framing per stand
+    // point, eye = ground+1.7, unique filenames (parallel runs of the
+    // yaw-sweep mode clobbered each other's horizon-yawN.png once)
+    if (poses !== null) {
+      for (const pair of poses.split(';')) {
+        const [sx, sz] = pair.split(',').map(Number);
+        if (sx === undefined || sz === undefined || !Number.isFinite(sx) || !Number.isFinite(sz))
+          continue;
+        const g = await page.evaluate(
+          (q) => window.__laas.groundProbe?.(q[0], q[1]),
+          [sx, sz] as [number, number],
+        );
+        if (!g) throw new Error('no groundProbe hook');
+        const ey = Math.max(g.ground, g.water) + 1.7;
+        await page.evaluate(
+          (p) => window.__laas.setPose?.(p),
+          { p: [sx, ey, sz] as [number, number, number], yaw: yawOne, pitch: pitchOne },
+        );
+        await page.evaluate(async () => {
+          if (window.__laas.settle) await window.__laas.settle(24);
+        });
+        const file = `shots/wip/scout-${sx}_${sz}.png`;
+        writeFileSync(file, await page.screenshot());
+        console.log(`${file}  cam="${sx},${ey.toFixed(1)},${sz},${yawOne.toFixed(4)},${pitchOne}"`);
+      }
+      return;
+    }
 
     if (scan) {
       const json = String(await page.evaluate(FLATSCAN));

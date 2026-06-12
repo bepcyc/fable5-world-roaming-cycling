@@ -673,6 +673,38 @@ cov 0.62), contact shadows (?ablate=contact to A/B), black facets root-caused to
   lens/dome cases that killed min-of-wet, narrow channels at
   distance, level-boundary pop. Alternatively the long-queued
   planar-lake pass / per-water-body far field solves it structurally.
+  ROUND 3 (2026-06-12): the min-reduce-dip hypothesis was TESTED AND
+  REFUTED for the visible shards — the mixed-footprint vertex gate
+  (full-field sampling all levels + 5-tap collapse for cell ≥ 6) was
+  implemented, verified present in the served module, and the white
+  shards at bm2 AND both SW-lakeshore framings were UNCHANGED. The
+  gate was REVERTED (never committed) per ship discipline: it didn't
+  fix the target and its own benefit (flat far lakes) was never
+  independently verified — re-derive from this entry if the far-dip
+  item is picked up again. NEW EVIDENCE, foam channel (?waterdbg=1
+  at bm2): foam SATURATES in a broad gradient across the far half of
+  the lake exactly where the slabs sit ⇒ the white slabs are
+  SHORE-FOAM (colorNode = white × foam, sun-lit) painted far beyond
+  any real shallow zone. shoreFoam keys on vDepth =
+  thick·max(|viewDir.y|, 0.06) — suspects: (a) the 0.06 grazing
+  floor manufacturing "shallow" at grazing views; (b) thick =
+  fragZ − zScene collapsing where the opaque depth behind far-rim
+  water belongs to the BANK at the waterline (ray-thin ≠ shallow);
+  (c) something zeroing thick wholesale at this framing — the
+  ?waterdbg=5 (thick/vDepth) probe at bm2 painted the ENTIRE lake
+  black (thick ≈ 0 everywhere?!) but that frame is UNREADABLE: the
+  near-zero emissive debug dragged auto-exposure way up and the dawn
+  grade washed the rest red. RERUN ?waterdbg=5 with exposure killed
+  (NoToneMapping like the ?cloudview path, or ?lockexp=1, and at
+  T=12 — bm2-noon shows the slabs too) before trusting any thick
+  conclusion. ALSO RE-EXPLAINED: the "dark hummocky swells" — the
+  waterdbg opacity-1 view shows the water mesh covering that whole
+  area, so the swells are the BED REFRACTED through near-transparent
+  water (opacityNode keys on the same vDepth → one false-shallow
+  root, two symptoms: foam white + see-through). The earlier
+  "swells persist under ablate=water ⇒ terrain" read needs
+  re-judging — the bed may itself be hummocky AND the water may be
+  wrongly transparent; both can be true.
 
 ## Key decisions log
 
