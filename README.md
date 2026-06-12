@@ -12,7 +12,7 @@ LAAS is a fully procedural 4×4 km open world running in the browser on WebGPU: 
 
 The goal of this project is to test the capabilities of Claude Fable 5, Anthropic's newest model. This repository was built roughly 99% by the model, with minimal human steering:
 
-- The human wrote one document: [PROJECT_LAAS_v2.md](PROJECT_LAAS_v2.md) — the brief. It sets the visual bar (UE5-class reference frames), hard floors (triangle counts, system list, world size), and banned outcomes (black shadows, cloned trees, fog as cover). It deliberately does not say how to build any of it.
+- The human partially wrote one document: [PROJECT_LAAS_v2.md](PROJECT_LAAS_v2.md) — the brief. It sets the visual bar (UE5-class reference frames), hard floors (triangle counts, system list, world size), and banned outcomes (black shadows, cloned trees, fog as cover). It deliberately does not say how to build any of it.
 - Everything else was planned and executed by Fable 5 across long autonomous sessions: the architecture, all engine and world systems, the verification tooling, the debugging, the working notes, and this README.
 - Human input is limited to rare feedback on the things a model cannot judge well from static output: whether motion effects feel right, whether interactive performance holds up, whether an artifact is visible while moving. Examples from the log: wind sway amplitude, walk-camera bob, cloud motion lagging the camera, water coverage taste.
 
