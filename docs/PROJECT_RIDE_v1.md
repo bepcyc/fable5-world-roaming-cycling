@@ -68,7 +68,7 @@ The LAAS spec (`PROJECT_LAAS_v2.md`) still governs the *world's* visual quality.
 - **P4 slope-block** — MTB is blocked above the matrix slope limit; hike passes the same slope, slowed per matrix.
 - **P5 HUD-warning** — the impassable warning fires ≥ 2 s (at current speed) before the zone boundary.
 - **P6 sensor-dropout** — power source disconnect mid-ride → bike coasts to a natural stop, reconnect UI appears, no crash, no ghost power.
-- **P7 demo-badge** — whenever the demo source is active, the DEMO badge is present in the DOM (already covered by the session-0 HUD verify probe).
+- **P7 demo-badge** — whenever the demo source is active, the DEMO badge is present in the DOM (implemented: `tools/probe-ridehud.ts`, which also asserts visibility/toggle/real-speed behavior).
 
 Probe tolerances live next to the matrix they test. A milestone's acceptance criteria name their probes explicitly (see `docs/ROADMAP.md`).
 

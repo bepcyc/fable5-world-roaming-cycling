@@ -41,3 +41,5 @@ Secondary datapoint: fps chip read ~8 fps at 1600×900 during flythrough (HUD-ve
 ## Reading
 
 The world renders correctly and looks right on RADV (screenshot-verified), at ~4 fps native. This is the honest floor of this machine against the untouched LAAS bar; per the owner directive, no session time goes into raising it. Perf work, when it ever happens, targets the real play machine (OPEN-QUESTIONS Q1) in the Phase-3 high-speed pass (`docs/ROADMAP.md` M3.3). Raw data: session-0 scratchpad `baseline.json` (numbers reproduced above in full).
+
+**Reproduce:** dev server on :5173, then `npx tsx tools/perf-baseline.ts` (defaults = this exact suite: native 3440×1440, bookmarks 1,2,3,4,7, 30 s each + 45 s flythrough; adapter asserted in-run and written to the JSON output).

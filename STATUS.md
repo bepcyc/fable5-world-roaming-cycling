@@ -1018,9 +1018,12 @@ WebGPU recipe (hard-won): system Chrome via Playwright `executablePath`
 → adapter amd/gcn-5; playwright-bundled Chromium does NOT run on NixOS;
 without `--use-angle=vulkan` you silently get SwiftShader — always assert
 adapter identity. Details: `docs/notes/nixos-webgpu-launch-recipe.md`.
-`tools/launch.ts` still has Mac-only recipes — **first follow-up next
-implementation session** (add executablePath + Linux recipe; also
-`npm run battery` still points at a nonexistent tools/battery.ts).
+Addressed in-session: **`tools/launch-gpu.ts`** (executablePath recipes,
+CHROME_BIN override, real-GPU assertion, own cache) — used by the new
+`tools/probe-ridehud.ts` (reproducible P7/dashboard probe) and
+`tools/perf-baseline.ts` (reproducible avg+1%-low suite). Remaining
+follow-ups: migrate shoot.ts/compare.ts off Mac-only launch.ts;
+`npm run battery` still points at a nonexistent tools/battery.ts.
 
 **Shipped this session:**
 - `src/ride/Sensors.ts` — sensor seam (RideSample/SensorCtx/SensorSource)
