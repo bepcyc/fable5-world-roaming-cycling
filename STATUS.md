@@ -993,3 +993,72 @@ split view, ground-clamped camera helper, silhouette/tiling gate + DELTA.md.
   `__name` helper around named function expressions inside page.evaluate
   callbacks → ReferenceError in the page; pass big instrumented blocks as
   STRING evaluates (tools/probe-pointerlock.ts documents the pattern).
+
+---
+
+# FORK: PROJECT RANDO — hike & bike sim on the LAAS world
+
+> Everything above this line is the upstream LAAS experiment (Fable 5 on
+> M1 Max, phases 0–7). Everything below is the fork. New rehydration
+> protocol: read `docs/PROJECT_RIDE_v1.md` (the RANDO brief — binding),
+> `docs/ROADMAP.md` (milestones + probes), `docs/ARCHITECTURE-ASSESSMENT.md`
+> (attachment points, inherited-bugs ledger §6), `docs/OPEN-QUESTIONS.md`
+> (owner decisions), `docs/notes/*` (one insight per file), then the newest
+> session section below. `PROGRESS.md` = per-session 0–100 log for the owner.
+> The upstream sections above stay authoritative for engine internals and
+> gotchas — do not re-learn them the hard way.
+
+## Session 0 — 2026-07-02 (planning + first slice)
+
+**Environment (this box, replaces the Mac facts above for the fork):**
+NixOS 26.05, Ryzen 5 PRO 4650G, iGPU Vega 7 (RADV), 64 GB, 3440×1440,
+Wayland, Chrome 149, Node 22.22.3. **No Bluetooth adapter.** Headless
+WebGPU recipe (hard-won): system Chrome via Playwright `executablePath`
++ `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan`
+→ adapter amd/gcn-5; playwright-bundled Chromium does NOT run on NixOS;
+without `--use-angle=vulkan` you silently get SwiftShader — always assert
+adapter identity. Details: `docs/notes/nixos-webgpu-launch-recipe.md`.
+`tools/launch.ts` still has Mac-only recipes — **first follow-up next
+implementation session** (add executablePath + Linux recipe; also
+`npm run battery` still points at a nonexistent tools/battery.ts).
+
+**Shipped this session:**
+- `src/ride/Sensors.ts` — sensor seam (RideSample/SensorCtx/SensorSource)
+  + deterministic DemoSensorSource. `src/ride/RideHud.ts` — Zwift-style
+  dashboard (SPEED/CADENCE/HR, key B, `?ride=1|demo`, amber DEMO badge,
+  speed = real rig speed from getPose deltas, teleport-reset). Wired in
+  main.ts AFTER the mover (update-order contract). Verified headless on
+  the live engine: visible/badged/ticking/toggle/hidden-by-default; demo
+  HR climbs with effort; flythrough speed read 226–228 km/h (that's the
+  flythrough's real ~65 m/s — see `docs/notes/flythrough-is-not-bike-speed.md`).
+- `Justfile`: `just run` (universal dev server), `just run-nixos` (system
+  Chrome with the Vulkan flags, dedicated profile), deps/typecheck/build/preview.
+- Docs: PROJECT_RIDE_v1 (brief, codename RANDO), ROADMAP (M1.1→M3.3 with
+  named probes P1–P7), ARCHITECTURE-ASSESSMENT (attachment points,
+  global-vs-tileable + Phase-2 verdict, bike-speed perf risks, inherited-
+  bugs ledger), OPEN-QUESTIONS (Q1–Q10 with recommendations — owner to
+  answer), PERF-BASELINE (below), notes/ ×3.
+- `PROGRESS.md` convention started (owner request): dated 0–100 lines.
+
+**Perf baseline (fps = LAST priority on this box, owner directive):**
+native 3440×1440 high, live motion: bm1 4.7 / bm2 4.1 / bm3 3.3 /
+bm4 4.1 / bm7 4.5 avg fps (1% lows 2.9–4.0); flythrough moving 3.9.
+Boot-to-ready 46–63 s (M1 budget was ≤15 s). Full table + method
+caveats: `docs/PERF-BASELINE.md`.
+
+**Owner directives now binding (in the brief's pillars):** graphics always
+polished/aesthetic, primitive visuals banned; natural physics only (9.81,
+real speeds, natural FOV — inherited walk gravity 22 m/s² + sprint-FOV
+kick flagged for M1.3 re-judge); dashboards real-data-only, demo always
+badged; bike modes require a live BLE power source (no sensors → hike
+only); bike UX per Zwift/MyWhoosh; fps on this dev box last priority.
+
+**New bugs found (fork ledger, ARCHITECTURE-ASSESSMENT §6; not fixed by
+policy):** stale `updateSunUniforms` after ToD change in world scene
+(TerrainScene.ts:172 — GalleryScene:608 does it right); launch.ts unusable
+on NixOS; upstream bm2 water shards etc. inherited unchanged.
+
+**Next session entry point:** owner answers OPEN-QUESTIONS (Q1–Q10) →
+fix tools/launch.ts for Linux → start ROADMAP **M1.1 surface data layer**
+(matrix file + CPU mirrors + surfaceAt + groundProbe extension; probes
+via the one-boot pattern in `docs/notes/one-boot-many-probes.md`).
