@@ -19,6 +19,7 @@ import { buildSanityScene } from './debug/SanityScene';
 import { buildShadowTestScene } from './debug/ShadowTestScene';
 import { buildTerrainScene } from './debug/TerrainScene';
 import { buildScene, registerScene, type WorldContext } from './debug/Scenes';
+import { RideHud } from './ride/RideHud';
 
 async function boot(): Promise<void> {
   const hooks = initHooks();
@@ -89,6 +90,9 @@ async function boot(): Promise<void> {
   }
 
   new Hud(engine, params);
+  // ride dashboard (speed/cadence/HR) — hidden by default, B toggles,
+  // ?ride=1 boots visible, ?ride=demo attaches the fake sensor source
+  new RideHud(engine, fly);
 
   hooks.setPose = (p) => fly.setPose(p);
   hooks.getPose = () => fly.getPose();
