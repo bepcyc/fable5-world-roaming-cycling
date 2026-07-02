@@ -3,7 +3,7 @@
 *2026-07-02. Only decisions that block or materially shape Phase 1+. Each has a recommendation — reply "agreed" line by line, or correct. Everything else proceeds on the recommendation by default.*
 
 **Q1. Target play machine.** This dev box (Ryzen 4650G, Vega 7 iGPU) runs the world at single-digit fps; owner directive says fps is the last priority *for this machine*. Is there a different intended play machine (for you and friends), and when do we name it?
-**Recommendation:** develop visuals-first on this box, ignore its fps; name the real play/test machine only when M1.4's real-sensor ride test happens (same machine ideally), and run the Phase-3 high-speed perf pass exclusively there.
+**Recommendation (updated after remote inspection 2026-07-02):** the `pop-os` box — Ryzen 9 3950X / 128 GB / **RX 6800 XT** (see `docs/notes/pop-os-target-machine.md`) — is the obvious play/perf-target machine; confirm it, keep developing visuals-first on this box, and run the M1.4 real-sensor test + Phase-3 high-speed pass there (`just run-rxgpu` is prepared; node/npm need installing).
 
 **Q2. Route network determinism.** Should the road/trail network be a pure function of the world seed (`?seed=N` reproduces roads exactly), matching LAAS's determinism law?
 **Recommendation:** yes — same seed ⇒ same network; route-graph generation gets its own named RNG stream (house pattern `seed.rng('roads')`, `src/core/Seed.ts`) so adding roads never re-rolls the existing world.
@@ -23,8 +23,8 @@
 **Q7. Demo mode reach.** Dev/showcase only, or player-visible option?
 **Recommendation:** player-visible (friends without sensors can look around the bike experience) but always DEMO-badged, never writes ride stats, and never unlocks anything real sensors would.
 
-**Q8. Real-sensor test hardware.** This dev box has **no Bluetooth adapter at all**. The M1.4 exit criterion is a real ride on a real trainer + HR strap.
-**Recommendation:** cheap USB BT5 dongle for this box *or* run the test on the play machine; either way, name your trainer + HR strap models now so the FTMS/CSC parsing targets real hardware from day one.
+**Q8. Real-sensor test hardware.** This dev box has **no Bluetooth adapter at all** — and remote inspection shows **pop-os has none either**. The M1.4 exit criterion is a real ride on a real trainer + HR strap.
+**Recommendation:** one cheap USB BT5 dongle for whichever box hosts the trainer test (pop-os per Q1); name your trainer + HR strap models now so the FTMS/CSC parsing targets real hardware from day one.
 
 **Q9. Natural-physics scope vs inherited walk feel.** Pillar B (no unnatural gravity/FOV) conflicts with inherited walk tuning: gravity 22 m/s², +6° sprint-FOV kick (`src/core/FlyCamera.ts:31,42`) — upstream chose game-feel over realism.
 **Recommendation:** retune in M1.3 to 9.81 with re-derived jump velocity (keeps ~1.1 m apex ⇒ v0 ≈ 4.6 m/s), remove the FOV kick; you judge the two side by side live and we either keep natural or record an explicit approved deviation.

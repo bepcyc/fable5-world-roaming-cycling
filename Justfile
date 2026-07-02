@@ -23,11 +23,19 @@ run-nixos: deps
       --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan \
       --new-window http://localhost:5173/
 
-# UNVERIFIED remotely (ssh key not authorized yet) — re-check binaries/GPU once access lands.
-# Pop!_OS / AMD RX box: dev server + first available Chrome/Chromium with WebGPU/Vulkan flags (dedicated profile)
-run-rxgpu: deps
+# Verified remotely 2026-07-02: Pop!_OS 24.04, RX 6800 XT (RADV NAVI21), Chrome 149
+# at /usr/bin/google-chrome, X11; node/npm NOT installed there — guard below says so.
+# Pop!_OS / AMD RX box: dev server + Chrome with WebGPU/Vulkan flags (dedicated profile)
+run-rxgpu:
     #!/usr/bin/env bash
     set -euo pipefail
+    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+      echo "node/npm missing on this box — install Node 22 first, e.g.:"
+      echo "  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
+      echo "  nvm install 22"
+      exit 1
+    fi
+    [ -d node_modules ] || npm install
     npm run dev &
     SERVER=$!
     trap 'kill $SERVER 2>/dev/null || true' EXIT
