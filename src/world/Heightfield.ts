@@ -36,6 +36,7 @@ import type { NF, NI, NV2, NV3 } from '../gpu/TSLTypes';
 import { runBiomeSnow } from '../gpu/passes/BiomeSnow';
 import { runErosion } from '../gpu/passes/Erosion';
 import { runFlowRivers, type FlowResult } from '../gpu/passes/FlowRivers';
+import { runSurfaceClassify } from '../gpu/passes/SurfaceClassify';
 import {
   runHeightSynthesis,
   type FloatBuffer,
@@ -43,8 +44,12 @@ import {
 } from '../gpu/passes/HeightSynthesis';
 import { makeMacroParams, type MacroParams } from './MacroMap';
 import { WORLD_SIZE, qualityConfig, type QualityConfig } from './WorldConst';
+import { SurfaceId } from '../ride/SurfaceMatrix';
 
 export type ProgressFn = (p: number, msg: string) => void;
+
+/** reusable vote scratch for surfaceAtCpu (hot path — zero allocations) */
+const SURFACE_VOTE_COUNTS = new Uint8Array(SurfaceId.COUNT);
 
 export class Heightfield {
   readonly cfg: QualityConfig;
@@ -80,6 +85,9 @@ export class Heightfield {
   cpuHeights: Float32Array | null = null;
   /** CPU waterY mirror (sim res) — underwater camera guard */
   cpuWaterY: Float32Array | null = null;
+  /** CPU surface-class mirror (full res, SurfaceId per texel) — M1.1 layer;
+   *  physics/HUD/audio query it via surfaceAtCpu (ride matrix semantics) */
+  cpuSurface: Uint8Array | null = null;
 
   /** r32float height texture (nearest-sample / textureLoad only) */
   readonly heightTex: StorageTexture;
@@ -186,11 +194,24 @@ export class Heightfield {
       fieldsTex: hf.fieldsTex,
     });
 
+    progress(0.91, 'terrain: surface classification');
+    const surface = await runSurfaceClassify(renderer, hf.height, {
+      res: hf.res,
+      simRes: cfg.simRes,
+      mp,
+      waterY: hf.waterY,
+      biomeTex: hf.biomeTex,
+      fieldsTex: hf.fieldsTex,
+    });
+
     progress(0.93, 'terrain: height readback for camera');
     const ab = await renderer.getArrayBufferAsync(hf.height.value);
     hf.cpuHeights = new Float32Array(ab);
     const wab = await renderer.getArrayBufferAsync(hf.waterY.value);
     hf.cpuWaterY = new Float32Array(wab);
+    // surface map mirror: u32 on GPU → compact u8 on CPU (ids fit a byte)
+    const sab = await renderer.getArrayBufferAsync(surface.value);
+    hf.cpuSurface = Uint8Array.from(new Uint32Array(sab), (v) => v & 0xff);
     return hf;
   }
 
@@ -227,6 +248,73 @@ export class Heightfield {
     const a = i(x0, z0) * (1 - fx) + i(x0 + 1, z0) * fx;
     const b = i(x0, z0 + 1) * (1 - fx) + i(x0 + 1, z0 + 1) * fx;
     return a * (1 - fz) + b * fz;
+  }
+
+  /** nearest-texel surface id (SurfaceId) — raw, no smoothing (tools) */
+  surfaceAtCpuRaw(x: number, z: number): number {
+    const sm = this.cpuSurface;
+    if (!sm) return SurfaceId.Soil; // fallback before the mirror exists
+    const res = this.res;
+    const gx = Math.min(Math.max(Math.round(((x / WORLD_SIZE) + 0.5) * res - 0.5), 0), res - 1);
+    const gz = Math.min(Math.max(Math.round(((z / WORLD_SIZE) + 0.5) * res - 0.5), 0), res - 1);
+    return sm[gz * res + gx] ?? SurfaceId.Soil;
+  }
+
+  /**
+   * Surface class at (x, z) — 3×3 MAJORITY vote around the nearest texel.
+   * The discrete map is boot-baked (temporally stable by construction); the
+   * majority filter adds spatial stability so single-texel speckle at splat
+   * boundaries cannot flicker the class while moving along an edge (M1.1
+   * top-risk mitigation). Ties resolve toward the center texel's class.
+   */
+  surfaceAtCpu(x: number, z: number): number {
+    const sm = this.cpuSurface;
+    if (!sm) return SurfaceId.Soil;
+    const res = this.res;
+    const gx = Math.min(Math.max(Math.round(((x / WORLD_SIZE) + 0.5) * res - 0.5), 0), res - 1);
+    const gz = Math.min(Math.max(Math.round(((z / WORLD_SIZE) + 0.5) * res - 0.5), 0), res - 1);
+    const counts = SURFACE_VOTE_COUNTS;
+    counts.fill(0);
+    for (let dz = -1; dz <= 1; dz++) {
+      const zz = Math.min(Math.max(gz + dz, 0), res - 1);
+      for (let dx = -1; dx <= 1; dx++) {
+        const xx = Math.min(Math.max(gx + dx, 0), res - 1);
+        const id = sm[zz * res + xx] ?? SurfaceId.Soil;
+        counts[id] = (counts[id] ?? 0) + 1;
+      }
+    }
+    const center = sm[gz * res + gx] ?? SurfaceId.Soil;
+    let best = center;
+    let bestN = counts[center] ?? 0;
+    for (let id = 0; id < counts.length; id++) {
+      const n = counts[id] ?? 0;
+      if (n > bestN) {
+        best = id;
+        bestN = n;
+      }
+    }
+    return best;
+  }
+
+  /** central-difference slope (rise/run) from the CPU height mirror — the
+   *  same stencil as rebuildDerivedMaps, so it matches the material's slope */
+  slopeAtCpu(x: number, z: number): number {
+    const hts = this.cpuHeights;
+    if (!hts) return 0;
+    const res = this.res;
+    const texel = WORLD_SIZE / res;
+    const gx = Math.min(Math.max(Math.round(((x / WORLD_SIZE) + 0.5) * res - 0.5), 0), res - 1);
+    const gz = Math.min(Math.max(Math.round(((z / WORLD_SIZE) + 0.5) * res - 0.5), 0), res - 1);
+    const at = (xx: number, zz: number): number =>
+      hts[Math.min(Math.max(zz, 0), res - 1) * res + Math.min(Math.max(xx, 0), res - 1)] ?? 0;
+    const dx = at(gx - 1, gz) - at(gx + 1, gz);
+    const dz = at(gx, gz - 1) - at(gx, gz + 1);
+    return Math.hypot(dx, dz) / (texel * 2);
+  }
+
+  /** standing-water depth (m) at (x, z); 0 on dry ground */
+  waterDepthAtCpu(x: number, z: number): number {
+    return Math.max(0, this.waterYAtCpu(x, z) - this.heightAtCpu(x, z));
   }
 
   private static async buildWaterY(

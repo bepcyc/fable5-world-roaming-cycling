@@ -1071,3 +1071,79 @@ dedicated later owner session (USB dongle, all sensors). Start ROADMAP
 **M1.1 surface data layer** (matrix file + CPU mirrors + surfaceAt +
 groundProbe extension; probes via `docs/notes/one-boot-many-probes.md`);
 en route: migrate shoot.ts/compare.ts onto tools/launch-gpu.ts.
+
+## Session 1 — 2026-07-02 (M1.1 surface data layer — CLOSED)
+
+**Environment moved to the TARGET machine (pop-os, per Q1):** Pop!_OS
+24.04, Ryzen 9 3950X, RX 6800 XT, 3440×1440, X11, Chrome 149 at
+/usr/bin/google-chrome-stable, Node v23.4.0/npm 10.9.2 (now installed),
+repo at `/d/models2/dev/my/fable5-world-roaming-cycling`, branch `rando`.
+`tools/launch-gpu.ts` recipe works UNCHANGED here: headless system Chrome
++ Vulkan flags → adapter **amd/rdna-2** (asserted, no SwiftShader).
+Boot-to-ready 35.5–41.9 s headless (vs 46–63 s on the Vega dev box).
+Interactive fps unmeasured this session (fps chip showed ~52 in top-down
+probe shots at 1600×900 — NOT a baseline number, just a sign of life).
+
+**M1.1 shipped (ROADMAP acceptance met, 30/30 probe checks PASS):**
+- `src/ride/SurfaceMatrix.ts` — THE one-file surface×mode truth (Pillar
+  D): 15 SurfaceIds (10 natural now, 5 road classes reserved for M1.2
+  with params ready), per surface × mode (hike/road/gravel/mtb): status
+  allowed/degraded/blocked, Crr (published rolling-resistance ranges),
+  maxSpeed (m/s), grip, stallRisk; per surface: soundId (M1.7),
+  weatherSensitivity (M1.6/M3.1); MODE_LIMITS maxSlope (P4); CLASSIFY
+  water/mud thresholds. Data-only; solver tuning belongs to M1.3 probes.
+- `src/gpu/passes/SurfaceClassify.ts` — boot GPU pass at full res (4096²)
+  replicating the material's splat weights 1:1 (TerrainMaterial.ts:216-254
+  — KEEP IN LOCKSTEP on any splat retune) + mix-chain contribution argmax,
+  wetland-mud rule, water from waterY−ground depth (>0.05 m shallow,
+  >0.45 m deep — CLASSIFY constants). **Design decision:** classify ON GPU
+  from the same fields/TSL the splat shades with (biomeTex, fieldsTex,
+  zoneMasks, height), then read back ONE u32 map — instead of raw
+  biomeTex/fieldsTex CPU mirrors + a CPU re-derivation (which would drift
+  from the shader's noise/zone math). Discrete map is boot-baked ⇒
+  temporally stable by construction; M1.2 roads stamp into the same map.
+- `src/world/Heightfield.ts` — `cpuSurface` u8 mirror (u32 readback
+  compacted), `surfaceAtCpu` (3×3 majority vote — the boundary-flicker
+  mitigation named in ROADMAP), `surfaceAtCpuRaw`, `slopeAtCpu`
+  (rebuildDerivedMaps stencil ⇒ matches material slope), `waterDepthAtCpu`.
+- `groundProbe` extended to `{ground, water, surfaceId, slope}`
+  (FlyCamera.ts type + Hooks.ts + TerrainScene wiring). Walk/fly consume
+  ground/water as before — ride physics (M1.3), HUD warning (P5), audio
+  (M1.7) consume the new fields.
+- `tools/probe-surface.ts` — M1.1 acceptance transect probe on
+  launch-gpu (one boot, CPU mirrors): 4 landmark transects (twin-lake
+  crossing, meadow/forest, alpine tarn shoulder, gorge stream) against
+  expected class sets + water⟺depth consistency (per line AND a 96²
+  world grid) + slope sanity + all-classes-alive + no-roads-before-M1.2.
+  `--shots` captures top-down views per transect for the human
+  visual-truth cross-check (this session's four: shots/wip/
+  probe-surface-*.png, checked by eye against the printed classes).
+
+**Verification story (Pillar E):** first run 28/30 — the 2 fails were
+EXPECTATION bugs, not layer bugs: the "meadow" transect visibly crosses a
+rocky stream channel + wet floodplain (screenshot truth → rock/water
+belong in its set), and a 6.2 rise/run cirque wall is real terrain (slope
+sanity bound raised 6→12, catches NaN/garbage only). Final: 30/30 PASS +
+`probe-ridehud` regression 7/7 PASS (groundProbe extension broke nothing).
+Grid histogram (seed 1): soil 31.7 / rock 25.6 / grass 24.3 / water-deep
+7.0 / snow 6.0 / forest 4.4 / mud 0.5 / scree 0.4 / water-shallow 0.2 /
+gravel-river ~0 % — narrow river gravel exists but rarely lands on a 42 m
+grid; transects/verbose show it along channels.
+
+**Known limits (recorded, not blocking):** water⟺depth consistency is
+99.1–99.7% (sub-texel shoreline band between the 2 m waterY grid and the
+1 m height grid — the legal mismatch zone); surface classes freeze at
+boot (weather/wetness coupling is M3.1's matrix-modifier job, not a
+reclassify); `surfaceAtCpu` majority vote can flip within ~1 m of a
+boundary vs the raw texel — consumers needing raw truth use
+surfaceAtCpuRaw.
+
+**Follow-ups still open (inherited from session 0):** migrate
+shoot.ts/compare.ts off Mac-only launch.ts; `npm run battery` still
+points at a nonexistent tools/battery.ts.
+
+**Next session entry point: M1.2 road & trail network** (ROADMAP) — the
+carve seam after `composeEroded` (Heightfield.ts), splineField template
+(MacroMap.ts:141), dual-site veg exclusion (Scatter + GroundRing), and
+road classes stamped into the M1.1 surface map (SurfaceId 10–14 params
+already in the matrix).

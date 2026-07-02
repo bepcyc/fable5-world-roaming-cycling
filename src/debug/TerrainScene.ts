@@ -254,11 +254,14 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     }
   });
 
-  // terrain/water probe for the camera rig: walk-mode ground physics + the
-  // fly-mode soft collision / underwater guard both live in FlyCamera now
+  // terrain/water/surface probe for the camera rig: walk-mode ground physics
+  // + fly soft collision live in FlyCamera; surfaceId/slope feed the ride
+  // layer (M1.1 — surfaceId per src/ride/SurfaceMatrix.ts, slope rise/run)
   ctx.hooks.groundProbe = (x, z) => ({
     ground: hf.heightAtCpu(x, z),
     water: hf.waterYAtCpu(x, z),
+    surfaceId: hf.surfaceAtCpu(x, z),
+    slope: hf.slopeAtCpu(x, z),
   });
 
   // camera spawn: ground-clamped (?alt/x/z → fly) or the DEFAULT WALK SPAWN

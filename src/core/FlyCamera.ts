@@ -19,8 +19,14 @@ const FORWARD = new Vector3();
 const RIGHT = new Vector3();
 const MOVE = new Vector3();
 
-/** terrain/water heights at (x, z) — installed by the world scene */
-export type GroundProbe = (x: number, z: number) => { ground: number; water: number };
+/** terrain/water heights + surface class + slope at (x, z) — installed by
+ *  the world scene. surfaceId = SurfaceId (src/ride/SurfaceMatrix.ts);
+ *  slope = rise/run. Walk/fly use ground+water; ride physics (M1.3), HUD
+ *  warnings (P5) and audio (M1.7) consume surfaceId+slope. */
+export type GroundProbe = (
+  x: number,
+  z: number,
+) => { ground: number; water: number; surfaceId: number; slope: number };
 
 export type CamMode = 'walk' | 'fly';
 
