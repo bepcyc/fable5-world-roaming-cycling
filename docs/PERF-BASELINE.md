@@ -34,7 +34,7 @@ Caveats, recorded honestly:
 | bm7 (forest interior) | **4.5** | 4.0 | 250 ms | 12.56 M |
 | flythrough, moving (~65 m/s — NOT bike speed, see `docs/notes/flythrough-is-not-bike-speed.md`) | **3.9** | 3.2 | 283 ms | 14.85 M |
 
-Boot-to-ready (world generation): **46–63 s** across four boots this session (M1 budget was ≤15 s).
+Boot-to-ready (world generation): **46–63 s** across five boots this session — 47.4 s in this suite's log, 63.1/48.5 s in the ad-hoc HUD verify, 47.7/46.4 s in the committed `tools/probe-ridehud.ts` run (M1 budget was ≤15 s).
 
 Secondary datapoint: fps chip read ~8 fps at 1600×900 during flythrough (HUD-verify run) — scaling with resolution behaves as expected.
 

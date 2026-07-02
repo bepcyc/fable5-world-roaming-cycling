@@ -8,7 +8,9 @@ deps:
 run: deps
     npm run dev
 
-# NixOS: dev server + system Chrome with WebGPU/Vulkan flags (dedicated profile; server stops when Chrome closes)
+# Owner's desktop Chrome has WebGPU working as-is — normally `just run` + your
+# own browser is enough; use this only if a profile/machine lacks WebGPU.
+# NixOS fallback: dev server + Chrome forced onto WebGPU/Vulkan flags (dedicated profile)
 run-nixos: deps
     #!/usr/bin/env bash
     set -euo pipefail
@@ -17,6 +19,25 @@ run-nixos: deps
     trap 'kill $SERVER 2>/dev/null || true' EXIT
     for _ in $(seq 1 50); do curl -sf http://localhost:5173/ >/dev/null 2>&1 && break; sleep 0.2; done
     google-chrome \
+      --user-data-dir="$HOME/.cache/laas-chrome-profile" \
+      --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan \
+      --new-window http://localhost:5173/
+
+# UNVERIFIED remotely (ssh key not authorized yet) — re-check binaries/GPU once access lands.
+# Pop!_OS / AMD RX box: dev server + first available Chrome/Chromium with WebGPU/Vulkan flags (dedicated profile)
+run-rxgpu: deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    npm run dev &
+    SERVER=$!
+    trap 'kill $SERVER 2>/dev/null || true' EXIT
+    for _ in $(seq 1 50); do curl -sf http://localhost:5173/ >/dev/null 2>&1 && break; sleep 0.2; done
+    BROWSER=""
+    for b in google-chrome google-chrome-stable chromium chromium-browser; do
+      command -v "$b" >/dev/null 2>&1 && BROWSER="$b" && break
+    done
+    if [ -z "$BROWSER" ]; then echo "no Chrome/Chromium found — install google-chrome-stable"; exit 1; fi
+    "$BROWSER" \
       --user-data-dir="$HOME/.cache/laas-chrome-profile" \
       --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan \
       --new-window http://localhost:5173/

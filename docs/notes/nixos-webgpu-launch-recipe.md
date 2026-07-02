@@ -1,4 +1,4 @@
-NixOS/Linux headless WebGPU: system Chrome + `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan`, and ALWAYS assert adapter identity — without `--use-angle=vulkan` you silently get SwiftShader.
+NixOS/Linux HEADLESS WebGPU: system Chrome + `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan`, and ALWAYS assert adapter identity — without `--use-angle=vulkan` you silently get SwiftShader. The owner's interactive desktop Chrome needs none of this (confirmed working 2026-07-02) — the recipe is for tooling.
 
 Facts established 2026-07-02 on this box (Ryzen 4650G / Vega 7 / RADV / NixOS 26.05, Chrome 149):
 

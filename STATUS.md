@@ -1061,7 +1061,10 @@ policy):** stale `updateSunUniforms` after ToD change in world scene
 (TerrainScene.ts:172 — GalleryScene:608 does it right); launch.ts unusable
 on NixOS; upstream bm2 water shards etc. inherited unchanged.
 
-**Next session entry point:** owner answers OPEN-QUESTIONS (Q1–Q10) →
-fix tools/launch.ts for Linux → start ROADMAP **M1.1 surface data layer**
-(matrix file + CPU mirrors + surfaceAt + groundProbe extension; probes
-via the one-boot pattern in `docs/notes/one-boot-many-probes.md`).
+**Next session entry point:** read the full handoff first —
+`.claude/handoffs/2026-07-02-210230-rando-session-0-planning.md`
+(gitignored, lives on disk) — then: owner answers OPEN-QUESTIONS (Q1–Q10;
+**implementation is gated on this, owner's explicit instruction**) →
+migrate shoot.ts/compare.ts onto tools/launch-gpu.ts → start ROADMAP
+**M1.1 surface data layer** (matrix file + CPU mirrors + surfaceAt +
+groundProbe extension; probes via `docs/notes/one-boot-many-probes.md`).
