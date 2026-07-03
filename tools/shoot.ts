@@ -10,7 +10,8 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { launchWebGPU, laasUrl } from './launch';
+import { laasUrl } from './launch';
+import { launchWebGPUReal as launchWebGPU } from './launch-gpu';
 
 interface Args {
   [k: string]: string | boolean;

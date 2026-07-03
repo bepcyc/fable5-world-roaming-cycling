@@ -6,7 +6,8 @@
  *   npx tsx tools/find-water.ts [--seed 1] [--top 12] [--minDepth 0.08]
  */
 
-import { launchWebGPU, laasUrl } from './launch';
+import { laasUrl } from './launch';
+import { launchWebGPUReal as launchWebGPU } from './launch-gpu';
 
 interface Cand {
   x: number;

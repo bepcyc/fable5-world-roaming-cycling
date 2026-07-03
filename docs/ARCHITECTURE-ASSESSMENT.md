@@ -131,7 +131,7 @@ Context: walk-sprint today is 9.2 m/s; bikes push 1.2–1.5×. What actually sca
 
 | Issue | Evidence | Status |
 |---|---|---|
-| bm2 lake: white water shards + see-through swells | STATUS.md:645-719 (foam/false-shallow `vDepth` candidate; min-reduce hypothesis tested + refuted; `?waterdbg=5` rerun instructions) | open upstream, full diagnosis trail preserved |
+| bm2 lake: white water shards + see-through swells | STATUS.md:645-719; RESOLVED session 5 (M1.4.2): pooled-water Priority-Flood flatten (src/world/WaterPools.ts) + dry-cell shoreline clamp min(bed−2, wetMin−0.15) in buildWaterY | **fixed session 5** |
 | Blob rocks (smooth gray cobbles ≤120 m on meadows) | STATUS.md:299-311 (StoneL/M 'cobble' preset lacks detail) | open, fix sketched |
 | Lake far-rim reflection fallback (planar pass queued) | STATUS.md:291-298 | open, priority raised upstream |
 | Stale sun uniforms after ToD change in world scene | `updateSunUniforms` called once at `src/debug/TerrainScene.ts:172`, not in the ToD handlers (`:242-255`); GalleryScene does it right (`src/debug/GalleryScene.ts:608`) | **found this session** (agent), unfixed by policy |

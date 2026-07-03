@@ -1391,3 +1391,46 @@ rivers). Only after that M1.5 Cockpit + dashboard v2 + HUD warnings
 handlebars/hands/bike-computer meshes on the logical pose, per-mode
 cockpit, TRAA mitigation for view-locked geometry, dashboard v2 cards,
 P5 impassable warning via surfaceAt lookahead.**
+
+## Session 5 — 2026-07-03: M1.4.2 water surface fix (owner-ordered)
+
+- **Root cause confirmed in code:** rivers rendered at `waterY = carved
+  bed + smoothed depth` (`src/gpu/passes/FlowRivers.ts:507`) — the depth
+  blur peaks mid-pool, so pooled/widened reaches read as convex "bubble"
+  domes (owner's ford ponds). Lakes were already flat (multigrid fill W).
+  Deep-research pass (102 agents, 20 sources: USGS hydro-DEM specs,
+  Peytavie 2019, Barnes 2014 Priority-Flood, UE Water, FC5): bed+depth is
+  the anti-pattern; correct = flat level per POOLED waterbody, sloped
+  piecewise profile on flowing reaches, monotone downstream.
+- **Fix 1 — pooled-water flatten:** `src/world/WaterPools.ts` — CPU
+  Priority-Flood (epsilon=0, lazy-decrease min-heap) over the wet mask of
+  the `waterYRaw` readback, seeded from wet cells touching dry/border.
+  Pool level = classic fill of the carved bed from outlet levels; cells
+  where fill clears bed by >0.06 m take the flat fill level, flowing
+  reaches keep the raw slope (no river terracing). Upward correction
+  capped at 1 m (RAISE_CAP) — under-spill marshes stay at their own level
+  instead of growing water walls. Wired in `Heightfield.create` between
+  `runFlowRivers` and `buildWaterY` (readback → flatten → re-upload via
+  `storage(new StorageBufferAttribute(...))`). Typical: ~295k/355k wet
+  cells flattened, max drop ~21 m (a cascade-side dome).
+- **Fix 2 — shoreline walls:** dry cells in `buildWaterY`
+  (`src/world/Heightfield.ts`) are now clamped to
+  `min(bMin−2, minAdjacentWetLevel−0.15)` — a dry bank ABOVE the water
+  level no longer bilinearly ramps the sheet up the bank (the "weird
+  raised edges" / translucent shards seen when a camera sits under such a
+  ramp). Far-field min-reduce untouched.
+- **Verification (visual, small ponds/streams per owner order):** marsh
+  pond (−1592,−1442): probe transect W==329.30 m across the whole pool
+  (was domed); ford ponds r0 (−592,376) and r8 (−233,327) from 3 angles:
+  flat sheet, tight shoreline, no pillow — shots/wip/m142-final-*.png,
+  sent to owner. Lake bookmarks Dawn-lake + Lakeshore-golden: parity (the
+  "giant water shards" during verification were a mis-set camera 126 m
+  underground looking at the sheet from below — baseline identical, not a
+  regression). probe-surface ALL PASS, probe-roads ALL PASS (fords
+  intact), tsc clean.
+- **Tooling:** `tools/shoot.ts` + `tools/find-water.ts` migrated to
+  `tools/launch-gpu.ts` (launch.ts recipes never yield a WebGPU adapter
+  on this box — ledger §5.8 item; migration was already queued in
+  STATUS:1073).
+- Ledger §6 updated: "bm2 lake white water shards / see-through swells"
+  → fixed by the shoreline clamp + pooled flatten this session.
