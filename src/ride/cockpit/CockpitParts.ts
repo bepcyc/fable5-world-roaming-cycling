@@ -113,18 +113,18 @@ function merged(parts: Part[]): BufferGeometry {
 function carbonMat(): MeshPhysicalNodeMaterial {
   const m = new MeshPhysicalNodeMaterial();
   m.color = new Color('#101114');
-  m.roughness = 0.34;
+  m.roughness = 0.4;
   m.metalness = 0.0;
-  m.clearcoat = 0.7;
-  m.clearcoatRoughness = 0.2;
+  m.clearcoat = 0.4;
+  m.clearcoatRoughness = 0.3;
   return m;
 }
 
 function alloyMat(): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial();
-  m.color = new Color('#33363c');
+  m.color = new Color('#454a52');
   m.metalness = 0.85;
-  m.roughness = 0.36;
+  m.roughness = 0.34;
   return m;
 }
 
@@ -332,7 +332,7 @@ function handParts2(s: Hand2Spec): HandOut {
     }
     const xo = new Vector3().crossVectors(y, z).normalize();
     const palmUp = y.clone();
-    const slab = new RoundedBoxGeometry(0.06, 0.02, 0.068, 3, 0.01);
+    const slab = new RoundedBoxGeometry(0.058, 0.02, 0.062, 3, 0.01);
     m.makeBasis(xo, y, z);
     m.setPosition(s.knuckleC.clone().addScaledVector(backDir, 0.038).addScaledVector(palmUp, -0.003));
     body.push({ geo: slab, m });
@@ -416,7 +416,7 @@ function handParts2(s: Hand2Spec): HandOut {
 
   // ---- wrist + forearm (lower half, tapered, exits toward frame corner)
   {
-    const wrist = s.knuckleC.clone().addScaledVector(backDir, 0.092).addScaledVector(n, -0.004);
+    const wrist = s.knuckleC.clone().addScaledVector(backDir, 0.088).addScaledVector(n, -0.007);
     const wristBall = new SphereGeometry(0.0185, 12, 10);
     // wrist is skin even on gloved hands (short MTB gloves end at the cuff)
     skin.push({ geo: wristBall, m: new Matrix4().setPosition(wrist) });
@@ -488,7 +488,7 @@ function computerParts(center: Vector3): { body: Part[]; screen: Mesh; mount: Pa
   const parts: Part[] = [];
   const TILT = 0.55; // screen normal pitched back toward the rider's eye
   // portrait phone body ~62×126 mm, thin
-  const body = new RoundedBoxGeometry(0.062, 0.012, 0.126, 4, 0.0058);
+  const body = new RoundedBoxGeometry(0.058, 0.012, 0.118, 4, 0.0055);
   const tilt = new Matrix4().makeRotationX(TILT);
   const bodyM = tilt.clone().setPosition(center);
   parts.push({ geo: body, m: bodyM });
@@ -499,7 +499,7 @@ function computerParts(center: Vector3): { body: Part[]; screen: Mesh; mount: Pa
   parts.push({ geo: btn, m: bm });
 
   // screen: separate mesh (live canvas texture assigned by Cockpit.ts)
-  const scr = new PlaneGeometry(0.053, 0.113);
+  const scr = new PlaneGeometry(0.0495, 0.1055);
   const screen = new Mesh(scr);
   screen.rotation.set(-Math.PI / 2 + TILT, 0, 0);
   screen.position
@@ -508,9 +508,9 @@ function computerParts(center: Vector3): { body: Part[]; screen: Mesh; mount: Pa
 
   // out-front mount: riser post from the stem + cradle under the body
   const mount: Part[] = [];
-  const post = new CylinderGeometry(0.006, 0.007, 0.05, 10);
+  const post = new CylinderGeometry(0.006, 0.007, 0.034, 10);
   mount.push(
-    place(post, center.clone().add(new Vector3(0, -0.027, 0.012)), new Vector3(0, 1, -0.28).normalize()),
+    place(post, center.clone().add(new Vector3(0, -0.019, 0.012)), new Vector3(0, 1, -0.28).normalize()),
   );
   const cradle = new RoundedBoxGeometry(0.028, 0.008, 0.044, 2, 0.003);
   const cm = tilt.clone();
@@ -524,19 +524,19 @@ function computerParts(center: Vector3): { body: Part[]; screen: Mesh; mount: Pa
 function frameParts(kind: 'drop' | 'riser'): Part[] {
   const parts: Part[] = [];
   // head tube: fat tube along the steering axis under the stem
-  const htTop = new Vector3(0, -0.035, 0.085);
-  const htLen = 0.16;
-  const ht = new CylinderGeometry(0.0295, 0.031, htLen, 16);
+  const htTop = new Vector3(0, -0.03, 0.085);
+  const htLen = 0.17;
+  const ht = new CylinderGeometry(0.034, 0.036, htLen, 16);
   parts.push(place(ht, htTop.clone().addScaledVector(STEER_AXIS, htLen / 2), STEER_AXIS));
   // top tube: from the head tube toward the saddle (toward/below the
   // camera — reads as the frame tube dropping down-center of the frame)
-  const ttA = htTop.clone().addScaledVector(STEER_AXIS, htLen * 0.55).add(new Vector3(0, 0.012, 0));
-  const ttB = new Vector3(0, kind === 'riser' ? -0.46 : -0.42, 0.52);
+  const ttA = htTop.clone().addScaledVector(STEER_AXIS, htLen * 0.38).add(new Vector3(0, 0.012, 0));
+  const ttB = new Vector3(0, kind === 'riser' ? -0.44 : -0.40, 0.54);
   {
     const dir = ttB.clone().sub(ttA);
     const len = dir.length();
     dir.normalize();
-    const tt = new CylinderGeometry(0.0245, 0.032, len, 14);
+    const tt = new CylinderGeometry(0.028, 0.042, len, 14);
     parts.push(place(tt, ttA.clone().addScaledVector(dir, len * 0.5), dir));
   }
   // down tube stub: forward-down from the head tube bottom (silhouette
@@ -619,7 +619,7 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
         carbon.push({ geo: sweepRange(pts, barR, 0.42, 0.995, 40), m: new Matrix4() });
       }
       // integrated stem: airfoil box blending into the steerer
-      const stem = new RoundedBoxGeometry(0.052, 0.03, 0.13, 3, 0.013);
+      const stem = new RoundedBoxGeometry(0.044, 0.026, 0.108, 3, 0.011);
       carbon.push({
         geo: stem,
         m: new Matrix4()
@@ -766,7 +766,7 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
         clampP.clone().add(new Vector3(side * 0.03, -0.014, -0.052)),
         clampP.clone().add(new Vector3(side * 0.052, -0.024, -0.06)),
       ];
-      alloy.push({ geo: sweep(bladePts, 0.0048, 16), m: new Matrix4() });
+      alloy.push({ geo: sweep(bladePts, 0.0056, 16), m: new Matrix4() });
       // shifter pod (right) / dropper remote (left) under the bar
       const pod = new RoundedBoxGeometry(0.03, 0.016, 0.024, 2, 0.005);
       rubber.push({
@@ -1005,7 +1005,7 @@ export function buildCockpit(): CockpitBuild {
   steer.add(wheel);
 
   // computer floats out front on its riser mount (shared across modes)
-  const comp = computerParts(new Vector3(0, 0.023, -0.108));
+  const comp = computerParts(new Vector3(0, 0.017, -0.118));
   const compBody = new Mesh(merged([...comp.body, ...comp.mount]), mats.rubber);
   compBody.frustumCulled = false;
   steer.add(compBody);
