@@ -1142,8 +1142,11 @@ surfaceAtCpuRaw.
 shoot.ts/compare.ts off Mac-only launch.ts; `npm run battery` still
 points at a nonexistent tools/battery.ts.
 
-**Next session entry point: M1.2 road & trail network** (ROADMAP) — the
-carve seam after `composeEroded` (Heightfield.ts), splineField template
-(MacroMap.ts:141), dual-site veg exclusion (Scatter + GroundRing), and
-road classes stamped into the M1.1 surface map (SurfaceId 10–14 params
-already in the matrix).
+**Next session entry point: read the full handoff first —
+`.claude/handoffs/2026-07-03-065140-rando-session-1-m11-surface-layer.md`
+(gitignored, lives on disk), then start M1.2 road & trail network**
+(ROADMAP) — the carve seam after `composeEroded` (Heightfield.ts),
+splineField template (MacroMap.ts:141), dual-site veg exclusion
+(Scatter + GroundRing), and road classes stamped into the M1.1 surface
+map (SurfaceId 10–14 params already in the matrix); road graph on its
+own seed stream (`seed.rng('roads')`, owner Q2).
