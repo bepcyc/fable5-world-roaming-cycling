@@ -1219,11 +1219,94 @@ surface map, and cleared of vegetation.
   gravel-river class marginal (see above); ford approach ramps can exceed
   class grade over ~2 samples (real-world fords do too; P3/P4 own it).
 
-**Next session entry point: read the full handoff first —
-`.claude/handoffs/2026-07-03-094232-rando-session-2-m12-roads.md`
-(gitignored, lives on disk).** Then M1.3 movement modes & physics (ROADMAP) —
-fixed-timestep accumulator, power→speed solver over the M1.1/M1.2 surface
-matrix, route-following steering + junction picks (owner explicitly wants
-Zwift-style "turn ahead" choice UI), hike-mode re-judge vs Pillar B. The
-road graph (hf.roads.routes, pts with s/bank/ford) and groundProbe
-{ground, water, surfaceId, slope} are the two inputs it consumes.
+**(superseded) Session-3 entry pointer** — the M1.3 work below happened.
+
+## Session 3 — 2026-07-03 (M1.3 movement modes & physics — CLOSED)
+
+**M1.3 shipped (probe-physics ALL PASS pure+live, regressions probe-roads /
+probe-surface / probe-ridehud ALL PASS, typecheck clean):** the world is
+ridable — hike ⇄ road/gravel/mtb (`M` cycles), power→speed physics on a
+fixed timestep, route-following with an on-screen junction chooser.
+
+- `src/ride/BikeSolver.ts` — PURE power→speed integrator (probes run it in
+  node, the live rig at the engine fixed step): m·dv/dt = ηP/max(v,1.4) −
+  mg(Crr·cosθ+sinθ) − ½ρCdA·v² − F_brake; literature rider+bike specs
+  (83/85/88 kg, CdA 0.32/0.38/0.44, η 0.976); maxSpeed caps are RIDER
+  behavior (grip-limited governor brake), not physics; blocked (matrix
+  status/slope limit) = forced dismount stop; stall latch (stallRisk ≥ 0.5,
+  v < 0.55) = bog-down until the surface changes. Analytic steadyStateV
+  (bisection) is the P2 independent truth. 250 W flat asphalt = 36.9 km/h;
+  250 W @ 8% = 12.5 km/h — natural (climb-grade-facts).
+- `src/core/Engine.ts` — fixed-timestep accumulator beside the variable-dt
+  loop: onFixedUpdate() drains BEFORE updateFns (12-step spiral guard,
+  backlog drop), `fixedAlpha` exposes the remainder phase; `?dt=<ms>`
+  (2–50, default 8.33) via Params; runtime `__laasDbg.setFixedDt`.
+- `src/ride/RouteGraph.ts` — boot-time junction topology over hf.roads:
+  DSU-cluster near points across routes (9 m join) + consecutive-run merge,
+  nodes at crossings/shared anchors/endpoints, routes split into edges
+  (seed-1: 38 nodes / 46 edges); sample(edge,s) w/ grade/bank/ford/tangent,
+  project(x,z), exits(node, arrivedEdge).
+- `src/ride/BikeRig.ts` — mode state machine + mover. Bikes LOCKED without
+  a power source (honesty: no phantom watts) — mount projects onto the
+  graph (≤30 m), faces the camera's way; solver advances s along edges;
+  junction preview at max(45 m, v·5.5 s): options sorted left→right,
+  default = straightest, ←/→ picks, dead end = honest U-turn (v×0.25).
+  Fixed-step pose pair + `fly.rideDriver` interpolation by fixedAlpha —
+  camera renders smooth at ANY dt and dashboard parity holds. Counters
+  ride.* (kmh100/powerW/grade1000/surface/blocked/stalled/mode/graph*).
+- `src/core/FlyCamera.ts` — third mode 'ride' (free mouse-look; yaw/pitch
+  ease to travel heading after 1.6 s mouse idle). **Hike re-judge (Pillar
+  B, ROADMAP scope): GRAVITY 22 → 9.81, JUMP_V0 7.0 → 3.3 (~0.55 m natural
+  apex), sprint FOV kick REMOVED.** Deliberate retune per ROADMAP option 1
+  — no deviation entry needed; walk bob/spawn/step-down untouched.
+- `src/ride/Sensors.ts` — RideSample grows powerW (null = no channel);
+  DemoSensorSource emits badged demo power (~185 W wander);
+  KeyboardPowerSource (?ridedev=1, DEV badge): hold W/↑ pedal at target
+  watts, +/- tune (40–900), Shift ×1.7 burst, setOverride() for probes.
+  Brake = S/Space/↓ (BikeRig).
+- `src/ride/RideHud.ts` — dashboard v1.5 (M1.5 owns v2): glass metric cards
+  SPEED/POWER/GRADE/CADENCE/HR + mode chip (SVG bike/hike icons), DEMO/DEV
+  badges, center status banner (TOO STEEP / BLOCKS mode / BOGGED DOWN +
+  transient notes), and the **junction chooser** — bottom-center "TURN
+  AHEAD · N m" with per-exit arrow cards (turn-classified SVG arrows,
+  road-class color + label, amber-highlighted selection, ←/→ hint). All
+  DOM+CSS (backdrop blur), zero canvas. Dashboard speed stays pose-derived
+  (independent check on the mover); RideRecorder now gets REAL power+speed
+  (was null) — .fit draft records honest watts.
+- main.ts wiring: source pick (ridedev > demo > none), RouteGraph+BikeRig
+  when a world scene exposes hooks.roads+groundProbe, `?road=<class>` +
+  a source auto-mounts the matching bike (owner verification + probes),
+  __laasDbg.ride / .rideGraph / .setFixedDt probe surface.
+- Acceptance `tools/probe-physics.ts`: PURE battery at dt 33.3/8.3/2.1 ms —
+  P1 mud-stop (coast stops in 2.1 s / 8.5 m; 250 W bogs down), P2 top-speed
+  vs analytic ±2% (measured 0.00%, dt spread 0.000%), P3 ford (8 m shallow
+  crossing, vMin 2.5 m/s), P4 slope-block (70% wall blocks 500 W MTB; 30%
+  blocks road), climb realism. LIVE battery: graph built, auto-mount,
+  **dashboard==solver ±1% at dt 8.33 AND 33.3 ms** (0.11%/0.08% — compared
+  against the same 0.45 s display EMA applied to solver samples; raw-mean
+  compare aliases the rolling gradient), junction chooser appears before a
+  real fork (≥2 arrow options in DOM), bikes locked without a source.
+  Shots: shots/wip/probe-physics-{ride,junction}.png (aesthetic gate:
+  cards+chooser read clean over the forest road).
+- **Probe war stories:** parity at coarse dt first read 2.9–21% — three
+  distinct causes peeled: (a) camera pose jumping per fixed step (fixed by
+  rideDriver interpolation — also the render-smoothness fix), (b) route
+  luck: the free-running bike hit a stall/dead-end mid-window (fixed:
+  deterministic runway = longest edge, re-teleport per dt), (c) EMA phase
+  lag vs rolling gradient (fixed: EMA-matched comparison). Junction check
+  first waited for a random fork — now aims at a ≥3-arm node explicitly.
+- **Keys now:** V walk⇄fly · M hike→road→gravel→mtb→hike · W/↑ pedal ·
+  +/- watts · Shift burst · S/Space/↓ brake · ←/→ junction pick · B HUD ·
+  Ctrl+E .fit export.
+- **Known limits / follow-ups:** junction visual dressing (widened mouths)
+  still M-later art pass; banking is data-only until the M1.5 cockpit
+  (lean); ride pose ignores bank for eye height; walk-speed realism
+  (4.6 m/s brisk) NOT retuned — outside ROADMAP's re-judge scope, flag for
+  owner; gravel-river classifier + inherited water artifacts unchanged
+  (ledger §6).
+
+**Next session entry point:** M1.4 BLE sensor layer (ROADMAP) — the seam
+is ready: SensorSource with powerW, bikes gate on a source, RideHud badges
+by source.kind ('ble' path exists in the type). FTMS + power + CSC + HR,
+connect UI, dropout probe P6, demo badge P7. Physics consumes it with zero
+changes (BikeRig reads source.read().powerW).

@@ -28,14 +28,18 @@ export type GroundProbe = (
   z: number,
 ) => { ground: number; water: number; surfaceId: number; slope: number };
 
-export type CamMode = 'walk' | 'fly';
+export type CamMode = 'walk' | 'fly' | 'ride';
 
-// ---- walk tuning (grounded-RPG feel) ---------------------------------------
+// ---- walk tuning (grounded exploration, Pillar-B natural) -------------------
 const EYE_HEIGHT = 1.7;
 const WALK_SPEED = 4.6; // m/s
 const SPRINT_MULT = 2.0;
-const GRAVITY = 22; // m/s² — game-feel gravity, not 9.81
-const JUMP_V0 = 7.0; // → ~1.1 m apex
+// M1.3 hike re-judge (ROADMAP): real gravity + a natural standing jump
+// (~0.55 m apex — fit athletic human), replacing the inherited 22 m/s²
+// game-feel tune; sprint FOV kick removed the same pass (Pillar B bans
+// artificial speed cues). Recorded in STATUS Session-3.
+const GRAVITY = 9.81; // m/s² — Pillar B
+const JUMP_V0 = 3.3; // → ~0.55 m apex at 9.81
 const STEP_DOWN = 0.55; // downhill ground-stick range (m)
 const GROUND_ACCEL = 10; // exp-damp rate toward wish velocity
 const AIR_ACCEL = 2.5; // reduced air control
@@ -45,7 +49,9 @@ const BOB_Y_WALK = 0.026; // m
 const BOB_Y_SPRINT_ADD = 0.018; // extra at full sprint
 const BOB_LATERAL = 0.55; // fraction of vertical amp, applied on right axis
 const BOB_ROLL = 0.0032; // rad
-const SPRINT_FOV_ADD = 6; // deg
+// ride mode: yaw auto-aligns to the route heading once the mouse is idle
+const RIDE_ALIGN_IDLE_MS = 1600;
+const RIDE_ALIGN_RATE = 2.2; // exp-damp rate (1/s)
 const DIP_K = 150; // landing-dip spring stiffness
 const DIP_C = 18; // landing-dip spring damping
 // fly-mode soft collision (legacy contract from TerrainScene)
@@ -83,8 +89,17 @@ export class FlyCamera {
   private bobK = 0; // smoothed 0..1+ speed factor driving bob amplitude
   private dipY = 0;
   private dipV = 0;
-  private fovKick = 0;
   private baseFov: number;
+  // ride mode (M1.3): position is driven externally by the BikeRig each
+  // frame; the camera keeps free mouse-look and eases back to the travel
+  // heading once the mouse has been idle a moment
+  private ridePos = new Vector3();
+  private rideHeading = 0;
+  private lastMouseAt = -1e9;
+  /** ride pose provider — called DURING update so the camera always renders
+   *  the freshest fixed-step interpolation (BikeRig installs it) */
+  rideDriver: ((out: { x: number; y: number; z: number; heading: number }) => void) | null = null;
+  private rideOut = { x: 0, y: 0, z: 0, heading: 0 };
   // jump input buffer: keydown-edge timestamp — a tap shorter than a frame
   // still jumps on the next grounded update (≤150 ms grace)
   private jumpAt = -1;
@@ -159,6 +174,7 @@ export class FlyCamera {
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
+      this.lastMouseAt = performance.now();
       this.yaw -= e.movementX * 0.0022;
       this.pitch -= e.movementY * 0.0022;
       this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch));
@@ -168,7 +184,8 @@ export class FlyCamera {
         // eslint-disable-next-line no-console
         console.log(`[pose] cam=${this.toCamString()}`);
       }
-      if (e.code === 'KeyV' && this.enabled) {
+      if (e.code === 'KeyV' && this.enabled && this.modeV !== 'ride') {
+        // ride mode owns its own exit (M key via BikeRig) — V is walk⇄fly
         this.setMode(this.modeV === 'walk' ? 'fly' : 'walk');
       }
       if (e.code === 'Space' && !e.repeat) this.jumpAt = performance.now();
@@ -199,7 +216,12 @@ export class FlyCamera {
    */
   setMode(mode: CamMode): void {
     if (mode === this.modeV) return;
-    if (mode === 'walk') {
+    if (mode === 'ride') {
+      // entered via beginRide() only — it seeds ridePos/heading first
+      this.resetEffects();
+      this.vel.set(0, 0, 0);
+      this.velY = 0;
+    } else if (mode === 'walk') {
       if (!this.groundProbe) {
         // eslint-disable-next-line no-console
         console.warn('[laas] walk mode unavailable — no terrain in this scene');
@@ -270,7 +292,6 @@ export class FlyCamera {
     this.bobK = 0;
     this.dipY = 0;
     this.dipV = 0;
-    this.fovKick = 0;
     if (this.camera.fov !== this.baseFov) {
       this.camera.fov = this.baseFov;
       this.camera.updateProjectionMatrix();
@@ -288,9 +309,39 @@ export class FlyCamera {
     if (!this.enabled) return;
     if (this.modeV === 'walk') {
       this.updateWalk(dt);
+    } else if (this.modeV === 'ride') {
+      this.updateRide(dt);
     } else {
       this.updateFly(dt);
     }
+  }
+
+  /** enter ride mode at a route pose (BikeRig calls this once on mount) */
+  beginRide(x: number, y: number, z: number, heading: number): void {
+    this.ridePos.set(x, y, z);
+    this.rideHeading = heading;
+    this.yaw = heading;
+    this.setMode('ride');
+  }
+
+  private updateRide(dt: number): void {
+    if (this.rideDriver) {
+      this.rideDriver(this.rideOut);
+      this.ridePos.set(this.rideOut.x, this.rideOut.y, this.rideOut.z);
+      this.rideHeading = this.rideOut.heading;
+    }
+    // free mouse-look; yaw eases to the travel heading after mouse idle
+    if (performance.now() - this.lastMouseAt > RIDE_ALIGN_IDLE_MS) {
+      let d = this.rideHeading - this.yaw;
+      d = Math.atan2(Math.sin(d), Math.cos(d)); // shortest arc
+      this.yaw += d * (1 - Math.exp(-dt * RIDE_ALIGN_RATE));
+      const pt = -0.06 - this.pitch; // settle to a slight down-gaze
+      this.pitch += pt * (1 - Math.exp(-dt * RIDE_ALIGN_RATE * 0.6));
+    }
+    this.basePos.copy(this.ridePos);
+    this.applyRotation(0);
+    this.camera.position.copy(this.basePos);
+    this.camera.updateMatrixWorld();
   }
 
   private updateFly(dt: number): void {
@@ -419,14 +470,8 @@ export class FlyCamera {
     // landing-dip spring (semi-implicit Euler — stable at the engine dt cap)
     this.dipV += (-DIP_K * this.dipY - DIP_C * this.dipV) * dt;
     this.dipY += this.dipV * dt;
-    // sprint FOV kick
-    const fovTarget = sprinting && this.grounded && speedH > WALK_SPEED * 1.15 ? SPRINT_FOV_ADD : 0;
-    this.fovKick += (fovTarget - this.fovKick) * (1 - Math.exp(-dt * 6));
-    const fov = this.baseFov + this.fovKick;
-    if (Math.abs(this.camera.fov - fov) > 1e-3) {
-      this.camera.fov = fov;
-      this.camera.updateProjectionMatrix();
-    }
+    // (sprint FOV kick removed — M1.3 Pillar-B re-judge: no artificial
+    // speed cues; sprint reads through stride/bob alone)
 
     // compose: camera = logical pose + effect offsets (getPose strips these)
     this.applyRotation(roll);

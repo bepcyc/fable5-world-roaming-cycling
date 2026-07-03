@@ -19,7 +19,14 @@ import { buildSanityScene } from './debug/SanityScene';
 import { buildShadowTestScene } from './debug/ShadowTestScene';
 import { buildTerrainScene } from './debug/TerrainScene';
 import { buildScene, registerScene, type WorldContext } from './debug/Scenes';
+import { BikeRig } from './ride/BikeRig';
 import { RideHud } from './ride/RideHud';
+import { RouteGraph } from './ride/RouteGraph';
+import {
+  DemoSensorSource,
+  KeyboardPowerSource,
+  type SensorSource,
+} from './ride/Sensors';
 
 async function boot(): Promise<void> {
   const hooks = initHooks();
@@ -90,9 +97,40 @@ async function boot(): Promise<void> {
   }
 
   new Hud(engine, params);
-  // ride dashboard (speed/cadence/HR) — hidden by default, B toggles,
-  // ?ride=1 boots visible, ?ride=demo attaches the fake sensor source
-  new RideHud(engine, fly);
+  // ride layer (M1.3): power source seam → dashboard + bike physics.
+  // ?ride=demo = fake sensors (DEMO badge); ?ridedev=1 = keyboard bike
+  // (DEV badge); no source = bikes locked, dashboard shows "—".
+  const q0 = new URLSearchParams(window.location.search);
+  const source: SensorSource | null = params.rideDev
+    ? new KeyboardPowerSource()
+    : q0.get('ride') === 'demo'
+      ? new DemoSensorSource()
+      : null;
+  const rideHud = new RideHud(engine, fly, source);
+  if (hooks.roads && hooks.groundProbe) {
+    engine.fixedDt = params.fixedDt;
+    const graph = RouteGraph.build(hooks.roads);
+    const rig = new BikeRig(engine, fly, graph, hooks.groundProbe, source);
+    rideHud.attachRig(rig);
+    engine.stats.counters['ride.graphNodes'] = graph.nodes.length;
+    engine.stats.counters['ride.graphEdges'] = graph.edges.length;
+    // probe control surface (tools/probe-physics.ts)
+    const dbg = (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
+    dbg['ride'] = rig;
+    dbg['rideGraph'] = graph;
+    dbg['setFixedDt'] = (s: number): void => {
+      engine.fixedDt = Math.min(Math.max(s, 0.002), 0.05);
+    };
+    (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg;
+    // ?road=<class>&ridedev=1 → spawn already ON the road; mount the
+    // matching bike immediately (owner verification + probe entry)
+    const roadQ = q0.get('road');
+    if (roadQ && source) {
+      const cls = roadQ.split(',')[0] ?? '';
+      const mode = cls === 'asphalt' ? 'road' : cls.startsWith('gravel') ? 'gravel' : 'mtb';
+      rig.setMode(mode);
+    }
+  }
 
   hooks.setPose = (p) => fly.setPose(p);
   hooks.getPose = () => fly.getPose();

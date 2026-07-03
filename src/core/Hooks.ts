@@ -37,6 +37,8 @@ export interface GpuDiagnostics {
   limits: Record<string, number>;
 }
 
+import type { RoadNetwork } from '../ride/RoadNetwork';
+
 export interface LaasHooks {
   /** true once the first frames have rendered and the GPU pipeline is verified */
   ready: boolean;
@@ -64,6 +66,8 @@ export interface LaasHooks {
         z: number,
       ) => { ground: number; water: number; surfaceId: number; slope: number })
     | null;
+  /** M1.2 road network (world scenes) — M1.3 builds the ride graph on it */
+  roads: RoadNetwork | null;
   setTimeOfDay: ((t: number) => void) | null;
   /** settle frames (TAA/temporal effects) then resolve — call before screenshots */
   settle: ((frames?: number) => Promise<void>) | null;
@@ -90,6 +94,7 @@ export function initHooks(): LaasHooks {
     initialPose: null,
     initialPoseMode: null,
     groundProbe: null,
+    roads: null,
     setTimeOfDay: null,
     settle: null,
     flyCamEnabled: null,

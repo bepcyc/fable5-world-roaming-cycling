@@ -24,6 +24,10 @@ export interface LaasParams {
   /** CPU worker threads for boot-time generation; 0 = auto (all cores).
    *  Also settable from the HUD menu (F4) via localStorage — see Threads.ts */
   threads: number;
+  /** fixed physics timestep (s) — ?dt=<ms>; probes sweep 3 values (M1.3) */
+  fixedDt: number;
+  /** ?ridedev=1 — keyboard-driven bike power source (dev builds only) */
+  rideDev: boolean;
 }
 
 function num(v: string | null, fallback: number): number {
@@ -50,6 +54,8 @@ export function parseParams(search: string = window.location.search): LaasParams
     freeze: q.get('freeze') === '1',
     dpr: q.get('dpr') !== null ? num(q.get('dpr'), 1) : null,
     threads: Math.max(0, Math.floor(num(q.get('threads'), 0))),
+    fixedDt: Math.min(50, Math.max(2, num(q.get('dt'), 1000 / 120))) / 1000,
+    rideDev: q.get('ridedev') === '1',
   };
 }
 

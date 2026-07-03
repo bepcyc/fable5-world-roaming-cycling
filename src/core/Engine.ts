@@ -14,8 +14,11 @@ import type { EngineStats, LaasHooks } from './Hooks';
 import type { LaasParams } from './Params';
 
 export type UpdateFn = (dt: number, worldTime: number) => void;
+export type FixedFn = (dt: number) => void;
 
 const P95_WINDOW = 120;
+/** spiral-of-death guard: at most this many fixed steps per rendered frame */
+const MAX_FIXED_STEPS = 12;
 
 export class Engine {
   readonly renderer: WebGPURenderer;
@@ -33,7 +36,17 @@ export class Engine {
   /** when set, the frame loop renders through this instead of renderer.render */
   post: { render(): void; meter(renderer: WebGPURenderer): void } | null = null;
 
+  /** M1.3 fixed-timestep simulation clock (s). Physics (bike solver) runs
+   *  here — never on the variable frame dt — so results are frame-rate
+   *  independent; probes sweep it via ?dt=<ms>. */
+  fixedDt = 1 / 120;
+  /** interpolation phase 0..1 of the unconsumed fixed-step remainder —
+   *  movers lerp render pose between the last two fixed states with it */
+  fixedAlpha = 0;
+
   private updateFns: UpdateFn[] = [];
+  private fixedFns: FixedFn[] = [];
+  private fixedAcc = 0;
   private lastT: number | null = null;
   private frameMsRing: number[] = [];
   private fpsEma = 0;
@@ -120,6 +133,12 @@ export class Engine {
     this.updateFns.push(fn);
   }
 
+  /** register a fixed-timestep callback (runs 0..N times per frame BEFORE
+   *  the variable-dt updates, always with exactly `fixedDt` seconds) */
+  onFixedUpdate(fn: FixedFn): void {
+    this.fixedFns.push(fn);
+  }
+
   /** resolves after `frames` additional frames have been rendered */
   settle(frames = 8): Promise<void> {
     return new Promise((resolve) => {
@@ -143,6 +162,20 @@ export class Engine {
     // submit = three render+encode (excl. GPU; backpressure shows as the
     // gap between frameMs and cpu.update+cpu.submit)
     const c0 = performance.now();
+    // fixed-timestep simulation drains BEFORE the variable updates so the
+    // frame's movers/copies see the freshest physics state; excess backlog
+    // is dropped (guard), never simulated in one giant unstable step
+    if (this.fixedFns.length > 0) {
+      this.fixedAcc += dt;
+      let steps = 0;
+      while (this.fixedAcc >= this.fixedDt && steps < MAX_FIXED_STEPS) {
+        for (const fn of this.fixedFns) fn(this.fixedDt);
+        this.fixedAcc -= this.fixedDt;
+        steps++;
+      }
+      if (this.fixedAcc > this.fixedDt) this.fixedAcc = this.fixedDt; // drop backlog
+      this.fixedAlpha = this.fixedAcc / this.fixedDt;
+    }
     for (const fn of this.updateFns) fn(dt, this.worldTime);
     const c1 = performance.now();
 
