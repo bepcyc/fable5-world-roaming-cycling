@@ -1441,3 +1441,44 @@ P5 impassable warning via surfaceAt lookahead.**
 Cockpit + dashboard v2 + HUD warnings (ROADMAP). MANDATORY PROCESS:
 скрины с русским пояснением в Telegram-бот владельца по ходу работы —
 обязательная часть процесса разработки (см. handoff, раздел процесса).**
+
+## Session 5b — 2026-07-03: M1.4.2 follow-up (налипание), debug overlay, ford chain
+
+- **Owner escalation:** first fix flattened marsh pools but the REAL
+  complaint was small road puddles/streams reading as gel mounds, and
+  water DRAPING along slopes. Process failures acknowledged: not all
+  screenshots sent, "final" shots featured lakes where the bug is
+  invisible. Screenshots with Russian captions to the owner bot are a
+  MANDATORY part of the dev process (memory + handoff updated).
+- **Debug overlay (owner-requested, commit 3abf578):** Shift+D toggles an
+  opaque bottom-right panel — scene, seed, preset, T, camera mode, pose,
+  view vector, ready-to-paste --cam string. Owner can now report any
+  artifact by sending the --cam line. `src/debug/DebugOverlay.ts`.
+- **Stepped water (commit 927e8ed):** WaterPools now builds a pool-riffle
+  staircase (POOL_STEP 0.35 m; level holds flat until the bed climbs a
+  full step) and only ever LOWERS the raw surface (deepening ban — owner
+  called that out pre-emptively and the first stepped attempt did raise
+  gully water into walls; min(raw, fill) fixed it). MAX_SURFACE_SLOPE 5%
+  post-pass dries surviving ramp cells. Road puddles now sit flat IN the
+  road; slope-draped sheets gone at the probed spots.
+- **KNOWN CASCADE — waterY feeds road routing: every waterY change
+  re-lays the road network.** All shot coordinates go stale per change;
+  rescan (small-water/find-fords scratch pattern in session transcript)
+  before comparing. A/B shots at fixed cameras across waterY changes are
+  MEANINGLESS (an hour was lost to a "wall regression" that was just a
+  rerouted road + camera inside a bank).
+- **Ford chain from drying riffles (commit 927e8ed):** crossings can now
+  be fully dry → DRY fords (profile drops to bed where terrain dips >0.15
+  under it, tagged+exempt); approaches grade-capped 18% (solver BLOCKED on
+  the raw drop — probe-physics dashboard leg stalled at v=0); wet-ford
+  test re-runs after the cap (ramps can dip under the water table).
+- **Probes:** probe-roads, probe-physics, probe-surface, probe-ridehud
+  ALL PASS. **probe-ble P6 FAILS (open):** coast leg picks an uphill
+  runway on edge 0 but the bike never accelerates (v=0.0 throughout;
+  last SIM wire grade −0.18 suggests it sits on/near a graded ford ramp).
+  Physics P1–P4 and the BLE pure battery are green. NOT fixed — owner
+  ordered stop of new development; first task next session.
+- **Visual state (final3 shots, sent to owner):** road puddle flat ✓,
+  brook mirror flat ✓, remaining defect: white "curtain" band where water
+  meets steep banks/cliffs (dry-cell sheet diving + shore shading) — the
+  gel look at edges is now shading, not geometry.
