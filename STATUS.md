@@ -1219,7 +1219,9 @@ surface map, and cleared of vegetation.
   gravel-river class marginal (see above); ford approach ramps can exceed
   class grade over ~2 samples (real-world fords do too; P3/P4 own it).
 
-**Next session entry point:** M1.3 movement modes & physics (ROADMAP) —
+**Next session entry point: read the full handoff first —
+`.claude/handoffs/2026-07-03-094232-rando-session-2-m12-roads.md`
+(gitignored, lives on disk).** Then M1.3 movement modes & physics (ROADMAP) —
 fixed-timestep accumulator, power→speed solver over the M1.1/M1.2 surface
 matrix, route-following steering + junction picks (owner explicitly wants
 Zwift-style "turn ahead" choice UI), hike-mode re-judge vs Pillar B. The
