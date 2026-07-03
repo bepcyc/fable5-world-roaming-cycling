@@ -14,6 +14,7 @@ import { initHooks } from './core/Hooks';
 import { parseCamString, parseParams } from './core/Params';
 import { WorldSeed } from './core/Seed';
 import { Hud } from './debug/HUD';
+import { DebugOverlay } from './debug/DebugOverlay';
 import { buildGalleryScene } from './debug/GalleryScene';
 import { buildSanityScene } from './debug/SanityScene';
 import { buildShadowTestScene } from './debug/ShadowTestScene';
@@ -100,6 +101,7 @@ async function boot(): Promise<void> {
   }
 
   new Hud(engine, params);
+  new DebugOverlay(engine, fly, params); // Shift+D: live scene-repro params
   // ride layer (M1.3): power source seam → dashboard + bike physics.
   // ?ride=demo = fake sensors (DEMO badge); ?ridedev=1 = keyboard bike
   // (DEV badge); no source = bikes locked, dashboard shows "—".
