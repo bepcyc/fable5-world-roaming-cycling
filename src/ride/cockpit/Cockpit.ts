@@ -125,6 +125,7 @@ export class Cockpit {
     if (!riding) {
       if (root.visible) root.visible = false;
       if (cockpitVelU.on.value !== 0) cockpitVelU.on.value = 0;
+      cockpitVelU.mblur.value = 0;
       this.mountK = 0;
       this.lastHeading = null;
       this.hasPrev = false;
@@ -200,6 +201,9 @@ export class Cockpit {
     steer.position.y = -BAR_DROP + this.jy; // fit baseline + buzz
     // wheel spin (front wheel: top moves toward -Z)
     this.build.wheel.rotation.x -= (v / WHEEL_R) * dt;
+
+    // road motion blur strength: reaches full streak by ~36 km/h
+    cockpitVelU.mblur.value = Math.min(v / 10, 1) * 0.85;
 
     // ---- live screen: reference metrics page (map page under ?ckmap=1)
     if (v > 0.4) this.rideS += dt; // auto-pause like a real head unit

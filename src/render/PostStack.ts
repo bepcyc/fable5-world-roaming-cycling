@@ -519,8 +519,47 @@ export class PostStack {
       ? (withBounce as unknown as ReturnType<typeof traa>)
       : traa(withBounce, depthTex, reprojectedVelocity, camera);
 
+    // --- road-speed motion blur (M1.5.2: the refs' sense of speed) ------------------
+    // Streak each pixel along its own camera-reprojection delta — the same
+    // math TRAA's velocity consumes — AFTER the resolve so the accumulation
+    // history stays sharp. Cockpit pixels are excluded (the bike must stay
+    // crisp while the road surface smears, exactly like the reference
+    // photos). Strength rides cockpitVelU.mblur: speed-driven by the rig,
+    // 0 at standstill/walk/fly, so free-look while stopped never blurs.
+    // ?mblur=0 or ?ablate=mblur disables; requires the TRAA texture, so
+    // ?ablate=taa also disables.
+    let taaedRgb: NV3;
+    if (ablate.has('taa') || ablate.has('mblur') || q.get('mblur') === '0') {
+      taaedRgb = (taaed as unknown as NV4).rgb;
+    } else {
+      const src = (
+        taaed as unknown as { getTextureNode(): { value: Parameters<typeof texture>[0] } }
+      ).getTextureNode();
+      const mb = Fn(() => {
+        const T = screenUV.mul(screenSize);
+        const dC = (depthTex.load(T as unknown as Parameters<typeof depthTex.load>[0]) as unknown as NV4).x;
+        const posV = getViewPosition(screenUV, dC, uProjInv);
+        const isCk = float(cockpitVelU.on)
+          .greaterThan(0.5)
+          .and(posV.length().lessThan(float(cockpitVelU.maxDist)));
+        // uv-space per-frame motion (velReproject emits ndc convention)
+        const dir0 = velReproject(T).mul(vec2(0.5, -0.5)).mul(float(cockpitVelU.mblur)).mul(1.4);
+        const len = dir0.length().min(0.05);
+        const dir = dir0.mul(len.div(dir0.length().max(1e-6)));
+        const acc = vec3(0).toVar();
+        const TAPS = 7;
+        for (let i = 0; i < TAPS; i++) {
+          const t = -0.45 + (0.9 * i) / (TAPS - 1);
+          acc.addAssign(texture(src.value, screenUV.add(dir.mul(t))).rgb);
+        }
+        const blurred = acc.div(TAPS);
+        const center = texture(src.value, screenUV).rgb;
+        return vec4(isCk.select(center, blurred), 1);
+      })();
+      taaedRgb = (mb as unknown as NV4).rgb;
+    }
+
     // --- bloom -----------------------------------------------------------------------
-    const taaedRgb = (taaed as unknown as NV4).rgb;
     const withBloom = ablate.has('bloom')
       ? taaedRgb
       : taaedRgb.add((bloom(taaed, 0.28, 0.45, 1.5) as unknown as NV4).rgb);

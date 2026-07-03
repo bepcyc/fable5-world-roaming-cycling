@@ -358,8 +358,8 @@ function handParts2(s: Hand2Spec): HandOut {
     const r0 = 0.0085 - fi * 0.0006;
     const lens = [0.029 * fk, 0.023 * fk, 0.013 * fk];
     // knuckle bump at the chain root, tucked into the palm edge
-    const kn = new SphereGeometry(r0 * 0.92, 10, 8);
-    body.push({ geo: kn, m: new Matrix4().setPosition(base.clone().addScaledVector(n, -0.002)) });
+    const kn = new SphereGeometry(r0 * 1.0, 10, 8);
+    body.push({ geo: kn, m: new Matrix4().setPosition(base.clone().addScaledVector(n, -0.001)) });
     // ONE smooth flesh arc through the joint waypoints (capsule chains
     // read as caterpillars — the kinks poke through the skin)
     let theta = curl[0];
@@ -524,7 +524,7 @@ function computerParts(center: Vector3): { body: Part[]; screen: Mesh; mount: Pa
 function frameParts(kind: 'drop' | 'riser'): Part[] {
   const parts: Part[] = [];
   // head tube: fat tube along the steering axis under the stem
-  const htTop = new Vector3(0, -0.03, 0.085);
+  const htTop = new Vector3(0, -0.026, 0.083);
   const htLen = 0.17;
   const ht = new CylinderGeometry(0.034, 0.036, htLen, 16);
   parts.push(place(ht, htTop.clone().addScaledVector(STEER_AXIS, htLen / 2), STEER_AXIS));
@@ -688,11 +688,11 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
         // wrapping the front-underside
         const gp = new Vector3(hp.x - side * 0.052, hp.y + 0.016, hp.z + 0.066);
         addHand({
-          knuckleC: gp.clone().add(new Vector3(side * 0.002, 0.015, 0.005)),
+          knuckleC: gp.clone().add(new Vector3(side * 0.002, 0.014, 0.005)),
           tHat: new Vector3(side * 0.97, -0.01, -0.24),
           nHat: new Vector3(side * 0.07, 0.95, -0.3),
           fHat: new Vector3(side * 0.05, -0.15, -0.99),
-          curl: [0.25, 1.3, 1.35],
+          curl: [0.28, 1.35, 1.4],
           thumbUnder: true,
           gloved: false,
           bracelet: side === 1,
@@ -764,7 +764,7 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
       const bladePts = [
         clampP.clone().add(new Vector3(side * 0.012, -0.005, -0.03)),
         clampP.clone().add(new Vector3(side * 0.03, -0.014, -0.052)),
-        clampP.clone().add(new Vector3(side * 0.052, -0.024, -0.06)),
+        clampP.clone().add(new Vector3(side * 0.06, -0.028, -0.066)),
       ];
       alloy.push({ geo: sweep(bladePts, 0.0056, 16), m: new Matrix4() });
       // shifter pod (right) / dropper remote (left) under the bar
@@ -939,7 +939,7 @@ export function buildCockpit(): CockpitBuild {
     anoBlue: anoMat('#2b6fd4'),
   };
   const framePearl = frameMat('#e9eaec');
-  const frameOlive = frameMat('#6b7050', 0.42);
+  const frameOlive = frameMat('#5f6a42', 0.42);
 
   const root = new Group();
   root.name = 'cockpit';
@@ -1005,7 +1005,7 @@ export function buildCockpit(): CockpitBuild {
   steer.add(wheel);
 
   // computer floats out front on its riser mount (shared across modes)
-  const comp = computerParts(new Vector3(0, 0.017, -0.118));
+  const comp = computerParts(new Vector3(0, 0.016, -0.124));
   const compBody = new Mesh(merged([...comp.body, ...comp.mount]), mats.rubber);
   compBody.frustumCulled = false;
   steer.add(compBody);

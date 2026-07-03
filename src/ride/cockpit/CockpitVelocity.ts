@@ -28,4 +28,7 @@ export const cockpitVelU = {
   on: runiform(0),
   /** view-distance bound of cockpit geometry (m) */
   maxDist: runiform(1.35),
+  /** road motion-blur strength 0..1 (M1.5.2 refs' sense of speed) —
+   *  speed-driven by Cockpit.ts, 0 at standstill/walk/fly */
+  mblur: runiform(0),
 };
