@@ -1482,3 +1482,9 @@ Cockpit + dashboard v2 + HUD warnings (ROADMAP). MANDATORY PROCESS:
   brook mirror flat ✓, remaining defect: white "curtain" band where water
   meets steep banks/cliffs (dry-cell sheet diving + shore shading) — the
   gel look at edges is now shading, not geometry.
+
+**Next session entry point: read
+`.claude/handoffs/2026-07-03-140500-rando-session-5b-m142-stepped-water.md`
+(supersedes 5a pointer). FIRST: probe-ble P6 regression (coast leg v=0 on
+graded ford runway). Then water edge "curtain" shading, then M1.5.
+Скрины+статусы владельцу в бот по ходу — обязательный процесс.**
