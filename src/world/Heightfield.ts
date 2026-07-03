@@ -182,7 +182,7 @@ export class Heightfield {
     progress(0.67, 'hydrology: flattening pooled water');
     const rawArr = new Float32Array(await renderer.getArrayBufferAsync(hf.flow.waterYRaw.value));
     const bedArr = new Float32Array(await renderer.getArrayBufferAsync(erosion.eroded.value));
-    const poolStats = flattenPooledWater(rawArr, bedArr, cfg.simRes);
+    const poolStats = flattenPooledWater(rawArr, bedArr, cfg.simRes, WORLD_SIZE / cfg.simRes);
     console.log(
       `[laas] water pools: ${poolStats.pooledCells}/${poolStats.wetCells} wet cells flattened, max drop ${poolStats.maxDrop.toFixed(2)} m`,
     );

@@ -16,24 +16,25 @@
  *     classic fill of the carved bed from outlet levels. Because the
  *     heap pops globally lowest first, pool interiors are always claimed
  *     through their true (lowest) outlet, never a raised rim cell.
- *  3. A cell is POOLED where that fill level clears its bed by a margin;
- *     there the flat fill level replaces the raw domed surface. Where
- *     the fill hugs the bed (flowing reach — water escapes downstream)
- *     the raw sloped surface is kept, so rivers do not terrace.
+ *  3. Every wet cell takes its stepped pool level: sloped reaches become
+ *     a pool-riffle staircase (flat mirrors, dry breaks where the bed
+ *     crosses the level) instead of a glassy sheet draped over the slope;
+ *     genuine pools fill flat to their spill. Lakes reproduce their own
+ *     already-flat level W unchanged.
  *
  * Lakes are already at their flat multigrid fill level W: the flood
  * reproduces W exactly, so they pass through unchanged.
  */
 
-/** below this clearance over the bed the fill is "hugging" the channel —
- *  treat as flowing reach and keep the raw sloped surface */
-const POOL_MARGIN = 0.06;
-/** max UPWARD correction: filling a shallow concave dip to the spill level
- *  is legitimate (funnel dips around islands), but a marsh sitting meters
- *  below its topographic spill is its own waterbody at its own level —
- *  raising it builds translucent water walls over the terrain (seen at the
- *  Dawn-lake bookmark). Such cells keep their raw surface. */
-const RAISE_CAP = 1.0;
+/** vertical extent of one stream pool step: climbing a reach, the water
+ *  level stays FLAT until the bed rises this far above it, then jumps to a
+ *  new pool anchored at the bed (pool-riffle staircase). Without stepping,
+ *  visible water on sloped reaches keeps its raw bed+depth surface and
+ *  reads as a glassy sheet DRAPED over the slope (owner: "вода налипает").
+ *  0.35 m over 2–4 m texels keeps the wet-wet step gradient under the
+ *  buildWaterY cliff-cut threshold (0.35 rise/run), so steps render as
+ *  short smoothed slides, not severed shards. */
+const POOL_STEP = 0.35;
 /** wet sentinel: waterYRaw is −1e4 on dry cells */
 const DRY = -1e3;
 
@@ -101,10 +102,18 @@ class MinHeap {
  * Flatten pooled water in place: `raw` (waterYRaw readback) is rewritten
  * with the corrected surface. `bed` is the carved sim-res terrain.
  */
+/** standing water may not slope: wet cells whose corrected surface still
+ *  drops more than this (rise/run) toward a wet neighbor are ramp remnants
+ *  (staircase risers, drape leftovers the bilinear would re-slope) — they
+ *  render DRY, leaving flat mirrors separated by riffle breaks. Lakes and
+ *  flat pools have ~zero wet-wet gradient and are untouched. */
+const MAX_SURFACE_SLOPE = 0.05;
+
 export function flattenPooledWater(
   raw: Float32Array,
   bed: Float32Array,
   res: number,
+  texel: number,
 ): FlattenStats {
   const n = res * res;
   // tentative fill level per cell (only meaningful on wet cells)
@@ -154,7 +163,12 @@ export function flattenPooledWater(
       const ni = ny * res + nx;
       if (done[ni] || (raw[ni] as number) <= DRY) continue;
       const b = bed[ni] as number;
-      const cand = level > b ? level : b;
+      // stepped fill: hold the pool level FLAT until the bed climbs a full
+      // POOL_STEP above it, then start the next pool anchored at the bed.
+      // Cells whose bed sits within (level, level+STEP] keep the flat level
+      // BELOW their bed — they render dry, forming the riffle break between
+      // two mirror-flat pools.
+      const cand = b > level + POOL_STEP ? b : level;
       if (cand < (fill[ni] as number)) {
         fill[ni] = cand;
         heap.push(ni);
@@ -162,21 +176,43 @@ export function flattenPooledWater(
     }
   }
 
-  // 3. pooled cells take the flat fill level; flowing reaches keep the raw
-  // slope. Downward correction (bubble domes) is unbounded; upward is
-  // capped (RAISE_CAP) so under-spill marshes stay at their own level.
+  // 3. Every wet cell takes min(raw, stepped pool level): the correction
+  // only ever LOWERS water — bubble domes and slope-draped sheets get cut
+  // down to flat stepped mirrors (dry riffle breaks where the level dives
+  // under the bed), while existing shallow films and pools are never
+  // deepened (owner constraint: no redefining puddles/streams as deep).
   let pooledCells = 0;
   let maxDrop = 0;
   for (let i = 0; i < n; i++) {
     if ((raw[i] as number) <= DRY || !done[i]) continue;
     const f = fill[i] as number;
     const r = raw[i] as number;
-    if (f > (bed[i] as number) + POOL_MARGIN && f < r + RAISE_CAP) {
+    if (f < r) {
       const drop = r - f;
       if (drop > maxDrop) maxDrop = drop;
       raw[i] = f;
       pooledCells++;
     }
   }
+
+  // 4. slope cut: dry out wet cells whose surface still slopes toward a
+  // wet neighbor (see MAX_SURFACE_SLOPE). Two-phase (collect then apply)
+  // so the scan sees a consistent field.
+  const maxDelta = MAX_SURFACE_SLOPE * texel;
+  const cut: number[] = [];
+  for (let y = 0; y < res; y++) {
+    for (let x = 0; x < res; x++) {
+      const i = y * res + x;
+      const w = raw[i] as number;
+      if (w <= DRY) continue;
+      let grad = 0;
+      if (x > 0 && (raw[i - 1] as number) > DRY) grad = Math.max(grad, Math.abs(w - (raw[i - 1] as number)));
+      if (x < res - 1 && (raw[i + 1] as number) > DRY) grad = Math.max(grad, Math.abs(w - (raw[i + 1] as number)));
+      if (y > 0 && (raw[i - res] as number) > DRY) grad = Math.max(grad, Math.abs(w - (raw[i - res] as number)));
+      if (y < res - 1 && (raw[i + res] as number) > DRY) grad = Math.max(grad, Math.abs(w - (raw[i + res] as number)));
+      if (grad > maxDelta) cut.push(i);
+    }
+  }
+  for (const i of cut) raw[i] = -1e4;
   return { wetCells, pooledCells, maxDrop };
 }
