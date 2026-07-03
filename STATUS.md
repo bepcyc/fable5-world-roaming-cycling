@@ -1537,3 +1537,69 @@ graded ford runway). Then water edge "curtain" shading, then M1.5.
 SESSION 7 = M1.5 COCKPIT regardless. Convex ponds stay in backlog
 (design-first, only on explicit owner order).
 Owner WIP in working tree (Justfile/vite/main.ts/_repro-mobile) — hands off.**
+
+## Session 7 — 2026-07-03: M1.5 Cockpit + M1.6 Weather DONE; settings menu; ЖЕЛЕЗНЫЕ ПРАВИЛА СКРИНОВ
+
+- **M1.5 DONE (`ed9a359`).** Procedural first-person cockpit
+  (src/ride/cockpit/): swept-tube bars (road drop / gravel flare 13° /
+  MTB riser 780mm), stem+spacers, hoods+levers, hands as per-finger
+  capsule chains, out-front computer with LIVE CanvasTexture screen,
+  brake lines, fork + spinning wheel. Anchored to basePos + travel
+  heading (free look sweeps a world-stable cockpit). Motion: grade
+  pitch, cornering lean (capped 0.2 rad — higher swept the near forearm
+  across the lens), cadence rocking, per-surface buzz
+  (worldTime-hashed), steer hint, wheel spin. TRAA: depth-gated
+  (<1.35 m) per-object velocity via cockpitVelU prev/cur transforms in
+  velReproject — probe-cktraa masked pair-diff fixOn 3.6 vs fixOff 43.7
+  (12×). Dashboard v2: DISTANCE card. P5: BikeRig.scanHazard walks the
+  default route (chooser pick at first junction, straightest after);
+  amber HUD strip warns in the 3.5 s window; probe-hudwarn: 3.4 s
+  before a deep-water ford, no false positives — ALL PASS. Aesthetic
+  gate: 4 ToD incl. golden hour, moving capture.
+- **M1.6 DONE (`ce0d3fc`).** WeatherState (src/sky/Weather.ts) lerps:
+  froxels fogK + NEW wxBoost (noon un-gate + moisture floor), aerial
+  fog uniforms (Atmosphere.fogU), clouds coverage/density + NEW
+  overcast floor (contrast stretch left unclosable clear lanes),
+  weatherU.wetness → terrain wet term, sun dim + envIntensity. Rain =
+  T_RAIN streaks (wind-tilted, near-lens fade) → T_SPLASH rings on
+  impact. ?weather= snaps at boot; runtime eases (?weathert). probe-
+  weather: determinism 0.9Δ, transitions smooth — ALL PASS. owner-cams
+  clean (вода не тронута).
+- **Settings menu (owner ask, src/debug/OptionsMenu.ts):** ⚙/O panel —
+  weather cards, ToD gradient slider, POWER SOURCE (OFF/DEMO/KEYS
+  runtime-swap; BLE reloads), bike modes with teleport-to-nearest-
+  suitable-road (клик ROAD вдали от асфальта ВЕЗЁТ к асфальту, а не
+  отказывает — owner UX rule). Honest hints (расшейканная секция
+  POWER, причины отказа рига словами). Silent-refusal trap closed.
+- **Cockpit по референс-фото владельца** (shots/wip/what_i_want/):
+  gravel руки на ТОПАХ (большой палец вдоль трубы), митенки (цельная
+  тёмная кисть + голые пальцы), голые предплечья (нижние 55%), часы
+  слева, экран компа = heading-up КАРТА маршрута из RouteGraph +
+  красная плашка hazard (P5 на экране, Garmin-style). Demo power
+  floored at 0 (было −210 W при раскрутке).
+- **ПОРТЫ: 5173 = ВЛАДЕЛЬЦА (LAN/планшет). Мой dev = 5174** (`npm run
+  dev -- --port 5174 --strictPort`); все тулзы через LAAS_ORIGIN
+  (launch-gpu.ts, env LAAS_PORT). В этой сессии дважды столкнулись
+  портами (я поднимал/убивал 5173, у владельца падал run-rxgpu) —
+  разведено.
+- **ЖЕЛЕЗНЫЕ ПРАВИЛА (CLAUDE.md, после трёх эскалаций владельца):**
+  №0 сделал скрин → ОБЯЗАН рассмотреть (Read); №1 КАЖДЫЙ скрин → в бот
+  с русской подписью формата «ОЖИДАЛ / НЕ СОШЛОСЬ»; голый tg-send
+  запрещён; нарушение = отписка и остановка всей работы. Память
+  обновлена.
+- **Крашрепро владельца (limitcap):** «9 storage buffers > 8» compute
+  при ?limitcap=mobile → каскад invalid pipeline, трава исчезает
+  (grass ring cull подозреваемый) — БАЗОВЫЙ баг, всплывает его
+  _repro-mobile работой; на десктопе маскируется (adapter 16).
+- **Пробы на закрытии: ALL PASS** — roads, surface, physics (P1–P4 +
+  live), ridehud, ble (P6), hudwarn (P5), cktraa, weather; tsc clean.
+- Открытые хвосты: резкая линия «чистая вода/туман» на дальней кромке
+  озера (fog/after-rain); fog слаб в гуще леса на 20–40 м (плотность
+  сознательно не поднимал); гейт-поза «луг» смотрит в валун; крен-
+  кадры гейта сняты до lean-фикса.
+
+**Session 7 closed. Next session: read
+`.claude/handoffs/2026-07-03-session-7-m15-m16.md`. FIRST: прочитать
+CLAUDE.md (железные правила скринов и портов) — потом всё остальное.
+Дальше по ROADMAP: M1.7 Audio ЛИБО полировка кокпита/погоды по фидбэку
+владельца — спросить его в боте (со скрином).**
