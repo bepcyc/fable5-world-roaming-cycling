@@ -1383,7 +1383,11 @@ conformance + defensive parsing; hardware session deferred to M3.2 (Q8).**
 
 **Next session entry point: read the full handoff first —
 `.claude/handoffs/2026-07-03-session-4-m14-ble.md` (gitignored, lives on
-disk). Then M1.5 Cockpit + dashboard v2 + HUD warnings (ROADMAP):
+disk). Then M1.4.2 WATER SURFACE FIX FIRST (owner order 2026-07-03:
+convex "bubble" ponds + weird edges, see ROADMAP M1.4.2 — flat fill level
+per waterbody, shoreline mask instead of the bed−2 trick, don't terrace
+rivers). Only after that M1.5 Cockpit + dashboard v2 + HUD warnings
+(ROADMAP):
 handlebars/hands/bike-computer meshes on the logical pose, per-mode
 cockpit, TRAA mitigation for view-locked geometry, dashboard v2 cards,
 P5 impassable warning via surfaceAt lookahead.**
