@@ -156,10 +156,11 @@ function gloveMat(): MeshStandardNodeMaterial {
   return m;
 }
 
-function sleeveMat(): MeshStandardNodeMaterial {
+/** bare skin — fingerless-glove fingers, wrists, forearms (owner ref) */
+function skinMat(): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial();
-  m.color = new Color('#242830');
-  m.roughness = 0.96;
+  m.color = new Color('#a06a4e');
+  m.roughness = 0.72;
   m.metalness = 0;
   return m;
 }
@@ -252,19 +253,26 @@ interface HandSpec {
   backN: Vector3;
   /** unit direction of the first phalanx before the wrap bend */
   fingerN: Vector3;
+  /** thumb rides ALONG the tube on top (bar-top grip, owner ref) instead
+   *  of wrapping underneath (hoods/grips) */
+  thumbOnTop?: boolean;
   side: 1 | -1;
 }
 
-/** gloved hand: palm block + 4 finger capsule-chains + thumb, merged parts */
-function handParts(s: HandSpec): Part[] {
-  const parts: Part[] = [];
+/** fingerless-glove hand (owner ref): dark palm block + BARE-skin finger
+ *  capsule-chains + thumb; returns per-material part lists */
+function handParts(s: HandSpec): { glove: Part[]; skin: Part[] } {
+  const glove: Part[] = [];
+  const skin: Part[] = [];
   const grip = s.gripAxis.clone().normalize();
   const back = s.backN.clone().normalize();
   const along = s.fingerN.clone().normalize();
 
-  // palm: rounded box laid over the grip point
-  const palmLen = 0.082;
-  const palm = new RoundedBoxGeometry(0.062, 0.03, palmLen, 3, 0.013);
+  // palm/back-of-hand: rounded box covering the knuckle line — the
+  // fingerless glove must read as a SOLID dark mitt from above, not as
+  // dark patches over skin (owner: «пятна»)
+  const palmLen = 0.095;
+  const palm = new RoundedBoxGeometry(0.07, 0.034, palmLen, 3, 0.014);
   const palmM = new Matrix4();
   {
     const zAxis = along.clone().negate(); // palm length runs along fingers' root line
@@ -276,7 +284,7 @@ function handParts(s: HandSpec): Part[] {
       s.knuckle.clone().addScaledVector(along, -palmLen * 0.42).addScaledVector(back, 0.001),
     );
   }
-  parts.push({ geo: palm, m: palmM });
+  glove.push({ geo: palm, m: palmM });
 
   // fingers: 4 chains of 3 capsules wrapping around gripAxis; the outer
   // fingers are progressively shorter (index → pinky)
@@ -300,56 +308,74 @@ function handParts(s: HandSpec): Part[] {
       const len = lens[seg] as number;
       const cap = new CapsuleGeometry(fr, len, 3, 8);
       const mid = pos.clone().addScaledVector(d, len * 0.5);
-      parts.push(place(cap, mid, d));
+      // fingerless gloves: first phalanx still gloved, the rest is skin
+      (seg === 0 ? glove : skin).push(place(cap, mid, d));
       pos = pos.addScaledVector(d, len);
     }
   }
 
-  // thumb: 2 segments on the inner side, wrapping under
+  // thumb: 2 segments — along the tube on top (bar-top grip) or wrapping
+  // under the inner side (hoods / MTB grips)
   {
     const base = s.knuckle
       .clone()
       .addScaledVector(grip, -0.045)
       .addScaledVector(back, -0.004)
       .addScaledVector(along, -0.028);
-    const d1 = along.clone().multiplyScalar(0.5).addScaledVector(back, -0.85).normalize();
+    const inner = grip.clone().multiplyScalar(-s.side);
+    const d1 = s.thumbOnTop
+      ? inner.clone().addScaledVector(along, 0.55).normalize()
+      : along.clone().multiplyScalar(0.5).addScaledVector(back, -0.85).normalize();
     const c1 = new CapsuleGeometry(0.009, 0.03, 3, 8);
-    parts.push(place(c1, base.clone().addScaledVector(d1, 0.015), d1));
-    const d2 = along.clone().multiplyScalar(0.9).addScaledVector(back, -0.4).normalize();
+    glove.push(place(c1, base.clone().addScaledVector(d1, 0.015), d1));
+    const d2 = s.thumbOnTop
+      ? inner.clone().addScaledVector(along, 1.1).addScaledVector(back, -0.15).normalize()
+      : along.clone().multiplyScalar(0.9).addScaledVector(back, -0.4).normalize();
     const c2 = new CapsuleGeometry(0.0082, 0.026, 3, 8);
-    parts.push(
+    skin.push(
       place(c2, base.clone().addScaledVector(d1, 0.03).addScaledVector(d2, 0.013), d2),
     );
   }
-  return parts;
+  return { glove, skin };
 }
 
-/** forearm cone from wrist back UP toward the rider's (off-frame) elbow.
- *  +Z is toward the rider in bar-clamp space — elbows sit behind wrists. */
+/** bare forearm from wrist back UP toward the rider's (off-frame) elbow.
+ *  +Z is toward the rider in bar-clamp space — elbows sit behind wrists.
+ *  Left wrist carries a sports watch (owner ref). */
 function forearmParts(
   wrist: Vector3,
   side: 1 | -1,
   elbowAt?: Vector3,
-): { sleeve: Part[]; elbowEnd: Vector3 } {
-  // default: up-and-OUT toward the elbow, clearing the camera's near cone —
-  // an elbow near the lens smears a featureless gray panel into the frame
-  // corners (v9 lesson); wide keeps the sleeve a slim side silhouette
+): { skin: Part[]; watch: Part[]; elbowEnd: Vector3 } {
+  // up-and-OUT toward the elbow, clearing the camera's near cone — an
+  // elbow near the lens smears a featureless panel into the frame corners
   const elbow = elbowAt ?? new Vector3(side * 0.27, 0.04, 0.33);
   const dir = elbow.clone().sub(wrist);
-  const len = dir.length();
+  const len = dir.length() * 0.55; // draw the lower HALF only: the upper
+  // half lives behind the camera in normal poses, but cornering lean can
+  // swing it across the lens as a screen-wide "log" (owner: «шлак»)
   dir.normalize();
-  const cone = new CylinderGeometry(0.036, 0.028, len, 12);
+  const cone = new CylinderGeometry(0.031, 0.027, len, 12);
   const mid = wrist.clone().addScaledVector(dir, len * 0.5);
-  const cuff = new TorusGeometry(0.03, 0.005, 8, 16);
-  const elbowCap = new SphereGeometry(0.038, 12, 10);
-  return {
-    sleeve: [
-      place(cone, mid, dir),
-      place(cuff, wrist.clone().addScaledVector(dir, 0.015), dir),
-      { geo: elbowCap, m: new Matrix4().setPosition(elbow) },
-    ],
-    elbowEnd: elbow,
-  };
+  const endCap = new SphereGeometry(0.032, 12, 10);
+  const skin: Part[] = [
+    place(cone, mid, dir),
+    { geo: endCap, m: new Matrix4().setPosition(wrist.clone().addScaledVector(dir, len)) },
+  ];
+  const watch: Part[] = [];
+  if (side === -1) {
+    // slim strap + small face hugging the top of the wrist (ref photo) —
+    // v1 read as a dark blob; keep it tight and low-profile
+    const strap = new TorusGeometry(0.0285, 0.0032, 8, 18);
+    watch.push(place(strap, wrist.clone().addScaledVector(dir, 0.04), dir));
+    const face = new CylinderGeometry(0.011, 0.011, 0.0035, 14);
+    const facePos = wrist
+      .clone()
+      .addScaledVector(dir, 0.04)
+      .add(new Vector3(0, 0.0265, 0));
+    watch.push(place(face, facePos, new Vector3(side * 0.15, 1, -0.08).normalize()));
+  }
+  return { skin, watch, elbowEnd: elbow };
 }
 
 // ---- hoods + levers (road/gravel) ------------------------------------------
@@ -431,7 +457,7 @@ interface ModeSpec {
   halfWidth: number;
   flareDeg: number;
   tape: MeshStandardNodeMaterial | null;
-  handsOn: 'hoods' | 'grips';
+  handsOn: 'hoods' | 'grips' | 'tops';
 }
 
 function buildModeAssembly(
@@ -441,7 +467,7 @@ function buildModeAssembly(
     alloy: MeshStandardNodeMaterial;
     rubber: MeshStandardNodeMaterial;
     glove: MeshStandardNodeMaterial;
-    sleeve: MeshStandardNodeMaterial;
+    skin: MeshStandardNodeMaterial;
   },
 ): Group {
   const g = new Group();
@@ -449,7 +475,7 @@ function buildModeAssembly(
   const alloy: Part[] = [];
   const rubber: Part[] = [];
   const glove: Part[] = [];
-  const sleeve: Part[] = [];
+  const skin: Part[] = [];
   const tape: Part[] = [];
 
   const clamp0 = new Vector3(0, 0, 0); // bar clamp center (assembly local)
@@ -475,7 +501,7 @@ function buildModeAssembly(
       const plug = new CylinderGeometry(0.0135, 0.0135, 0.005, 14);
       alloy.push(place(plug, end.clone().addScaledVector(axis, 0.001), axis));
     }
-    // hoods + levers + hands at the hood points
+    // hoods + levers + hands
     const hoodR = ptsR[4] as Vector3;
     const hoodL = new Vector3(-hoodR.x, hoodR.y, hoodR.z);
     for (const [hp, side] of [
@@ -484,19 +510,43 @@ function buildModeAssembly(
     ] as [Vector3, 1 | -1][]) {
       rubber.push(...hoodParts(hp, side, spec.flareDeg));
       alloy.push(...leverParts(hp, side, spec.flareDeg));
-      // hand rides ON the hood: palm on the body, fingers wrapping the horn
-      const wrist = hp.clone().add(new Vector3(side * 0.008, 0.024, 0.048));
-      glove.push(
-        ...handParts({
+      let hand: { glove: Part[]; skin: Part[] };
+      let wrist: Vector3;
+      if (spec.handsOn === 'tops') {
+        // owner-ref gravel posture: hands on the BAR TOPS beside the
+        // hoods, thumbs riding along the tube on top
+        const gp = new Vector3(
+          (hp.x - 0.035 * Math.sign(hp.x)) * 1,
+          hp.y + 0.016,
+          hp.z + 0.052,
+        );
+        wrist = gp.clone().add(new Vector3(side * 0.006, 0.022, 0.055));
+        hand = handParts({
+          wrist,
+          knuckle: gp.clone().add(new Vector3(side * 0.002, 0.012, -0.033)),
+          gripAxis: new Vector3(side * 0.96, -0.02, -0.28).normalize(),
+          backN: new Vector3(side * 0.1, 0.93, 0.35).normalize(),
+          fingerN: new Vector3(side * 0.04, -0.72, -0.69).normalize(),
+          thumbOnTop: true,
+          side,
+        });
+      } else {
+        // road posture: palm ON the hood, fingers wrapping the horn
+        wrist = hp.clone().add(new Vector3(side * 0.008, 0.024, 0.048));
+        hand = handParts({
           wrist,
           knuckle: hp.clone().add(new Vector3(side * 0.002, 0.027, -0.046)),
           gripAxis: new Vector3(side * (0.1 + spec.flareDeg * 0.012), -0.25, -0.96).normalize(),
           backN: new Vector3(side * 0.22, 0.9, 0.33).normalize(),
           fingerN: new Vector3(side * 0.05, -0.3, -0.95).normalize(),
           side,
-        }),
-      );
-      sleeve.push(...forearmParts(wrist, side).sleeve);
+        });
+      }
+      glove.push(...hand.glove);
+      skin.push(...hand.skin);
+      const fa = forearmParts(wrist, side);
+      skin.push(...fa.skin);
+      glove.push(...fa.watch);
     }
   } else {
     const ptsR = riserBarPoints(spec.halfWidth);
@@ -526,20 +576,20 @@ function buildModeAssembly(
       // hands on grips
       const gripCenter = new Vector3(side * spec.halfWidth * 0.86, 0.024, 0.038);
       const wrist = gripCenter.clone().add(new Vector3(side * 0.01, 0.03, 0.062));
-      glove.push(
-        ...handParts({
-          wrist,
-          knuckle: gripCenter.clone().add(new Vector3(side * 0.004, 0.02, -0.012)),
-          gripAxis: new Vector3(side * 0.95, 0.06, 0.28).normalize(),
-          backN: new Vector3(0, 1, 0.1).normalize(),
-          fingerN: new Vector3(side * 0.08, -0.35, -0.93).normalize(),
-          side,
-        }),
-      );
+      const hand = handParts({
+        wrist,
+        knuckle: gripCenter.clone().add(new Vector3(side * 0.004, 0.02, -0.012)),
+        gripAxis: new Vector3(side * 0.95, 0.06, 0.28).normalize(),
+        backN: new Vector3(0, 1, 0.1).normalize(),
+        fingerN: new Vector3(side * 0.08, -0.35, -0.93).normalize(),
+        side,
+      });
+      glove.push(...hand.glove);
+      skin.push(...hand.skin);
       // MTB stance: elbows out wide, high, back toward the rider
-      sleeve.push(
-        ...forearmParts(wrist, side, new Vector3(side * 0.36, 0.15, 0.3)).sleeve,
-      );
+      const fa = forearmParts(wrist, side, new Vector3(side * 0.36, 0.15, 0.3));
+      skin.push(...fa.skin);
+      glove.push(...fa.watch);
     }
   }
 
@@ -598,7 +648,7 @@ function buildModeAssembly(
   mk(alloy, mats.alloy);
   mk(rubber, mats.rubber);
   mk(glove, mats.glove);
-  mk(sleeve, mats.sleeve);
+  mk(skin, mats.skin);
   if (spec.tape) mk(tape, spec.tape);
   return g;
 }
@@ -672,7 +722,7 @@ export function buildCockpit(): CockpitBuild {
     alloy: alloyMat(),
     rubber: rubberMat(),
     glove: gloveMat(),
-    sleeve: sleeveMat(),
+    skin: skinMat(),
   };
 
   const root = new Group();
@@ -688,7 +738,7 @@ export function buildCockpit(): CockpitBuild {
     mats,
   );
   const gravel = buildModeAssembly(
-    { kind: 'drop', halfWidth: 0.22, flareDeg: 13, tape: tapeMat('#8a6f52', 42), handsOn: 'hoods' },
+    { kind: 'drop', halfWidth: 0.22, flareDeg: 13, tape: tapeMat('#8a6f52', 42), handsOn: 'tops' },
     mats,
   );
   const mtb = buildModeAssembly(

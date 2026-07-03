@@ -22,7 +22,7 @@ import type { FlyCamera } from '../core/FlyCamera';
 import type { BikeRig, JunctionPreview, Turn } from './BikeRig';
 import { Cockpit } from './cockpit/Cockpit';
 import { RideRecorder } from './RideRecorder';
-import type { SensorSource } from './Sensors';
+import { DemoSensorSource, KeyboardPowerSource, type SensorSource } from './Sensors';
 
 const SPEED_TAU = 0.45; // s — display smoothing of raw pose-delta speed
 const TELEPORT_SPEED = 200; // m/s — faster than any ride ⇒ programmatic jump
@@ -108,7 +108,8 @@ const CLS_COLOR: Record<string, string> = {
   singletrack: '#9dbf7f',
 };
 
-const MODE_ICON: Record<string, string> = {
+/** mode glyphs (24×24 path content) — shared with the options menu */
+export const MODE_ICON: Record<string, string> = {
   hike: '<path d="M12 3.2a2 2 0 110 4 2 2 0 010-4zm-1.4 5.2l-2.8 2.2.9 3-2.2 6.2h2.1l1.9-5.2 2 2.2.4 3h2l-.6-4.4-2.2-2.4.7-2.6c.9 1 2.1 1.7 3.6 1.9v-1.9c-1.1-.2-2-.8-2.7-1.7l-1-1.3a2.4 2.4 0 00-2.1-1z"/>',
   road: '<circle cx="6" cy="16.5" r="3.4" fill="none" stroke-width="1.6"/><circle cx="18" cy="16.5" r="3.4" fill="none" stroke-width="1.6"/><path d="M6 16.5l3.4-7h5.8l2.8 7M9.4 9.5L8 7h2.5M14 9l-3 7.5" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
   gravel: '<circle cx="6" cy="16.5" r="3.4" fill="none" stroke-width="1.6"/><circle cx="18" cy="16.5" r="3.4" fill="none" stroke-width="1.6"/><path d="M6 16.5l3.4-7h5.8l2.8 7M9.4 9.5L8 7h2.5M14 9l-3 7.5" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="4" cy="21.4" r="0.8"/><circle cx="8.4" cy="21.8" r="0.8"/><circle cx="13" cy="21.4" r="0.8"/><circle cx="17.6" cy="21.8" r="0.8"/><circle cx="21" cy="21.3" r="0.8"/>',
@@ -144,6 +145,7 @@ export class RideHud {
   private heart: Card;
   private banner: HTMLDivElement;
   private hazardEl: HTMLDivElement;
+  private badgeEl: HTMLDivElement | null = null;
   /** M1.5 first-person cockpit — self-driving once constructed */
   cockpit: Cockpit | null = null;
   private junctionEl: HTMLDivElement;
@@ -193,8 +195,7 @@ export class RideHud {
       this.cadence.root,
       this.heart.root,
     );
-    if (this.source?.kind === 'demo') this.root.appendChild(makeBadge('DEMO', '#ffb84d', 'rgba(64,44,4,0.75)', 'simulated cadence/HR/power — connect real sensors for real data'));
-    if (this.source?.kind === 'dev') this.root.appendChild(makeBadge('DEV', '#7fc4ff', 'rgba(6,30,52,0.75)', 'keyboard bike (?ridedev=1) — W pedal, Shift burst, +/- watts, S/Space brake'));
+    this.applyBadge();
     document.body.appendChild(this.root);
 
     this.banner = document.createElement('div');
@@ -235,7 +236,39 @@ export class RideHud {
     this.rig = rig;
     // M1.5 cockpit: rides the same rig/sensor state; zero footprint until
     // a bike is mounted (group hidden, uniforms parked)
-    this.cockpit = new Cockpit(this.engine, this.fly, rig, this.source);
+    this.cockpit = new Cockpit(this.engine, this.fly, rig, () => this.source);
+    // options menu: runtime power-source swap (demo/keyboard). The
+    // honesty rules ride along — badges follow the source kind, a null
+    // source keeps bikes locked. BLE stays a boot-time flow (secure
+    // context + user-gesture connect UI), the menu reloads for it.
+    const dbg =
+      (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
+    dbg['rideSetSource'] = (kind: 'demo' | 'dev' | null): string => {
+      const src =
+        kind === 'demo' ? new DemoSensorSource() : kind === 'dev' ? new KeyboardPowerSource() : null;
+      this.source = src;
+      this.rig?.setSource(src);
+      this.applyBadge();
+      if (src && !this.visible) {
+        this.visible = true; // picking a source means "I want to ride"
+        this.applyVisibility();
+      }
+      return this.source?.kind ?? 'none';
+    };
+    dbg['rideSourceKind'] = (): string => this.source?.kind ?? 'none';
+    (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg;
+  }
+
+  /** (re)draw the honesty badge for the current source */
+  private applyBadge(): void {
+    this.badgeEl?.remove();
+    this.badgeEl = null;
+    if (this.source?.kind === 'demo') {
+      this.badgeEl = makeBadge('DEMO', '#ffb84d', 'rgba(64,44,4,0.75)', 'simulated cadence/HR/power — connect real sensors for real data');
+    } else if (this.source?.kind === 'dev') {
+      this.badgeEl = makeBadge('DEV', '#7fc4ff', 'rgba(6,30,52,0.75)', 'keyboard bike — W pedal, Shift burst, +/- watts, S/Space brake');
+    }
+    if (this.badgeEl) this.root.appendChild(this.badgeEl);
   }
 
   private applyVisibility(): void {

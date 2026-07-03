@@ -135,6 +135,12 @@ export class Atmosphere {
   readonly skyViewLUT: StorageTexture;
   /** sun direction (world, normalized, y up) */
   readonly sunDir = uniform(new Vector3(0.3, 0.6, 0.2).normalize());
+  /** boundary-layer haze params (per km) — weather-lerpable (M1.6) */
+  readonly fogU = {
+    k: uniform(0.22),
+    h0: uniform(0.16),
+    hf: uniform(0.38),
+  };
   private renderer: Renderer | null = null;
   private skyCompute: ComputeNode | null = null;
 
@@ -382,19 +388,18 @@ export class Atmosphere {
     const tauR = betaR.mul(dr).mul(distKm);
     const tauM = float(BETA_M_E).mul(dm).mul(distKm);
 
-    // boundary-layer fog: density k·exp(−(h−h0)/Hf); exact path integral
-    const FOG_K = 0.22; // extinction at the reference height, per km
-    const FOG_H0 = 0.16; // reference altitude (≈ valley floor), km
-    const FOG_HF = 0.38; // scale height, km
-    const y0 = camAltKm.sub(FOG_H0).div(FOG_HF);
-    const y1 = fragAlt.sub(FOG_H0).div(FOG_HF);
+    // boundary-layer fog: density k·exp(−(h−h0)/Hf); exact path integral.
+    // k/h0/hf are uniforms (this.fogU) so the M1.6 weather orchestrator can
+    // lerp the km-scale haze alongside the froxel fog
+    const y0 = camAltKm.sub(this.fogU.h0 as unknown as NF).div(this.fogU.hf as unknown as NF);
+    const y1 = fragAlt.sub(this.fogU.h0 as unknown as NF).div(this.fogU.hf as unknown as NF);
     const dy = y1.sub(y0);
     const flat = dy.abs().lessThan(1e-4);
     const integ = flat.select(
       exp(y0.negate()).mul(distKm),
       exp(y0.negate()).sub(exp(y1.negate())).div(dy).mul(distKm),
     );
-    const tauF = integ.mul(FOG_K).max(0);
+    const tauF = integ.mul(this.fogU.k as unknown as NF).max(0);
 
     const T = vexp3(tauR.add(tauM).add(tauF).negate());
     const sky = this.skyColor(viewDir);

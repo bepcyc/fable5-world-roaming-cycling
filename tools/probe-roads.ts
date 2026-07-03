@@ -22,6 +22,7 @@
 
 import type { Page } from 'playwright';
 import { launchWebGPUReal } from './launch-gpu';
+import { LAAS_ORIGIN } from './launch';
 import { CLASSIFY, SURFACE_NAMES, SurfaceId } from '../src/ride/SurfaceMatrix';
 
 const CONFORM_M = 0.15;
@@ -57,7 +58,7 @@ async function main(): Promise<void> {
   });
   page.on('pageerror', (err) => console.error('[pageerror]', err.message));
   const t0 = Date.now();
-  await page.goto('http://localhost:5173/?scene=world&seed=1&T=15.5&hud=0&freeze=1', {
+  await page.goto(`${LAAS_ORIGIN}/?scene=world&seed=1&T=15.5&hud=0&freeze=1`, {
     waitUntil: 'domcontentloaded',
   });
   await page.waitForFunction(

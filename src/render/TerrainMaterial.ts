@@ -40,6 +40,7 @@ import {
   PERIOD_VAL,
 } from '../gpu/passes/NoiseBake';
 import { sunU } from './VegMaterials';
+import { weatherU } from '../sky/Weather';
 import { zoneMasks, type MacroParams } from '../world/MacroMap';
 import { LAKE_LEVEL, WORLD_HALF, WORLD_SIZE } from '../world/WorldConst';
 
@@ -299,13 +300,16 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const wallGreen = mix(vec3(0.07, 0.115, 0.04), vec3(0.105, 0.165, 0.05), macroA);
   col = mix(col, wallGreen, wallVeg);
 
-  // wet darkening: river margins, lake shores, marshes
+  // wet darkening: river margins, lake shores, marshes — plus the M1.6
+  // global weather wetness (rain/after-rain) riding the same term, so the
+  // albedo darken AND the roughness drop downstream react together
   const shoreWet = smoothstep(LAKE_LEVEL + 2.5, LAKE_LEVEL + 0.3, h);
-  const wet = clamp(
+  const wetLocal = clamp(
     smoothstep(0.55, 0.95, moisture).mul(0.5).add(riverDepth.mul(2)).add(shoreWet.mul(0.6)),
     0,
     0.75,
-  ).mul(snowW.oneMinus());
+  );
+  const wet = wetLocal.max((weatherU.wetness as unknown as NF).mul(0.72)).mul(snowW.oneMinus());
   col = col.mul(wet.mul(0.55).oneMinus());
 
   // ---------- M1.2 road surfaces --------------------------------------------------

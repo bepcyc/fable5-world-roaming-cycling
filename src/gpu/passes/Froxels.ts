@@ -76,6 +76,9 @@ export class Froxels {
   private readonly uCamWorld = uniform(new Matrix4());
   /** base fog density scale (?fog=N) */
   readonly fogK = uniform(0.4);
+  /** M1.6 weather boost 0..1: un-gates the noon ToD suppression AND the
+   *  moisture selectivity so fog/rain states read at any hour, anywhere */
+  readonly wxBoost = uniform(0);
 
   constructor(
     hf: Heightfield,
@@ -137,15 +140,21 @@ export class Froxels {
       // dawn/dusk fog is the look; noon goes NEAR-ZERO (user: global fog
       // washed out an already-soft scene — aerial perspective owns daytime
       // distance haze, froxels own dawn mist + shafts)
-      const todK = smoothstep(0.55, 0.08, sunDirN.y).mul(1.8).add(0.12);
+      const todGate = smoothstep(0.55, 0.08, sunDirN.y).mul(1.8).add(0.12);
+      // weather un-gate: fog states must read at noon too (M1.6)
+      const todK = todGate.max((this.wxBoost as unknown as NF).mul(1.7));
       // ground-hug dominates and hugs LOW; the old broad altitude blanket
       // (=1 below 120 m, i.e. everywhere) made fog global instead of
       // pooling in wet valleys
       const rhoGround = exp(hAbove.div(-20));
       const rhoAlt = exp(p.y.sub(120).max(0).div(-140));
       // moisture-SELECTIVE: m² with a small floor — dry slopes stay clear,
-      // hydrology basins keep their mist
-      const moistK = moisture.mul(moisture).mul(1.5).add(0.25);
+      // hydrology basins keep their mist; weather fog blankets everything
+      const moistK = moisture
+        .mul(moisture)
+        .mul(1.5)
+        .add(0.25)
+        .max((this.wxBoost as unknown as NF).mul(1.15));
       const rho = (this.fogK as unknown as NF)
         .mul(todK)
         .mul(billow)

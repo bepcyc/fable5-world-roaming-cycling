@@ -8,6 +8,7 @@
  */
 
 import { BOOKMARKS, installBookmarks } from './Bookmarks';
+import { OptionsMenu } from './OptionsMenu';
 import { Froxels } from '../gpu/passes/Froxels';
 import { PARTICLE_COUNT, Particles } from '../gpu/passes/Particles';
 import { ProbeGI } from '../gpu/passes/ProbeGI';
@@ -28,6 +29,7 @@ import { PostStack } from '../render/PostStack';
 import { setupSunShadows } from '../render/ShadowSetup';
 import { Clouds } from '../sky/Clouds';
 import { SunSky } from '../sky/SunSky';
+import { WeatherState } from '../sky/Weather';
 import type { WorldContext } from './Scenes';
 
 export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
@@ -254,6 +256,14 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     const fx = froxels;
     engine.onUpdate(() => fx.update(engine.renderer, engine.camera));
   }
+
+  // M1.6 weather orchestrator: lerps fog/clouds/wetness/rain/sun levers.
+  // ?weather=dry|rain|after-rain|fog snaps at boot; runtime transitions
+  // ease on worldTime (__laasDbg.weather('rain') to switch live)
+  const weather = new WeatherState(froxels, sunSky.atmosphere, clouds, sunSky, engine.scene);
+  engine.onUpdate((_dt, wt) => weather.update(wt));
+  // clickable settings (owner ask): weather / ToD / bike mode / key help
+  new OptionsMenu(ctx.hooks, weather, bootTod);
 
   // HDR post stack: aerial perspective, clouds, GTAO, TRAA, bloom, exposure, grade
   ctx.progress(0.98, 'post: building pipeline');

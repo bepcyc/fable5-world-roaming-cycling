@@ -62,6 +62,10 @@ export class Clouds {
   readonly shadowMap: StorageTexture;
   readonly coverage = uniform(0.62);
   readonly density = uniform(0.85);
+  /** M1.6 overcast floor 0..1: the weather field's contrast stretch leaves
+   *  hard clear lanes no coverage value can close — this floors the field
+   *  so rain/fog states can pull a full gray deck over the sky */
+  readonly overcast = uniform(0);
   private atmosphere: Atmosphere;
   private shadowKernel: Parameters<Renderer['computeAsync']>[0] | null = null;
   /** ?cloudflat=1 — constant density slab, bypasses noise textures (bisect) */
@@ -242,8 +246,11 @@ export class Clouds {
     // cumulus masses with clear lanes (baked texture — fbm here was the
     // hottest math in the march: 40 steps × 4 sun taps × 3 octaves)
     const wUv = xz.div(WEATHER_WORLD).add(0.5).fract();
-    // contrast-stretch: raw fbm hovers near 0.5 — dense cores + clear lanes
-    const weather = smoothstep(0.3, 0.78, texture(this.weatherMap, wUv, 0).x);
+    // contrast-stretch: raw fbm hovers near 0.5 — dense cores + clear lanes;
+    // the overcast floor closes the lanes for weather states (M1.6)
+    const weather = smoothstep(0.3, 0.78, texture(this.weatherMap, wUv, 0).x).max(
+      float(this.overcast) as unknown as NF,
+    );
     const cov = clamp(weather.sub(float(1).sub(float(this.coverage))), 0, 1).mul(2.2);
     const base = texture3D(this.baseNoise, vec3(xz.x, wp.y, xz.y).div(3600).fract(), 0).x;
     let dens = clamp(base.mul(cov).sub(float(0.32).mul(hNorm.add(0.45))), 0, 1).mul(inLayer);

@@ -107,8 +107,13 @@ export class DemoSensorSource implements SensorSource {
       cadenceRpm: this.cad < 1 ? 0 : this.cad,
       heartRateBpm: this.hr,
       // demo power: plausible steady effort coupled to the same wander the
-      // cadence uses — badged DEMO wherever it appears, never poses as real
-      powerW: this.cad < 1 ? 0 : DEMO_POWER_BASE + DEMO_POWER_WANDER * ((this.cad - CAD_BASE) / CAD_WANDER),
+      // cadence uses — badged DEMO wherever it appears, never poses as real.
+      // Floored at 0: while cadence spins up from a standstill the linear
+      // coupling went NEGATIVE (owner saw −210 W on the dashboard)
+      powerW:
+        this.cad < 1
+          ? 0
+          : Math.max(0, DEMO_POWER_BASE + DEMO_POWER_WANDER * ((this.cad - CAD_BASE) / CAD_WANDER)),
     };
   }
 }

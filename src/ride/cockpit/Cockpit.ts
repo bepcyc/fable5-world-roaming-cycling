@@ -63,7 +63,8 @@ export class Cockpit {
   private screen: ComputerScreen;
   private fly: FlyCamera;
   private rig: BikeRig;
-  private source: SensorSource | null;
+  /** live source getter — the options menu can swap sources at runtime */
+  private source: () => SensorSource | null;
 
   private crankPhase = 0;
   private pitchSm = 0;
@@ -84,7 +85,12 @@ export class Cockpit {
    *  ANY mode, for shape/aesthetic inspection from arbitrary --cam poses */
   private dbg: RideMode | null;
 
-  constructor(engine: Engine, fly: FlyCamera, rig: BikeRig, source: SensorSource | null) {
+  constructor(
+    engine: Engine,
+    fly: FlyCamera,
+    rig: BikeRig,
+    source: () => SensorSource | null,
+  ) {
     this.fly = fly;
     this.rig = rig;
     this.source = source;
@@ -152,11 +158,13 @@ export class Cockpit {
     // grade pitch: nose up on climbs (positive grade = rising along travel)
     const pitchTarget = Math.atan(st.grade);
     this.pitchSm += (pitchTarget - this.pitchSm) * (1 - Math.exp(-dt * 3.2));
-    // cornering lean: balance the centripetal acceleration
-    const leanTarget = Math.max(Math.min((v * this.yawRateSm) / G, 0.32), -0.32);
+    // cornering lean: balance the centripetal acceleration. Capped LOW:
+    // real riders lean the bike, not their eye line — past ~0.2 rad the
+    // near forearm sweeps across the lens as a giant blob (owner report)
+    const leanTarget = Math.max(Math.min((v * this.yawRateSm) / G, 0.2), -0.2);
     this.leanSm += (leanTarget - this.leanSm) * (1 - Math.exp(-dt * 4.5));
     // cadence rocking (one full L/R sway per crank revolution)
-    const rpm = this.source?.read().cadenceRpm ?? 0;
+    const rpm = this.source()?.read().cadenceRpm ?? 0;
     this.crankPhase += ((rpm / 60) * Math.PI * 2 * dt) % (Math.PI * 2);
     const powerK = Math.min(st.powerW / 350, 1);
     const swayAmp = v > 0.3 && rpm > 20 ? 0.0045 + 0.011 * powerK : 0;
@@ -191,14 +199,27 @@ export class Cockpit {
     // wheel spin (front wheel: top moves toward -Z)
     this.build.wheel.rotation.x -= (v / WHEEL_R) * dt;
 
-    // ---- live screen
-    this.screen.update(dt, {
-      kmh: v * 3.6,
-      powerW: st.riding ? st.powerW : (this.source?.read().powerW ?? null),
-      cadenceRpm: this.source?.read().cadenceRpm ?? null,
-      distM: st.distM,
-      gradePct: st.riding ? st.grade * 100 : null,
-    });
+    // ---- live screen: data page + route map + hazard strip (owner ref)
+    const pose2 = this.fly.getPose();
+    this.screen.update(
+      dt,
+      {
+        kmh: v * 3.6,
+        powerW: st.riding ? st.powerW : (this.source()?.read().powerW ?? null),
+        cadenceRpm: this.source()?.read().cadenceRpm ?? null,
+        distM: st.distM,
+        gradePct: st.riding ? st.grade * 100 : null,
+        hazard: st.hazard
+          ? { distM: st.hazard.distM, label: st.hazard.kind === 'slope' ? 'STEEP' : st.hazard.what.toUpperCase() }
+          : null,
+      },
+      {
+        graph: this.rig.routeGraph,
+        x: pose2.p[0],
+        z: pose2.p[2],
+        heading,
+      },
+    );
 
     // ---- TRAA reprojection transforms (frame-paced: exactly once per frame)
     root.updateMatrixWorld(true);

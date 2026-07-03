@@ -19,6 +19,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Page } from 'playwright';
 import { launchWebGPUReal } from './launch-gpu';
+import { LAAS_ORIGIN } from './launch';
 
 interface Args {
   [k: string]: string | boolean;
@@ -73,7 +74,7 @@ async function main(): Promise<void> {
 
   const first = bookmarks[0] ?? '1';
   let url =
-    `http://localhost:5173/?scene=world&seed=${seed}&hud=0&freeze=0&shot=${first}`;
+    `${LAAS_ORIGIN}/?scene=world&seed=${seed}&hud=0&freeze=0&shot=${first}`;
   if (preset) url += `&preset=${preset}`;
 
   const page: Page = await browser.newPage({

@@ -24,6 +24,7 @@
 
 import sharp from 'sharp';
 import { launchWebGPUReal } from './launch-gpu';
+import { LAAS_ORIGIN } from './launch';
 
 let pass = true;
 function check(name: string, ok: boolean, detail: string): void {
@@ -96,7 +97,7 @@ async function main(): Promise<void> {
   const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
   page.on('pageerror', (err) => console.error('[pageerror]', err.message));
   await page.goto(
-    'http://localhost:5173/?scene=world&seed=1&T=11&preset=high&hud=0&ridedev=1&lockexp=1',
+    `${LAAS_ORIGIN}/?scene=world&seed=1&T=11&preset=high&hud=0&ridedev=1&lockexp=1`,
     { waitUntil: 'domcontentloaded' },
   );
   await page.waitForFunction(

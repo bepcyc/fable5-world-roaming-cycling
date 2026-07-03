@@ -171,7 +171,7 @@ function purePart(): void {
 
 async function livePart(shots: boolean): Promise<void> {
   console.log('--- live engine battery (fake BLE transport) ---');
-  const { launchWebGPUReal } = await import('./launch-gpu');
+  const { LAAS_ORIGIN, launchWebGPUReal } = await import('./launch-gpu');
   const { browser, info } = await launchWebGPUReal();
   console.log(`[probe-ble] adapter ${info.vendor}/${info.architecture}`);
   let pageErrors = 0;
@@ -181,7 +181,7 @@ async function livePart(shots: boolean): Promise<void> {
     pageErrors++;
     console.error('[pageerror]', err.message);
   });
-  const url = 'http://localhost:5173/?scene=world&seed=1&T=11&hud=0&freeze=1&ride=blefake&road=asphalt,0.3';
+  const url = `${LAAS_ORIGIN}/?scene=world&seed=1&T=11&hud=0&freeze=1&ride=blefake&road=asphalt,0.3`;
   const t0 = Date.now();
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
@@ -401,7 +401,7 @@ async function livePart(shots: boolean): Promise<void> {
   await page.close();
 
   const p2 = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1 });
-  await p2.goto('http://localhost:5173/?scene=sanity&seed=1&hud=0&ride=demo', {
+  await p2.goto(`${LAAS_ORIGIN}/?scene=sanity&seed=1&hud=0&ride=demo`, {
     waitUntil: 'domcontentloaded',
   });
   await p2.waitForFunction(

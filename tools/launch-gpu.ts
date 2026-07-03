@@ -16,6 +16,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { chromium, type Browser } from 'playwright';
 
+/** Claude-tooling dev server origin. 5174 by default: the OWNER runs
+ *  his own vite on 5173 (LAN/tablet flow) — tooling must never squat
+ *  on it. Override with LAAS_PORT. */
+export const LAAS_ORIGIN = `http://localhost:${process.env['LAAS_PORT'] ?? '5174'}`;
+
 export interface AdapterInfo {
   vendor: string;
   architecture: string;
@@ -58,7 +63,7 @@ const CANDIDATES: GpuRecipe[] = [
 ];
 
 const CACHE_PATH = '.cache/webgpu-gpu-recipe.json';
-const PROBE_BASE = 'http://localhost:5173';
+const PROBE_BASE = `${LAAS_ORIGIN}`;
 
 function isRealGpu(info: AdapterInfo): boolean {
   return info.architecture !== 'swiftshader' && !/llvmpipe|swiftshader/i.test(info.description);

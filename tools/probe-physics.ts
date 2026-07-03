@@ -150,13 +150,13 @@ function purePart(): void {
 
 async function livePart(shots: boolean): Promise<void> {
   console.log('--- live engine battery ---');
-  const { launchWebGPUReal } = await import('./launch-gpu');
+  const { LAAS_ORIGIN, launchWebGPUReal } = await import('./launch-gpu');
   const { browser, info } = await launchWebGPUReal();
   console.log(`[probe-physics] adapter ${info.vendor}/${info.architecture}`);
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1 });
   page.on('pageerror', (err) => console.error('[pageerror]', err.message));
   const url =
-    'http://localhost:5173/?scene=world&seed=1&T=11&hud=0&freeze=1&ridedev=1&road=asphalt,0.3';
+    `${LAAS_ORIGIN}/?scene=world&seed=1&T=11&hud=0&freeze=1&ridedev=1&road=asphalt,0.3`;
   const t0 = Date.now();
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
@@ -304,7 +304,7 @@ async function livePart(shots: boolean): Promise<void> {
 
   // mode lock honesty: fresh page WITHOUT a source refuses bikes
   const p2 = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
-  await p2.goto('http://localhost:5173/?scene=world&seed=1&T=11&hud=0&freeze=1', {
+  await p2.goto(`${LAAS_ORIGIN}/?scene=world&seed=1&T=11&hud=0&freeze=1`, {
     waitUntil: 'domcontentloaded',
   });
   await p2.waitForFunction(

@@ -234,6 +234,17 @@ export class BikeRig {
     if (src && typeof src.setOverride === 'function') src.setOverride(w);
   }
 
+  /** runtime power-source swap (options menu): the honesty gates in
+   *  mount() keep applying — a null source still locks the bikes */
+  setSource(source: SensorSource | null): void {
+    this.source = source;
+  }
+
+  /** route graph accessor (bike-computer map, M1.5 owner ref) */
+  get routeGraph(): RouteGraph {
+    return this.graph;
+  }
+
   private cycleMode(): void {
     const i = MODE_ORDER.indexOf(this.mode);
     const next = MODE_ORDER[(i + 1) % MODE_ORDER.length] as RideMode;
