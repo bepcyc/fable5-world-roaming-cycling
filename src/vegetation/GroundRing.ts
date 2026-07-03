@@ -391,6 +391,18 @@ export class GroundRing {
       return e;
     };
 
+    // M1.2 road exclusion — SAME baked sampler as Scatter/material (dual-site
+    // rule, assessment §5.3). Returns 0 on the surfaced width, ramping to 1
+    // across the verge, so on-road grass is zero and the verge stays sparse.
+    const road = hf.roadField?.latBuf ? hf.roadField : null;
+    const roadOpenK = (wpos: NV2, inner: number, outer: number): NF => {
+      if (!road) return float(1);
+      const rs = road.sampleBaked(wpos);
+      return rs.halfW
+        .lessThan(0.01)
+        .select(float(1), smoothstep(rs.halfW.add(inner), rs.halfW.add(outer), rs.dist));
+    };
+
     const inFrustum = (center: NV3, slack: number): NF => {
       let inside: NF = float(1);
       for (let p = 0; p < 6; p++) {
@@ -473,7 +485,8 @@ export class GroundRing {
       );
       dens = dens
         .mul(float(1).sub(bio.y.mul(0.95)))
-        .mul(float(1).sub(smoothstep(0.55, 0.95, ns.w)));
+        .mul(float(1).sub(smoothstep(0.55, 0.95, ns.w)))
+        .mul(roadOpenK(wpos, -0.35, 1.1));
       // coverage-conserving continuous LOD ("cheap nanite for aggregates"):
       // accept thins SMOOTHLY with distance — survivors widen by 1/sqrt(thin)
       // in the vertex stage, so screen coverage stays constant and there are
@@ -569,7 +582,8 @@ export class GroundRing {
         .mul(wSum.mul(0.5).min(1))
         .max(streamK.mul(0.95))
         .max(marginK.mul(0.85))
-        .mul(float(1).sub(smoothstep(0.7, 1.05, ns.w)));
+        .mul(float(1).sub(smoothstep(0.7, 1.05, ns.w)))
+        .mul(roadOpenK(wpos, -0.25, 0.6));
       const edge = float(1).sub(smoothstep(DEB_R * 0.72, DEB_R, dist));
       If(cellHash(wc, salt ^ 0x132f).greaterThanEqual(dens.mul(edge)), () => {
         Return();
@@ -642,7 +656,8 @@ export class GroundRing {
         .mul(float(1).sub(bio.w.mul(0.55)))
         .mul(float(1).sub(canopy.mul(0.45)))
         .mul(float(1).sub(bio.y.mul(0.95)))
-        .mul(float(1).sub(smoothstep(0.55, 0.95, ns.w)));
+        .mul(float(1).sub(smoothstep(0.55, 0.95, ns.w)))
+        .mul(roadOpenK(wpos, -0.35, 1.1));
       // ramp IN over the fine band's dissolve, OUT at the splat handoff
       const fadeIn = smoothstep(FAR_R0 - 16, FAR_R0 + 14, dist);
       const edge = float(1).sub(smoothstep(FAR_R * 0.93, FAR_R, dist));

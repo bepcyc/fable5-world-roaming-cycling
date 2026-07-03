@@ -8,6 +8,7 @@
 
 import type { Engine } from '../core/Engine';
 import type { LaasParams } from '../core/Params';
+import { THREADS_LS_KEY, hardwareThreads, resolveThreads, storeThreads } from '../core/Threads';
 
 export type HudProvider = () => string[];
 
@@ -19,11 +20,18 @@ export class Hud {
   private engine: Engine;
   private params: LaasParams;
   private acc = 0;
+  /** user thread choice (0 = auto) — persisted via Threads.storeThreads */
+  private threadChoice = 0;
 
   constructor(engine: Engine, params: LaasParams) {
     this.engine = engine;
     this.params = params;
     this.visible = params.hud;
+    try {
+      this.threadChoice = Number(localStorage.getItem(THREADS_LS_KEY) ?? 0) || 0;
+    } catch {
+      /* headless probes have no storage */
+    }
     this.el = document.createElement('div');
     this.el.id = 'hud';
     this.el.style.cssText = [
@@ -51,6 +59,33 @@ export class Hud {
         e.preventDefault();
         this.visible = !this.visible;
         this.applyVisibility();
+      }
+      // menu setting (owner directive 2026-07-03): graphics quality preset —
+      // F5 cycles low→high→ultra and reloads (the world regenerates at boot).
+      // Guidance for the RX 6800 XT: high ("medium" complexity) ⇒ 30–60 fps.
+      if (e.code === 'F5') {
+        e.preventDefault();
+        const order = ['low', 'high', 'ultra'];
+        const cur = this.params.preset;
+        const nxt = order[(order.indexOf(cur) + 1) % order.length] as string;
+        const q = new URLSearchParams(window.location.search);
+        q.set('preset', nxt);
+        window.location.search = q.toString();
+      }
+      // menu setting (owner directive): CPU worker threads for generation —
+      // F4 cycles auto→1→2→4→…→max; persisted, applied on next world load
+      if (e.code === 'F4') {
+        e.preventDefault();
+        const max = hardwareThreads();
+        const cur = this.threadChoice;
+        let nxt: number;
+        if (cur === 0) nxt = 1;
+        else if (cur * 2 <= max) nxt = cur * 2;
+        else if (cur < max) nxt = max;
+        else nxt = 0; // back to auto
+        this.threadChoice = nxt;
+        storeThreads(nxt);
+        this.render();
       }
     });
 
@@ -83,6 +118,9 @@ export class Hud {
       `draws ${fmt(s.drawCalls)}  tris ${fmt(s.triangles)}`,
       `gpu render ${s.gpuPasses['render']?.toFixed(2) ?? '–'} ms  compute ${s.gpuPasses['compute']?.toFixed(2) ?? '–'} ms`,
       `cam ${c.x.toFixed(1)}, ${c.y.toFixed(1)}, ${c.z.toFixed(1)}`,
+      `threads ${resolveThreads(this.params.threads)}/${hardwareThreads()}` +
+        `${this.threadChoice === 0 ? ' (auto)' : ''} — F4 cycles, applies on reload`,
+      `graphics ${this.params.preset} (low/high/ultra) — F5 cycles + reload`,
     ];
     // per-pass GPU attribution (spec §6 HUD requirement; Phase 7 perf)
     const passes = Object.entries(s.gpuPasses)

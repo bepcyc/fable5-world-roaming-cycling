@@ -370,6 +370,19 @@ export async function runScatter(
   const sU = seed.sub('scatter/understory') & 0x7fffffff;
   const sE = seed.sub('scatter/extras') & 0x7fffffff;
 
+  // M1.2 road exclusion — the SHARED baked sampler (RoadField.sampleBaked);
+  // dual-site rule: GroundRing kernels carry the same gate. Margin = clear
+  // zone beyond the surfaced half-width, per layer (trunks stay off the
+  // verge; small stones may sit close to the edge like real road margins).
+  const road = hf.roadField?.latBuf ? hf.roadField : null;
+  const roadGate = (wpos: NV2, margin: number): void => {
+    if (!road) return;
+    const rs = road.sampleBaked(wpos);
+    If(rs.halfW.greaterThan(0.01).and(rs.dist.lessThan(rs.halfW.add(margin))), () => {
+      Return();
+    });
+  };
+
   // ---------------------------------------------------------------- trees --
   const treeG = Math.round(WORLD_SIZE / TREE_CELL);
   const treeA = instancedArray(TREE_CAP, 'vec4');
@@ -393,6 +406,7 @@ export async function runScatter(
     If(s.riverDepth.greaterThan(0.22).or(s.standing.greaterThan(0.3)), () => {
       Return();
     });
+    roadGate(wpos, 1.6);
 
     const clump = clumpField(wpos, sT ^ 0x51f3);
     const dens = byBiome(s.bioId, [0, 0.22, 0.8, 0.85, 0.06, 0.26]);
@@ -508,6 +522,7 @@ export async function runScatter(
     If(s.riverDepth.greaterThan(0.2).or(s.standing.greaterThan(0.3)), () => {
       Return();
     });
+    roadGate(wpos, 0.9);
 
     // canopy proxy = the TREE clump field (same salt → same parents)
     const canopy = clumpField(wpos, sT ^ 0x51f3);
@@ -610,6 +625,7 @@ export async function runScatter(
     If(s.riverDepth.greaterThan(0.3).or(s.standing.greaterThan(0.35)), () => {
       Return();
     });
+    roadGate(wpos, 1.2);
 
     const canopy = clumpField(wpos, sT ^ 0x51f3);
     const forestK = byBiome(s.bioId, [0, 0.3, 1, 1, 0.25, 0.6]).mul(
@@ -723,6 +739,7 @@ export async function runScatter(
     If(s.standing.greaterThan(0.5), () => {
       Return();
     });
+    roadGate(wpos, 0.4);
 
     const canopy = clumpField(wpos, sT ^ 0x51f3);
     const streamK = smoothstep(0.05, 0.3, s.riverDepth);

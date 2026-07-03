@@ -32,6 +32,8 @@ import {
 } from 'three/tsl';
 import type { NF, NV2, NV3, NV4 } from '../gpu/TSLTypes';
 import { hash12 } from '../gpu/noise/NoiseTSL';
+import type { RoadSampleBaked } from '../gpu/passes/RoadField';
+import { SurfaceId } from '../ride/SurfaceMatrix';
 import {
   PERIOD_FBM,
   PERIOD_RID,
@@ -60,6 +62,12 @@ export interface TerrainShadingInputs {
    * beyond the world edge.
    */
   baseNormalSlope?: NV4;
+  /**
+   * M1.2 road field sampler (RoadField.sampleBaked) — near tiles only; the
+   * far shell lives beyond the world edge where no roads exist. LOCKSTEP:
+   * the same sampler drives carve/stamp/veg exclusion (RoadField.ts header).
+   */
+  road?: { sampleBaked(p: NV2): RoadSampleBaked } | null;
 }
 
 export interface TerrainShading {
@@ -300,6 +308,70 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   ).mul(snowW.oneMinus());
   col = col.mul(wet.mul(0.55).oneMinus());
 
+  // ---------- M1.2 road surfaces --------------------------------------------------
+  // Painted from the SAME baked field the carve/stamp/veg passes consume.
+  // Realism: per-class engineering palettes, wheel tracks where tires run
+  // (|lat| ≈ 0.55·halfW), grassy center strip on doubletrack, worn dusty
+  // verge fading into the terrain, wet darkening strongest on asphalt.
+  let roadCore: NF = float(0);
+  let roadDispK: NF = float(1);
+  let roadRough: NF = float(0.88);
+  if (inp.road && !inp.far) {
+    const rs = inp.road.sampleBaked(wxz);
+    const hasRoad = rs.halfW.greaterThan(0.01).select(float(1), float(0));
+    const core = rs.edgeK.mul(hasRoad).mul(snowW.oneMinus()).toVar();
+    const latN = rs.dist.div(rs.halfW.max(0.2)); // 0 center → 1 surfaced edge
+    // wheel tracks: two compaction bands where tires actually run
+    const track = smoothstep(0.16, 0.02, latN.sub(0.55).abs());
+    const sid = rs.surfIdF;
+    const is = (id: SurfaceId): NF =>
+      sid.greaterThan(id - 0.5).and(sid.lessThan(id + 0.5)).select(float(1), float(0));
+    // asphalt: weathered mountain blacktop, faint patchwork, tire-polished bands
+    const asphalt = mix(vec3(0.062, 0.062, 0.066), vec3(0.095, 0.093, 0.094), val(3.1, 0.19, 0.53))
+      .mul(macroMix.mul(0.2).add(0.9))
+      .add(vec3(0.014, 0.014, 0.013).mul(track));
+    // gravel reads as STONES, not concrete (owner feedback 2026-07-03):
+    // ~12 cm pebble grain + bright/dark speckle chips on the fine pack,
+    // ~35 cm loose stone mottling on the coarse road
+    const grain = val(0.12, 0.41, 0.29);
+    const grainC = val(0.34, 0.87, 0.15);
+    const speck = smoothstep(0.72, 0.95, grain);
+    const speckD = smoothstep(0.28, 0.05, grain);
+    const gravelFine = mix(vec3(0.25, 0.225, 0.19), vec3(0.35, 0.325, 0.28), grain)
+      .add(vec3(0.06, 0.058, 0.052).mul(speck))
+      .sub(vec3(0.045, 0.045, 0.04).mul(speckD))
+      .mul(float(1).sub(track.mul(0.14)));
+    const gravelCoarse = mix(vec3(0.26, 0.25, 0.23), vec3(0.45, 0.43, 0.4), grainC)
+      .add(vec3(0.07, 0.068, 0.06).mul(speck))
+      .sub(vec3(0.05, 0.05, 0.045).mul(speckD));
+    // graded dirt: compacted soil, darker ruts, grassy center strip
+    const rut = smoothstep(0.18, 0.04, latN.sub(0.55).abs());
+    let dirt = mix(soil, vec3(0.295, 0.245, 0.175), float(0.6))
+      .mul(float(1).sub(rut.mul(0.18)));
+    dirt = mix(dirt, grassCol.mul(0.85), smoothstep(0.3, 0.08, latN).mul(0.45).mul(grassW.add(0.3).min(1)));
+    // singletrack: narrow worn earth ribbon
+    const single = mix(soil, vec3(0.24, 0.195, 0.135), float(0.7)).mul(micro.mul(0.15).add(0.9));
+    let roadCol: NV3 = asphalt.mul(is(SurfaceId.Asphalt));
+    roadCol = roadCol.add(gravelFine.mul(is(SurfaceId.GravelFine)));
+    roadCol = roadCol.add(gravelCoarse.mul(is(SurfaceId.GravelCoarse)));
+    roadCol = roadCol.add(dirt.mul(is(SurfaceId.DirtRoad)));
+    roadCol = roadCol.add(single.mul(is(SurfaceId.Singletrack)));
+    // wet response: asphalt darkens hard, dirt/gravel moderately
+    const wetK = wet.mul(is(SurfaceId.Asphalt).mul(0.35).add(0.45));
+    roadCol = roadCol.mul(wetK.oneMinus());
+    col = mix(col, roadCol, core);
+    // worn dusty verge between the surfaced edge and the wild ground
+    const verge = smoothstep(rs.halfW.add(2.2), rs.halfW.add(0.45), rs.dist)
+      .mul(core.oneMinus())
+      .mul(hasRoad)
+      .mul(snowW.oneMinus());
+    col = mix(col, mix(soil, gravelFine, float(0.35)), verge.mul(0.35));
+    roadCore = core;
+    roadDispK = float(1).sub(core.mul(float(1).sub(rs.dispScale)));
+    // asphalt reads smoother than any natural class; gravels/dirt stay matte
+    roadRough = mix(float(0.88), float(0.6), is(SurfaceId.Asphalt));
+  }
+
   // ---------- normal perturbation ---------------------------------------------------
   // far-detail synthesis (Pillar D): serrated normal-domain detail keeps
   // mid/far ridges craggy where geometric density has LOD'd out. Applied by
@@ -326,7 +398,10 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     const b2 = fbmG(0.19, 0.31, 0.77).mul(0.24 * 2);
     const bumpAmp = mix(float(0.25), float(0.85), rockW)
       .mul(snowW.mul(0.7).oneMinus())
-      .mul(farK.oneMinus());
+      .mul(farK.oneMinus())
+      // engineered surfaces are graded — bumps follow the class dispScale
+      // (asphalt flat, gravel keeps its pebble relief; owner feedback)
+      .mul(roadDispK);
     nrm = nrm
       .add(
         vec3(
@@ -354,7 +429,9 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
       .mul(snowW.mul(0.75).oneMinus())
       .mul(
         clamp(float(DISP.fade1).sub(camDist).div(DISP.fade1 - DISP.fade0), 0, 1),
-      );
+      )
+      // road gating — KEEP IN LOCKSTEP with the TerrainTiles vertex stage
+      .mul(roadDispK);
     const gF = fbmG(DISP.sF1).mul(2 * DISP.wF1);
     const gR = ridG(DISP.sRid).mul(
       rockKd.mul(1 - DISP.ridBase).add(DISP.ridBase).mul(DISP.wRid),
@@ -364,7 +441,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   }
 
   // ---------- roughness ---------------------------------------------------------------
-  const rough = mix(float(0.94), float(0.8), rockW)
+  const rough = mix(mix(float(0.94), float(0.8), rockW), roadRough, roadCore)
     .sub(snowW.mul(0.32))
     .sub(wet.mul(0.45))
     .clamp(0.25, 1);

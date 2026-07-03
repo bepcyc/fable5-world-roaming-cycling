@@ -1150,3 +1150,78 @@ splineField template (MacroMap.ts:141), dual-site veg exclusion
 (Scatter + GroundRing), and road classes stamped into the M1.1 surface
 map (SurfaceId 10–14 params already in the matrix); road graph on its
 own seed stream (`seed.rng('roads')`, owner Q2).
+
+## Session 2 — 2026-07-03 (M1.2 road & trail network — CLOSED)
+
+**M1.2 shipped (probe-roads ALL PASS + probe-surface ALL PASS + probe-ridehud
+ALL PASS + typecheck clean):** the world has a 30.8 km seeded road network
+(all 5 classes), carved into the terrain, painted, stamped into the M1.1
+surface map, and cleared of vegetation.
+
+- `src/ride/RoadNetwork.ts` — CPU generator inside Heightfield.generate
+  (after composeEroded, before rebuildDerivedMaps): grade-limited A* on a
+  smoothed 512² router grid (real engineering params per class, calibrated
+  by web research → `docs/notes/climb-grade-facts.md`: asphalt 5.8 m/≤12%,
+  gravels 4.4/4.0 m ≤12/14%, dirt 3.6 m/≤16%, singletrack 1.1 m/≤20% IMBA),
+  Chaikin+resample with SNAP-BACK to the raw path in deep water, vertical
+  profile (smooth + grade clamp + ±6 m cut/fill + WATER FLOOR near open
+  water only), curvature superelevation, crown, fords (profile = bed), road
+  ends honestly at lake-deep water (2×>3 m). Serpentine showcase: ridge-dirt
+  climbs to the highest BFS-reachable flank (both-banks candidate pick).
+  Dedup: netMask A* penalty + per-leg marking (corridor duplication caused
+  nearest-segment flicker = diamond artifacts, and ±2 m double-carve steps).
+- `src/gpu/passes/RoadField.ts` — segment+bucket upload; exact bucket-loop
+  eval for carve (embankments 1:1.6, junction apron blends two roads at true
+  crossings only) and surface stamp (texel-floored width so singletrack owns
+  its row; water keeps priority = fords); baked 2048² SIGNED-lateral field +
+  meta — THE one sampler (material, TerrainTiles vertex disp gate, Scatter ×4,
+  GroundRing ×3, veg audit). LOCKSTEP note extended to the road mix.
+- Material: per-class palettes (weathered asphalt + tire bands, pebble-grain
+  gravels w/ speckle chips — owner feedback "не похож на гравий" fixed, dirt
+  doubletrack w/ ruts + grassy center strip, worn singletrack), verge wear,
+  road-aware roughness/normal flatten, micro-displacement gated by class
+  dispScale (asphalt flat, gravel keeps relief) in BOTH vertex and fragment.
+- Veg exclusion: Scatter trees/understory/extras/stones (margins 1.6/0.9/
+  1.2/0.4 m) + GroundRing grass/debris/far tufts (smooth verge ramps).
+  GPU audit: 0 instances on any roadbed; ±8 m band counters prove the baked
+  field is alive (grass gate shares the sampler ⇒ transitively verified).
+- Acceptance `tools/probe-roads.ts`: length ≥30 km, |carved−profile| ≤15 cm
+  (measured ≤13 cm max), zero underwater non-ford, stamp ≥95% (water classes
+  legal — stamp yields by design), grade ≤ class (ford approaches exempt),
+  veg audit; 4 aesthetic shots judged by eye (asphalt/gravel/dirt/single) +
+  aerial serpentine shots. probe-surface updated: road classes now EXPECTED;
+  dead-class guard counts transects; gravel-river exempted (measured marginal
+  at M1.1 baseline already — 1 texel in a 3803-pt near-water scan; classifier
+  retune = recorded follow-up, lockstep triangle).
+- **Owner directives landed this session:** realism law (grades/widths/
+  banking per real norms); multi-core: `src/core/Threads.ts` + RoadGridWorker
+  pool (?threads=N / F4 in HUD, localStorage, default = all cores; router
+  grids banded across workers, bit-identical); graphics menu: F5 cycles
+  preset low/high/ultra + reload (owner: high ≈ 30–60 fps on RX 6800 XT =
+  acceptable target); `?road=<class>[,frac]` spawn for owner verification;
+  DRAFT .fit export `src/ride/RideRecorder.ts` (Ctrl+E, file_id/records/
+  session/activity + CRC, fictional 46.5N 10.5E anchor — untested by design,
+  owner said "черновая"); junction-choice UI acknowledged → M1.3 scope
+  (network is a graph with junctions already).
+- **Debug war stories (for future sessions):** diamond artifacts = duplicated
+  corridors (nearest-seg flicker); ±2 m steps = SELF-duplicated corridor legs;
+  vanishing singletrack = unsigned baked lateral (bilinear floor ≈ texel/2);
+  serpentine kept dying: start ON the river polyline (valley POIs = river!),
+  "toward massif" ≈ along-valley (sign noise), phantom deep water under a
+  hanging tarn (bilerp vs dry sentinel → wAtMin 3×3), profile cut 8.5 m below
+  adjacent river level (water clipmap floods the cut → water floor), up-only
+  embankment lift cascaded 20 m walls (removed; ford approaches exempt).
+  One-shot terrain dump + local node router iteration (scratchpad) = 2 s
+  cycles instead of 37 s boots — but heights are POST-carve there: water
+  conclusions from that stand are unreliable, verify in browser.
+- **Known limits:** water shards on ledges + far-shore ramps = inherited LAAS
+  artifacts (ledger §6; owner saw them on shots — NOT M1.2 regressions);
+  gravel-river class marginal (see above); ford approach ramps can exceed
+  class grade over ~2 samples (real-world fords do too; P3/P4 own it).
+
+**Next session entry point:** M1.3 movement modes & physics (ROADMAP) —
+fixed-timestep accumulator, power→speed solver over the M1.1/M1.2 surface
+matrix, route-following steering + junction picks (owner explicitly wants
+Zwift-style "turn ahead" choice UI), hike-mode re-judge vs Pillar B. The
+road graph (hf.roads.routes, pts with s/bank/ford) and groundProbe
+{ground, water, surfaceId, slope} are the two inputs it consumes.

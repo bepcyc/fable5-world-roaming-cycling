@@ -42,6 +42,9 @@ import {
   type FloatBuffer,
   type SynthesisResult,
 } from '../gpu/passes/HeightSynthesis';
+import { resolveThreads } from '../core/Threads';
+import { RoadField } from '../gpu/passes/RoadField';
+import { RoadNetwork } from '../ride/RoadNetwork';
 import { makeMacroParams, type MacroParams } from './MacroMap';
 import { WORLD_SIZE, qualityConfig, type QualityConfig } from './WorldConst';
 import { SurfaceId } from '../ride/SurfaceMatrix';
@@ -88,6 +91,10 @@ export class Heightfield {
   /** CPU surface-class mirror (full res, SurfaceId per texel) — M1.1 layer;
    *  physics/HUD/audio query it via surfaceAtCpu (ride matrix semantics) */
   cpuSurface: Uint8Array | null = null;
+  /** M1.2 road network (CPU graph — probes, ride physics, bookmarks) */
+  roads: RoadNetwork | null = null;
+  /** M1.2 GPU road field (carve/bake/stamp + the shared baked sampler) */
+  roadField: RoadField | null = null;
 
   /** r32float height texture (nearest-sample / textureLoad only) */
   readonly heightTex: StorageTexture;
@@ -181,6 +188,28 @@ export class Heightfield {
     progress(0.7, 'terrain: composing eroded field');
     await hf.composeEroded(renderer, synthSim.height, erosion.eroded);
 
+    // --- M1.2 roads: route on the CPU mirror of the eroded field, then carve
+    // the GPU height buffer BEFORE rebuildDerivedMaps so normals/slope/biome/
+    // surface all pick the roads up in the existing derive order
+    progress(0.74, 'roads: routing network');
+    const roadHeights = new Float32Array(await renderer.getArrayBufferAsync(hf.height.value));
+    hf.cpuWaterY = new Float32Array(await renderer.getArrayBufferAsync(hf.waterY.value));
+    hf.roads = await RoadNetwork.generate(
+      seed,
+      mp,
+      {
+        res: hf.res,
+        heights: roadHeights,
+        simRes: cfg.simRes,
+        waterY: hf.cpuWaterY,
+      },
+      resolveThreads(params.threads),
+    );
+    progress(0.78, `roads: carving ${(hf.roads.totalLength / 1000).toFixed(1)} km`);
+    hf.roadField = new RoadField(hf.roads);
+    await hf.roadField.carve(renderer, hf.height, hf.res);
+    await hf.roadField.bake(renderer);
+
     progress(0.82, 'terrain: deriving maps');
     await hf.rebuildDerivedMaps(renderer);
     await hf.buildFieldsTex(renderer);
@@ -204,11 +233,14 @@ export class Heightfield {
       fieldsTex: hf.fieldsTex,
     });
 
+    // roads stamp their SurfaceIds over the classified map (fords stay water)
+    progress(0.92, 'roads: stamping surface classes');
+    await hf.roadField?.stamp(renderer, surface, hf.res);
+
     progress(0.93, 'terrain: height readback for camera');
     const ab = await renderer.getArrayBufferAsync(hf.height.value);
     hf.cpuHeights = new Float32Array(ab);
-    const wab = await renderer.getArrayBufferAsync(hf.waterY.value);
-    hf.cpuWaterY = new Float32Array(wab);
+    // (cpuWaterY was read back at the road-routing step — unchanged since)
     // surface map mirror: u32 on GPU → compact u8 on CPU (ids fit a byte)
     const sab = await renderer.getArrayBufferAsync(surface.value);
     hf.cpuSurface = Uint8Array.from(new Uint32Array(sab), (v) => v & 0xff);

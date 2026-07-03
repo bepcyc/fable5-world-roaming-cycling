@@ -12,6 +12,7 @@
 
 import type { Engine } from '../core/Engine';
 import type { FlyCamera } from '../core/FlyCamera';
+import { RideRecorder } from './RideRecorder';
 import { DemoSensorSource, type SensorSource } from './Sensors';
 
 const SPEED_TAU = 0.45; // s — display smoothing of raw pose-delta speed
@@ -36,6 +37,8 @@ export class RideHud {
   private last: { x: number; z: number } | null = null;
   private speedMs = 0;
   private acc = 0;
+  /** DRAFT session recorder (.fit export via Ctrl+E) */
+  private recorder = new RideRecorder();
 
   constructor(engine: Engine, fly: FlyCamera) {
     this.fly = fly;
@@ -62,6 +65,11 @@ export class RideHud {
       if (e.code === 'KeyB') {
         this.visible = !this.visible;
         this.applyVisibility();
+      }
+      // DRAFT .fit session export (owner ask 2026-07-03, Zwift-style)
+      if (e.code === 'KeyE' && e.ctrlKey) {
+        e.preventDefault();
+        this.recorder.download();
       }
     });
 
@@ -91,6 +99,11 @@ export class RideHud {
     this.acc = 0;
     if (!this.visible) return;
     const sample = this.source?.read() ?? { cadenceRpm: null, heartRateBpm: null };
+    // session recording (1 Hz decimation inside; power arrives with M1.3)
+    {
+      const p = this.fly.getPose().p;
+      this.recorder.addSample(Date.now(), p[0], p[2], p[1], this.speedMs, sample, null);
+    }
     this.speed.value.textContent = kmh.toFixed(1);
     this.cadence.value.textContent = fmt(sample.cadenceRpm);
     this.heart.value.textContent = fmt(sample.heartRateBpm);

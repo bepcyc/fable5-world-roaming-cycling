@@ -73,6 +73,26 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   engine.stats.counters['veg.extras'] = scatter.extras.count;
   engine.stats.counters['veg.stones'] = scatter.stones.count;
 
+  // M1.2 road network counters + the veg-exclusion audit hook (probe-roads):
+  // margin 0 = instances INSIDE the surfaced width (acceptance: zero);
+  // the `band` rows count a ±8 m corridor — non-degeneracy proof that the
+  // baked field actually sees the network (guards a silently-empty field)
+  if (hf.roads) {
+    engine.stats.counters['road.km'] = Math.round(hf.roads.totalLength / 100) / 10;
+    engine.stats.counters['road.routes'] = hf.roads.routes.length;
+  }
+  const roadAudit = hf.roadField
+    ? (): Promise<Record<string, number>> =>
+        (hf.roadField as NonNullable<typeof hf.roadField>).vegAudit(engine.renderer, [
+          { name: 'trees', bufA: scatter.trees.bufA, count: scatter.trees.count, margin: 0 },
+          { name: 'under', bufA: scatter.understory.bufA, count: scatter.understory.count, margin: 0 },
+          { name: 'extras', bufA: scatter.extras.bufA, count: scatter.extras.count, margin: 0 },
+          { name: 'stones', bufA: scatter.stones.bufA, count: scatter.stones.count, margin: 0 },
+          { name: 'treesBand', bufA: scatter.trees.bufA, count: scatter.trees.count, margin: 8 },
+          { name: 'stonesBand', bufA: scatter.stones.bufA, count: scatter.stones.count, margin: 8 },
+        ])
+    : null;
+
   const ablate = new Set(
     (new URLSearchParams(window.location.search).get('ablate') ?? '').split(','),
   );
@@ -214,6 +234,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     engine,
     sunSky,
     shadowRig,
+    roadAudit,
   };
 
   // GPU particles: snow/pollen/leaves riding the wind (?ablate=particles)
@@ -269,7 +290,27 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   // from (0,0), eye at head height, facing the NE massif
   const q = new URLSearchParams(window.location.search);
   const alt = Number(q.get('alt') ?? NaN);
-  if (params.cam === null) {
+  // ?road=asphalt|gravel-fine|gravel-coarse|dirt-road|singletrack[,frac 0..1]
+  // — spawn ON the road network facing along it (M1.2 owner verification)
+  const roadQ = q.get('road');
+  if (params.cam === null && roadQ && hf.roads) {
+    const [clsName, fracRaw] = roadQ.split(',');
+    const frac = Math.min(Math.max(Number(fracRaw ?? 0.45) || 0.45, 0), 1);
+    const route =
+      hf.roads.routes.find((r) => r.cls.name === clsName) ??
+      hf.roads.routes.find((r) => r.cls.name.startsWith(clsName ?? '')) ??
+      hf.roads.routes[0];
+    if (route) {
+      const i = Math.min(Math.floor(route.pts.length * frac), route.pts.length - 2);
+      const p = route.pts[i] as { x: number; z: number; y: number };
+      const n = route.pts[i + 1] as { x: number; z: number };
+      const yaw = Math.atan2(-(n.x - p.x), -(n.z - p.z));
+      ctx.hooks.initialPose = { p: [p.x, p.y + 1.7, p.z], yaw, pitch: -0.03 };
+      ctx.hooks.initialPoseMode = 'walk';
+      engine.camera.position.set(p.x, p.y + 1.7, p.z);
+      console.log(`[road spawn] ${route.name} @${p.x.toFixed(0)},${p.z.toFixed(0)}`);
+    }
+  } else if (params.cam === null) {
     if (Number.isFinite(alt)) {
       const x = Number(q.get('x') ?? 600);
       const z = Number(q.get('z') ?? 900);

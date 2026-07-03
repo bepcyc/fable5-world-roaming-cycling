@@ -21,6 +21,9 @@ export interface LaasParams {
   freeze: boolean;
   /** device pixel ratio cap override */
   dpr: number | null;
+  /** CPU worker threads for boot-time generation; 0 = auto (all cores).
+   *  Also settable from the HUD menu (F4) via localStorage — see Threads.ts */
+  threads: number;
 }
 
 function num(v: string | null, fallback: number): number {
@@ -46,6 +49,7 @@ export function parseParams(search: string = window.location.search): LaasParams
     shot: shotN >= 1 && shotN <= 9 ? Math.floor(shotN) : null,
     freeze: q.get('freeze') === '1',
     dpr: q.get('dpr') !== null ? num(q.get('dpr'), 1) : null,
+    threads: Math.max(0, Math.floor(num(q.get('threads'), 0))),
   };
 }
 

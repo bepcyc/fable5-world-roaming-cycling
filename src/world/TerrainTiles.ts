@@ -47,6 +47,7 @@ import {
   causticTintParts,
 } from '../render/Caustics';
 import { DISP, buildTerrainShading } from '../render/TerrainMaterial';
+import type { NF } from '../gpu/TSLTypes';
 import { PERIOD_FBM, PERIOD_RID, PERIOD_VAL } from '../gpu/passes/NoiseBake';
 import type { Heightfield } from './Heightfield';
 import { macroTerrain } from './MacroMap';
@@ -157,10 +158,18 @@ export class TerrainTiles {
     const gravelK = smoothstep(0.32, 0.7, fldV.y)
       .max(smoothstep(0.02, 0.2, fldV.z))
       .mul(float(DISP.gravel));
+    // M1.2 road gating — KEEP IN LOCKSTEP with the fragment counterpart in
+    // TerrainMaterial (roadDispK): graded surfaces lose their micro-relief
+    let roadDispK: NF = float(1);
+    if (hf.roadField?.latBuf) {
+      const rs = hf.roadField.sampleBaked(wpos);
+      roadDispK = float(1).sub(rs.edgeK.mul(float(1).sub(rs.dispScale)));
+    }
     const dispAmp = mix(float(DISP.base), float(DISP.rock), rockK)
       .max(gravelK)
       .mul(bioV.g.mul(0.75).oneMinus())
-      .mul(clamp(float(DISP.fade1).sub(camD).div(DISP.fade1 - DISP.fade0), 0, 1));
+      .mul(clamp(float(DISP.fade1).sub(camD).div(DISP.fade1 - DISP.fade0), 0, 1))
+      .mul(roadDispK);
     const noiseA = hf.noiseA as NonNullable<typeof hf.noiseA>;
     const noiseB = hf.noiseB as NonNullable<typeof hf.noiseB>;
     const f1 = texture(noiseA, wpos.div(DISP.sF1 * PERIOD_FBM), 0)
@@ -196,6 +205,7 @@ export class TerrainTiles {
       noiseB: hf.noiseB as NonNullable<typeof hf.noiseB>,
       mp: hf.mp,
       far: false,
+      road: hf.roadField,
     });
     mat.colorNode = shading.colorNode;
     mat.normalNode = shading.normalNode;
