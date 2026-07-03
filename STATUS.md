@@ -1530,3 +1530,10 @@ graded ford runway). Then water edge "curtain" shading, then M1.5.
   iteration; design agreed with owner BEFORE code.
 - Next: owner confirms this baseline live, then M1.4.2 redesign (local
   puddle fix only) or straight to M1.5 cockpit per owner call.
+
+**Session 6 closed (owner: «пойдёт»). Next session: read
+`.claude/handoffs/2026-07-03-171542-rando-session-6-m142-revert.md`
+(supersedes 5a/5b water sections). Baseline confirmed; owner decided:
+SESSION 7 = M1.5 COCKPIT regardless. Convex ponds stay in backlog
+(design-first, only on explicit owner order).
+Owner WIP in working tree (Justfile/vite/main.ts/_repro-mobile) — hands off.**
