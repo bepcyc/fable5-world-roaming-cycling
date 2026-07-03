@@ -23,6 +23,11 @@ export interface RideSample {
 export interface SensorCtx {
   speedKmh: number;
   moving: boolean;
+  /** mounted on a bike — the demo rider pedals whenever riding. Gating
+   *  cadence on `moving` alone deadlocked standing starts: cadence waited
+   *  for speed, speed waited for power, power waited for cadence — the
+   *  owner's DEMO bike never left the spot */
+  riding: boolean;
 }
 
 export interface SensorSource {
@@ -92,7 +97,7 @@ export class DemoSensorSource implements SensorSource {
     const wander = this.wanderFrom + (this.wanderTo - this.wanderFrom) * s;
     const jitter = this.jitterFrom + (this.jitterTo - this.jitterFrom) * s;
 
-    const cadTarget = ctx.moving ? CAD_BASE + CAD_WANDER * wander : 0;
+    const cadTarget = ctx.riding || ctx.moving ? CAD_BASE + CAD_WANDER * wander : 0;
     const cadTau = cadTarget > this.cad ? CAD_TAU_UP : CAD_TAU_DOWN;
     this.cad += (cadTarget - this.cad) * (1 - Math.exp(-dt / cadTau));
 

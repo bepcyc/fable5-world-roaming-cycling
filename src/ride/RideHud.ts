@@ -292,7 +292,11 @@ export class RideHud {
       this.last = { x: p[0], z: p[2] };
     }
     const kmh = this.speedMs * MS_TO_KMH;
-    this.source?.update(dt, { speedKmh: kmh, moving: this.speedMs > MOVING_MS });
+    this.source?.update(dt, {
+      speedKmh: kmh,
+      moving: this.speedMs > MOVING_MS,
+      riding: this.rig?.riding ?? false,
+    });
     this.engine.stats.counters['ride.hudKmh100'] = Math.round(kmh * 100);
 
     this.acc += dt;
