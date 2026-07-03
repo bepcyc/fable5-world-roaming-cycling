@@ -230,7 +230,13 @@ export class BikeRig {
   private mount(mode: RideMode): boolean {
     if (mode === 'hike') return false;
     if (!this.source) {
-      this.flash('BIKES LOCKED — NO POWER SOURCE (sensors arrive in M1.4)');
+      this.flash('BIKES LOCKED — NO POWER SOURCE (?ride=ble to connect sensors)');
+      return false;
+    }
+    // BLE honesty gate: a BLE source with no live power channel is the same
+    // as no source — connect the trainer/power meter first (Pillar C)
+    if (this.source.kind === 'ble' && this.source.read().powerW === null) {
+      this.flash('BIKES LOCKED — CONNECT A POWER SOURCE (trainer or power meter)');
       return false;
     }
     if (this.riding) {
@@ -308,6 +314,9 @@ export class BikeRig {
     });
     this.solver = { v: out.v, stalled: out.stalled };
     this.status = out.params.status;
+    // BLE trainers mirror the terrain: live grade + honest surface Crr →
+    // FTMS SIM writes (rate-limited inside the source)
+    this.source?.setSimState?.(grade, out.params.crr);
     this.lastOut = {
       blocked: out.blocked,
       stalled: out.stalled,

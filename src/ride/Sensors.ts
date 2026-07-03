@@ -31,6 +31,10 @@ export interface SensorSource {
   readonly kind: 'demo' | 'dev' | 'ble';
   update(dt: number, ctx: SensorCtx): void;
   read(): RideSample;
+  /** optional back-channel: the rig reports live grade + surface Crr each
+   *  fixed step; BLE trainers turn it into FTMS SIM-resistance writes
+   *  (M1.4). Sources without physical resistance simply omit this. */
+  setSimState?(gradeFrac: number, crr: number): void;
 }
 
 // ---- demo stream tuning -----------------------------------------------------

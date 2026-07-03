@@ -1316,3 +1316,74 @@ zero changes (BikeRig reads source.read().powerW). **Owner directive
 реализация агента, если она подкреплена глубоким исследованием темы
 (спеки FTMS/CPS/CSC/HRS, per-brand quirks, Web Bluetooth ограничения);
 исследование фиксировать в docs/notes/.**
+
+## Session 4 — 2026-07-03 (M1.4 BLE sensor layer — CLOSED)
+
+**M1.4 shipped (probe-ble ALL PASS: 21 pure parser checks + 16 live checks
+incl. P6 dropout + P7 badges + SIM-gradient observation; regressions
+probe-physics / probe-roads / probe-surface / probe-ridehud ALL PASS;
+typecheck clean). Built WITHOUT real devices per owner directive — spec
+conformance + defensive parsing; hardware session deferred to M3.2 (Q8).**
+
+- **Research first (owner precondition):** `docs/notes/ble-ftms-research.md`
+  — multi-agent deep research (106 agents, 117 claims, 25 adversarially
+  verified 3-vote, 1 refuted claim re-researched from the FTMS v1.0 PDF) +
+  3 targeted rounds (exact 0x2AD2 layout; per-brand quirks verified in
+  pycycling/Auuki/sensors-swift-trainers code; gear shifting/steering RE).
+  Key traps baked into code: FTMS Indoor Bike Data bit 0 INVERTED (speed
+  present when 0), cadence wire = rpm×2, resistance s16-in-practice,
+  CPS wheel time 1/2048 s vs CSC 1/1024 s, Request Control before any
+  FTMS control op, Linux Chrome Web Bluetooth is flag-gated, headless
+  Chromium has NO BT stack (⇒ fake transport under the adapter).
+- `src/ride/ble/Parsers.ts` — PURE bounds-checked LE parsers (never throw;
+  truncated marker): HR 0x2A37 (u8/u16, contact, energy, RR 1/1024 s),
+  CPS 0x2A63 (full flag ladder incl. skipped extremes), CSC 0x2A5B, FTMS
+  0x2AD2 / 0x2ACC features / 0x2AD9 control-point encode+response
+  (RequestControl / SIM params 0.01 %-steps / ERG), RevolutionRate
+  (modular rollover, stale decay, absurd-jump rejection).
+- `src/ride/ble/Transport.ts` — the testability boundary: `BleTransport`/
+  `BleDeviceHandle` adapter; `WebBluetoothTransport` (real; minimal ambient
+  WB typings — TS lib.dom has none; optionalServices pre-declared per
+  slot profile) + `FakeTransport`/`FakeDevice` (scripted peripheral:
+  emit/drop/writes ledger, auto-ACK control point).
+- `src/ride/ble/BleSensorSource.ts` — implements the seam, kind='ble' (NO
+  badge — real data, Pillar C): 4 slots (trainer/power/csc/hr), channel
+  priority power CPS>FTMS, cadence CPS>FTMS>CSC, HR strap>FTMS; per-channel
+  3 s staleness → null; drop → immediate null (solver coasts same frame).
+  FTMS SIM pump: feature-gated, Request Control first, grade+surface-Crr
+  writes rate-limited (≥0.25 s, ≥0.1 % delta or 2 s keep-alive),
+  re-request on 0x05 / status 0xFF, serialized writes, read-only fallback.
+- `src/ride/ble/ConnectUi.ts` — user-gesture surface (Web Bluetooth
+  requires transient activation — REAL buttons): glass panel top-right,
+  4 slot rows (dot/name/CONNECT–DROP–RECONNECT), Linux-flag hint when
+  navigator.bluetooth absent, B toggles with the HUD.
+- Seam extension: optional `SensorSource.setSimState(grade, crr)` — BikeRig
+  feeds live grade + honest matrix Crr each fixed step; BLE honesty gate in
+  mount(): a BLE source with powerW=null keeps bikes LOCKED.
+- main.ts: `?ride=ble` (real) / `?ride=blefake` (probe transport;
+  `__laasDbg.bleSource/.bleFake/.bleMakeFakeDevice`).
+- Acceptance `tools/probe-ble.ts`: PURE battery (spec-payload parsers,
+  rollovers, lying-flags/truncation never throw) + LIVE battery: no-power
+  gate holds, fake FTMS trainer streams 215 W/85 rpm to dashboard, bike
+  mounts, **SIM writes observed (0x00 first, 6× 0x11, wire grade == rig
+  grade to 1e-4)**, P6 dropout (immediate null watts, no crash, honest
+  coast — deterministic UPHILL runway because a downhill coast honestly
+  holds equilibrium speed, 2.8→0 km/h natural stop, RECONNECT row, fresh
+  device restores watts), P7 (BLE = zero badges, demo still badged).
+  Shots: shots/wip/probe-ble-{riding,dropout}.png (sent to owner with
+  annotated Russian captions — owner directive: скрин + пояснение зачем).
+- **Known limits / follow-ups:** Wahoo WCPS / Tacx FE-C proprietary
+  fallbacks recorded in research notes but NOT implemented (no hardware to
+  verify — hardware session M3.2); getDevices() silent reconnect not used
+  (flag-gated) — reconnect is a button; CP calibration (zero-offset/crank
+  length) documented, not surfaced in UI (vendor-app territory); ERG mode
+  encoder exists (encodeTargetPower) but nothing drives it until treadmill/
+  workout features; Cycling Dynamics extremes parsed-and-skipped (vendor
+  BLE support unverified — open question).
+
+**Next session entry point: read the full handoff first —
+`.claude/handoffs/2026-07-03-session-4-m14-ble.md` (gitignored, lives on
+disk). Then M1.5 Cockpit + dashboard v2 + HUD warnings (ROADMAP):
+handlebars/hands/bike-computer meshes on the logical pose, per-mode
+cockpit, TRAA mitigation for view-locked geometry, dashboard v2 cards,
+P5 impassable warning via surfaceAt lookahead.**

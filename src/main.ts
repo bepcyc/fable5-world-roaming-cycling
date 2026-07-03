@@ -27,6 +27,9 @@ import {
   KeyboardPowerSource,
   type SensorSource,
 } from './ride/Sensors';
+import { BleSensorSource } from './ride/ble/BleSensorSource';
+import { BleConnectUi } from './ride/ble/ConnectUi';
+import { FakeTransport, WebBluetoothTransport } from './ride/ble/Transport';
 
 async function boot(): Promise<void> {
   const hooks = initHooks();
@@ -100,13 +103,39 @@ async function boot(): Promise<void> {
   // ride layer (M1.3): power source seam → dashboard + bike physics.
   // ?ride=demo = fake sensors (DEMO badge); ?ridedev=1 = keyboard bike
   // (DEV badge); no source = bikes locked, dashboard shows "—".
+  // ?ride=ble = real sensors over Web Bluetooth (M1.4, no badge — real
+  // data); ?ride=blefake = the same source over a probe-scripted fake
+  // transport (P6/P7 acceptance — headless Chromium has no BT stack).
   const q0 = new URLSearchParams(window.location.search);
+  const rideQ = q0.get('ride');
+  let bleSource: BleSensorSource | null = null;
+  let fakeTransport: FakeTransport | null = null;
+  if (!params.rideDev && (rideQ === 'ble' || rideQ === 'blefake')) {
+    fakeTransport = rideQ === 'blefake' ? new FakeTransport() : null;
+    bleSource = new BleSensorSource(fakeTransport ?? new WebBluetoothTransport());
+    new BleConnectUi(bleSource, true); // starts visible in both modes (B hides)
+  }
   const source: SensorSource | null = params.rideDev
     ? new KeyboardPowerSource()
-    : q0.get('ride') === 'demo'
-      ? new DemoSensorSource()
-      : null;
+    : bleSource !== null
+      ? bleSource
+      : rideQ === 'demo'
+        ? new DemoSensorSource()
+        : null;
   const rideHud = new RideHud(engine, fly, source);
+  if (bleSource) {
+    const dbg0 =
+      (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
+    dbg0['bleSource'] = bleSource;
+    if (fakeTransport) {
+      dbg0['bleFake'] = fakeTransport;
+      // probes build scripted peripherals in page context (tools/probe-ble.ts)
+      const { FakeDevice } = await import('./ride/ble/Transport');
+      dbg0['bleMakeFakeDevice'] = (name: string, services: number[]) =>
+        new FakeDevice(name, services);
+    }
+    (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg0;
+  }
   if (hooks.roads && hooks.groundProbe) {
     engine.fixedDt = params.fixedDt;
     const graph = RouteGraph.build(hooks.roads);
