@@ -69,7 +69,7 @@ import {
   vec3,
 } from 'three/tsl';
 import { canopyAt, cellHash, cellHash2 } from '../gpu/passes/Scatter';
-import { grassTranslucency, rockMaterial } from '../render/VegMaterials';
+import { applyDroplets, grassTranslucency, rockMaterial } from '../render/VegMaterials';
 import { depthPrepassTwin } from '../render/VegPrepass';
 import { gustAt, windContext, windExposure, windU } from '../render/Wind';
 import type { NB, NF, NI, NU, NV2, NV3, NV4 } from '../gpu/TSLTypes';
@@ -927,6 +927,10 @@ export class GroundRing {
     mat.roughness = 0.88;
     mat.metalness = 0;
     mat.side = DoubleSide;
+    // rain/fog/dew micro-beads — near band only (the droplet term fades out
+    // by 16 m; far super-tufts would pay the shader cost for zero pixels).
+    // Glint uses the same blended shading normal as the lighting above.
+    if (!far) applyDroplets(mat, 0.88, { normal: nBlendV });
     bandFade(mat, dist, fades[0], fades[1], G_BAND);
     return mat;
   }

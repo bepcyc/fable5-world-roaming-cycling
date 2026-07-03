@@ -25,7 +25,7 @@ import { attribute, float, mix, smoothstep, texture, uv, vec3 } from 'three/tsl'
 import type { Rng } from '../core/Seed';
 import type { NF, NV3, NV4 } from '../gpu/TSLTypes';
 import { applyCaustics } from '../render/Caustics';
-import { grassTranslucency } from '../render/VegMaterials';
+import { applyDroplets, grassTranslucency } from '../render/VegMaterials';
 import { MeshGrower } from './TubeMesh';
 
 /** single grass blade: tapered 4-segment strip with a built-in bend */
@@ -93,6 +93,7 @@ export function grassMaterial(): MeshStandardNodeMaterial {
   mat.roughness = 0.88;
   mat.metalness = 0;
   mat.side = DoubleSide;
+  applyDroplets(mat, 0.88);
   return mat;
 }
 

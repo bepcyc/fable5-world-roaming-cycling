@@ -31,6 +31,9 @@ export const weatherU = {
   wetness: runiform(0),
   /** 0..1 precipitation amount → fraction of particles rolling rain */
   rainAmt: runiform(0),
+  /** 0..1 micro-droplet coverage on vegetation (rain/fog/dew) — driver WIP,
+   *  stays 0 until the WeatherState integrator lands */
+  droplets: runiform(0),
 };
 
 export type WeatherKind = 'dry' | 'rain' | 'after-rain' | 'fog';
@@ -67,6 +70,16 @@ export class WeatherState {
   private tau: number;
   private appliedDim = 1;
   private lastWt: number | null = null;
+  /** micro-droplet coverage on vegetation — integrated OUTSIDE the shared
+   *  ease: beading up under rain is fast, drying out is slow (asymmetric
+   *  taus), and clear early mornings add dew from SunSky.timeOfDay */
+  private dropsCur = 0;
+  private static readonly DROPS: Record<WeatherKind, number> = {
+    dry: 0,
+    rain: 1,
+    'after-rain': 0.55,
+    fog: 0.28,
+  };
 
   constructor(
     private froxels: Froxels | null,
@@ -81,6 +94,7 @@ export class WeatherState {
     this.tau = Number.isFinite(tq) ? Math.max(tq, 0.1) : 6;
     this.target = { ...STATES[this.kind] };
     this.cur = { ...this.target }; // boot SNAP — deterministic shots
+    this.dropsCur = this.dropsTarget(); // droplets snap too (incl. boot dew)
     // ?fog=N override stays king for existing probes/tuning flows
     const fq = Number(q.get('fog') ?? NaN);
     if (Number.isFinite(fq) && froxels) this.cur.fogK = this.target.fogK = fq;
@@ -95,6 +109,7 @@ export class WeatherState {
       return false;
     };
     dbg['weatherState'] = (): string => this.kind;
+    dbg['weatherDroplets'] = (): number => this.dropsCur;
     (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg;
   }
 
@@ -119,8 +134,26 @@ export class WeatherState {
       for (const key of Object.keys(c)) {
         c[key] = (c[key] as number) + ((t[key] as number) - (c[key] as number)) * k;
       }
+      // droplets: bead up fast under rain/fog, dry out slow ("потом
+      // обсыхают") — deliberately NOT the shared tau
+      const dTgt = this.dropsTarget();
+      const dTau = dTgt > this.dropsCur ? 7 : 55;
+      this.dropsCur += (dTgt - this.dropsCur) * (1 - Math.exp(-dt / dTau));
     }
     this.apply();
+  }
+
+  /** dew window: beads form before sunrise (~4:40→5:40), burn off through
+   *  mid-morning (~7:30→9:25); rain/fog targets win via max() */
+  private dewK(): number {
+    const t = this.sunSky.timeOfDay;
+    const up = Math.min(Math.max((t - 4.6) / 1.0, 0), 1);
+    const down = Math.min(Math.max((9.4 - t) / 1.9, 0), 1);
+    return 0.45 * Math.min(up, down);
+  }
+
+  private dropsTarget(): number {
+    return Math.max(WeatherState.DROPS[this.kind], this.dewK());
   }
 
   private apply(): void {
@@ -137,6 +170,7 @@ export class WeatherState {
     }
     weatherU.wetness.value = c.wetness;
     weatherU.rainAmt.value = c.rain;
+    weatherU.droplets.value = this.dropsCur;
     // sun dim: derive the undimmed base from the CURRENT intensity so ToD
     // edits ([ / ]) keep working — the math re-bases every frame
     const sun = this.sunSky.sun;

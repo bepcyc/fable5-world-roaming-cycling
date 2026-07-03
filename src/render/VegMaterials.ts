@@ -24,10 +24,11 @@ import {
   varying,
   vec3,
 } from 'three/tsl';
-import { fbm3, valueNoise3 } from '../gpu/noise/NoiseTSL';
+import { fbm3, hash13, valueNoise3 } from '../gpu/noise/NoiseTSL';
 import type { NF, NV3, NV4 } from '../gpu/TSLTypes';
 import { applyCaustics } from './Caustics';
 import { runiform } from '../gpu/RenderUniform';
+import { weatherU } from '../sky/Weather';
 
 /**
  * Shared sun uniforms for the foliage translucency term (D-2). Updated by
@@ -65,6 +66,83 @@ export function grassTranslucency(albedo: NV3, tipT: NF): NV3 {
 
 function vdata(): NV4 {
   return attribute('vdata', 'vec4') as unknown as NV4;
+}
+
+/**
+ * Micro-droplets on vegetation (owner order, M1.6 follow-up): a stationary
+ * world-space cell field beads water on a coverage-fraction of ~1–2.5 cm
+ * cells. Inside a bead the surface goes glass-smooth (roughness → 0.07) and
+ * a Blinn sun glint lands in EMISSIVE, so beads still sparkle under the
+ * dimmed overcast sun of the rain state. Coverage = weatherU.droplets
+ * (WeatherState: rain wets fast, drying is slow, fog condenses fewer beads,
+ * clear early mornings get dew). Foliage sways THROUGH the stationary field,
+ * so beads shimmer with the wind — real wet leaves twinkle exactly so.
+ * A distance fade kills the term once beads drop sub-pixel (TRAA would eat
+ * them as noise); droplets are a near-field effect by construction.
+ */
+export function applyDroplets(
+  mat: MeshStandardNodeMaterial,
+  baseRough: number,
+  opts?: {
+    /** coverage multiplier vs the global weatherU.droplets (cards use <1) */
+    strength?: number;
+    /** cell frequency (cells per meter) — bead ≈ 0.3 of the cell */
+    cellsPerM?: number;
+    /** fade start/end (m) — beyond `far` the term is fully off */
+    fade?: [number, number];
+    /** world-space shading normal override (ring grass rotates its own) */
+    normal?: NV3;
+  },
+): void {
+  const k = (weatherU.droplets as unknown as NF).mul(opts?.strength ?? 1);
+  const cells = opts?.cellsPerM ?? 46;
+  const [fadeNear, fadeFar] = opts?.fade ?? [8, 16];
+
+  const g = positionWorld.mul(cells);
+  const id = g.floor();
+  const f = g.fract();
+  const h = hash13(id);
+  // bead center + radius decorrelated from the SAME hash (one hash/fragment)
+  const center = vec3(
+    h.mul(37.73).fract().mul(0.5).add(0.25),
+    h.mul(61.31).fract().mul(0.5).add(0.25),
+    h.mul(17.97).fract().mul(0.5).add(0.25),
+  );
+  const rad = h.mul(113.13).fract().mul(0.13).add(0.16);
+  const bead = float(1).sub(smoothstep(rad.mul(0.45), rad, f.sub(center).length()));
+  // coverage gate: cells whose hash exceeds k·0.55 hold no bead
+  const active = float(1).sub(smoothstep(k.mul(0.55).sub(0.06), k.mul(0.55), h));
+  const camDist = positionWorld.sub(cameraPosition).length();
+  const fade = smoothstep(fadeFar, fadeNear, camDist);
+  const mask = bead.mul(active).mul(fade).mul(clamp(k.mul(8), 0, 1));
+
+  // glass bead: roughness collapses, albedo darkens a touch (wet spot)
+  mat.roughnessNode = mix(float(baseRough), float(0.07), mask);
+  if (mat.colorNode) {
+    mat.colorNode = (mat.colorNode as unknown as NV3).mul(
+      float(1).sub(mask.mul(0.2)),
+    ) as unknown as typeof mat.colorNode;
+  }
+  // sparkle: broad Blinn lobe (a bead is a SPHERE — some point of it catches
+  // the mirror angle almost regardless of leaf orientation, hence the floor)
+  // + a cool glancing sheen so overcast rain still reads wet
+  const nrm = (opts?.normal ?? (normalWorld as unknown as NV3)).normalize();
+  const viewDir = cameraPosition.sub(positionWorld).normalize();
+  const hv = viewDir.add(vec3(sunU.dir)).normalize();
+  const spec = clamp(nrm.dot(hv), 0, 1).pow(20);
+  const sunCol = sunU.color as unknown as NV3;
+  const glint = sunCol
+    .mul(sunU.intensity)
+    .mul(spec.mul(1.25).add(0.05))
+    .mul(mask);
+  const sheen = vec3(0.5, 0.55, 0.62).mul(
+    float(1).sub(clamp(nrm.dot(viewDir), 0, 1)).pow(2).mul(0.14).mul(mask),
+  );
+  const dropE = glint.add(sheen);
+  const prev = mat.emissiveNode as unknown as NV3 | null;
+  mat.emissiveNode = (prev
+    ? prev.add(dropE)
+    : dropE) as unknown as typeof mat.emissiveNode;
 }
 
 /** hue jitter: rotate albedo toward yellow (+) / blue-green (−) */
@@ -281,6 +359,7 @@ export function foliageMaterial(p: FoliageMatParams): MeshStandardNodeMaterial {
   mat.roughness = 0.8; // real leaves keep a little sheen, far less than default
   mat.metalness = 0;
   mat.side = DoubleSide;
+  applyDroplets(mat, 0.8);
   return mat;
 }
 
@@ -334,5 +413,8 @@ export function foliageCardMaterial(
   mat.roughness = 0.92;
   mat.metalness = 0;
   mat.side = DoubleSide;
+  // cards are aggregate crowns — fewer, weaker beads than true leaf geometry
+  // (a full-strength glint on a flat card lights the whole card, see above)
+  applyDroplets(mat, 0.92, { strength: 0.55 });
   return mat;
 }
