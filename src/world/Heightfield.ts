@@ -9,7 +9,7 @@
 
 import { FloatType, HalfFloatType, NearestFilter, RedFormat } from 'three';
 import type { ComputeNode, Renderer } from 'three/webgpu';
-import { StorageBufferAttribute, StorageTexture } from 'three/webgpu';
+import { StorageTexture } from 'three/webgpu';
 import {
   Fn,
   If,
@@ -21,7 +21,6 @@ import {
   instanceIndex,
   instancedArray,
   mix,
-  storage,
   texture,
   textureStore,
   uvec2,
@@ -47,7 +46,6 @@ import { resolveThreads } from '../core/Threads';
 import { RoadField } from '../gpu/passes/RoadField';
 import { RoadNetwork } from '../ride/RoadNetwork';
 import { makeMacroParams, type MacroParams } from './MacroMap';
-import { flattenPooledWater } from './WaterPools';
 import { WORLD_SIZE, qualityConfig, type QualityConfig } from './WorldConst';
 import { SurfaceId } from '../ride/SurfaceMatrix';
 
@@ -176,29 +174,12 @@ export class Heightfield {
       onProgress: (msg, frac) => progress(0.55 + frac * 0.12, msg),
     });
 
-    // M1.4.2: flatten pooled reaches to their spill level (Priority-Flood
-    // on the CPU mirror) — bed+depth domed "bubble" ponds become flat,
-    // sloped flowing reaches pass through untouched (no terracing)
-    progress(0.67, 'hydrology: flattening pooled water');
-    const rawArr = new Float32Array(await renderer.getArrayBufferAsync(hf.flow.waterYRaw.value));
-    const bedArr = new Float32Array(await renderer.getArrayBufferAsync(erosion.eroded.value));
-    const poolStats = flattenPooledWater(rawArr, bedArr, cfg.simRes, WORLD_SIZE / cfg.simRes);
-    console.log(
-      `[laas] water pools: ${poolStats.pooledCells}/${poolStats.wetCells} wet cells flattened, max drop ${poolStats.maxDrop.toFixed(2)} m`,
-    );
-    const flatWaterYRaw = storage(
-      new StorageBufferAttribute(rawArr, 1),
-      'float',
-      rawArr.length,
-    ) as FloatBuffer;
-    hf.flow.waterYRaw = flatWaterYRaw;
-
     // water render surface from the CARVED sim bed (runFlowRivers mutates
     // erosion.eroded in place: carve + talus relax)
     hf.waterY = await Heightfield.buildWaterY(
       renderer,
       erosion.eroded,
-      flatWaterYRaw,
+      hf.flow.waterYRaw,
       cfg.simRes,
     );
     hf.waterFarRes = Math.floor(cfg.simRes / 8);
@@ -394,30 +375,22 @@ export class Heightfield {
       const xp = clamp(float(x).add(1), 0, res - 1).toInt();
       const ym = clamp(float(y).sub(1), 0, res - 1).toInt();
       const yp = clamp(float(y).add(1), 0, res - 1).toInt();
-      const idx = [
-        y.mul(res).add(xm), y.mul(res).add(xp),
-        ym.mul(res).add(x), yp.mul(res).add(x),
-        ym.mul(res).add(xm), ym.mul(res).add(xp),
-        yp.mul(res).add(xm), yp.mul(res).add(xp),
-      ];
-      let bMin: NF = bed.element(i);
-      for (const ni of idx) bMin = bMin.min(bed.element(ni));
-      // M1.4.2 shoreline: bMin−2 alone builds huge translucent water WALLS
-      // wherever a dry bank sits well ABOVE the water level (bilinear ramps
-      // from the wet level up to bank−2 — the owner's "weird raised edges",
-      // glaring at the Dawn-lake bookmark). Clamp dry cells that touch water
-      // to just under the LOWEST adjacent wet level: the sheet then crosses
-      // the terrain at the true shoreline instead of climbing the bank.
-      let wMin: NF = float(1e9);
-      for (const ni of idx) {
-        const nRaw = waterYRaw.element(ni);
-        wMin = wMin.min(nRaw.greaterThan(-1e3).select(nRaw, float(1e9)));
-      }
+      const b = bed.element(i).toVar();
+      const hl = bed.element(y.mul(res).add(xm)).toVar();
+      const hr = bed.element(y.mul(res).add(xp)).toVar();
+      const hd = bed.element(ym.mul(res).add(x)).toVar();
+      const hu = bed.element(yp.mul(res).add(x)).toVar();
+      const d00 = bed.element(ym.mul(res).add(xm));
+      const d10 = bed.element(ym.mul(res).add(xp));
+      const d01 = bed.element(yp.mul(res).add(xm));
+      const d11 = bed.element(yp.mul(res).add(xp));
+      const bMin = b
+        .min(hl).min(hr).min(hd).min(hu)
+        .min(d00).min(d10).min(d01).min(d11);
       const raw = waterYRaw.element(i);
       const isWet = raw.greaterThan(-1e3);
       wet.element(i).assign(isWet.select(float(1), float(0)));
-      const dryY = bMin.sub(2).min(wMin.sub(0.15));
-      out.element(i).assign(isWet.select(raw, dryY));
+      out.element(i).assign(isWet.select(raw, bMin.sub(2)));
     })().compute(res * res);
     kernel.setName('waterY');
     await renderer.computeAsync(kernel);

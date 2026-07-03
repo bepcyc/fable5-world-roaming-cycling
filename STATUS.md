@@ -1488,3 +1488,45 @@ Cockpit + dashboard v2 + HUD warnings (ROADMAP). MANDATORY PROCESS:
 (supersedes 5a pointer). FIRST: probe-ble P6 regression (coast leg v=0 on
 graded ford runway). Then water edge "curtain" shading, then M1.5.
 Скрины+статусы владельцу в бот по ходу — обязательный процесс.**
+
+## Session 6 — 2026-07-03: M1.4.2 REVERTED (owner order) — water back to pre-f2003ef baseline
+
+- **Owner verdict on M1.4.2 (with screenshots, shots/wip/hueta/ in the
+  /home/bepcyc stale copy):** the stepped-water rework destroyed the water
+  wholesale — black sawtooth walls of triangular facets across the gully,
+  milky water sheets lying ON slopes with grass poking through, gray
+  "curtains" plastered on road cut-banks, a raised water mass piled ACROSS
+  the road. Session-5b "визуально почти закрыт" was based on a handful of
+  probed points and was FALSE 50 m away from them. The original ask had
+  been: fix slightly-convex PUDDLES ONLY, do not touch large water bodies.
+  Two days went into a global rewrite instead. Lesson recorded.
+- **REVERT (surgical, this commit):** `src/world/Heightfield.ts` →
+  ec9933b version (drops flattenPooledWater call + f2003ef dry-clamp),
+  `src/ride/RoadNetwork.ts` → 3abf578 version (drops the 927e8ed ford
+  chain: DRY fords, 18% grade-cap, wet-ford re-run, dilation),
+  `src/world/WaterPools.ts` DELETED (dead; history in git). KEPT: debug
+  overlay (Shift+D, 3abf578), shoot.ts/find-water.ts launch-gpu migration
+  from f2003ef, owner's uncommitted Justfile/vite.config.ts WIP.
+  `git revert` porcelain was unusable: f2003ef mixes water + tools + docs.
+- **Verification after revert:** tsc clean; probe-roads / probe-surface /
+  probe-physics / probe-ridehud / probe-ble ALL PASS — **including P6
+  coast (v 2.8→0.0), the 5b regression: it left with the ford ramps.**
+  All three owner cams re-shot (m142-revert-cam{1,2,3}.png, sent to bot):
+  sawtooth wall GONE, slope sheet + curtains GONE, road water pile GONE.
+  Water sits in channel bottoms. Road layout at those poses changed
+  (waterY→routing cascade) — judged water behavior, not framing.
+- **OWNER-CAM REPRO PROTOCOL (mandatory, standing):** after EVERY
+  water-related change run `tools/owner-cams.sh <prefix>` (the three
+  Shift+D poses below), LOOK at each frame, send all three to the bot
+  with honest captions. Poses (scene world, seed 1, T 11, preset high):
+  - cam1 `--cam "-72.3,280.5,-39.4,0.25,0.01,55"` (gully / sawtooth+dome)
+  - cam2 `--cam "-84.6,274.7,-36.7,2.68,0.02,55"` (slope sheet / curtains)
+  - cam3 `--cam "-104.2,275.1,-15.9,3.57,0.05,55"` (water piled over road)
+- **REOPENED: the ORIGINAL M1.4.2 item — pooled reaches render slightly
+  convex ("bubble" ponds, FlowRivers waterYRaw domes).** Constraints for
+  any new attempt (owner mandate, violation = escalation): strictly LOCAL
+  to puddle/pond cells; correction only ever LOWERS the surface; large
+  water bodies untouched; owner-cam protocol before/after every
+  iteration; design agreed with owner BEFORE code.
+- Next: owner confirms this baseline live, then M1.4.2 redesign (local
+  puddle fix only) or straight to M1.5 cockpit per owner call.

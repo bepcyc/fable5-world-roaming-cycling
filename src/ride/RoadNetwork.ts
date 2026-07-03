@@ -735,57 +735,6 @@ export class RoadNetwork {
           ys[i] = Math.min(ys[i] as number, terrY[i] as number);
         }
       }
-      // DRY fords (M1.4.2): stepped stream surfaces dry out riffle reaches,
-      // so a crossing can carry no water at all — the profile then hangs
-      // over the un-liftable trench (no up-lift pass by design). Same honest
-      // v1 treatment as wet fords: drop to the bed, tag, let probes exempt.
-      for (let i = 0; i < n; i++) {
-        if (ford[i] !== 1 && (terrY[i] as number) < (ys[i] as number) - 0.15) {
-          ford[i] = 1;
-          ys[i] = terrY[i] as number;
-        }
-      }
-      // grade-cap the ford approaches: a hard drop to the bed leaves a
-      // wall the solver rightly BLOCKS on (probe-physics stalled on the
-      // longest edge). Pull the approach points down into ≤18 % ramps —
-      // downhill cuts only (min), never lifts; carve digs the cut, so
-      // conformance holds. Elsewhere profiles already respect class grades,
-      // so only ford surroundings move.
-      const MAX_APPROACH_GRADE = 0.18;
-      for (let pass = 0; pass < 4; pass++) {
-        for (let i = 1; i < n; i++) {
-          const cap = (ys[i - 1] as number) + MAX_APPROACH_GRADE * (ds[i] as number);
-          if ((ys[i] as number) > cap) ys[i] = cap;
-        }
-        for (let i = n - 2; i >= 0; i--) {
-          const cap = (ys[i + 1] as number) + MAX_APPROACH_GRADE * (ds[i + 1] as number);
-          if ((ys[i] as number) > cap) ys[i] = cap;
-        }
-      }
-      // re-run the wet-ford test AFTER the grade cap: the ramps can pull an
-      // approach point under the water table — that point IS part of the
-      // crossing and must carry the ford tag (otherwise "underwater
-      // non-ford" trips on it)
-      for (let i = 0; i < n; i++) {
-        if (ford[i] === 1) continue;
-        const p = poly[i] as number[];
-        const wy = wAt(p[0] as number, p[1] as number);
-        if (wy - (ys[i] as number) > CLASSIFY.WATER_MIN_DEPTH_M * 0.6) {
-          ford[i] = 1;
-          ys[i] = Math.min(ys[i] as number, terrY[i] as number);
-        }
-      }
-      // dilate the ford tag over the approach points (±2 ≈ 28 m): stepped
-      // stream surfaces (M1.4.2) leave dry riffle breaks INSIDE a crossing,
-      // and the un-liftable profile-over-bed conflict at those points is the
-      // same ford-ramp case the probes already exempt by this flag
-      {
-        const src = ford.slice();
-        for (let i = 0; i < n; i++) {
-          if (src[i] !== 1) continue;
-          for (let k = Math.max(0, i - 2); k <= Math.min(n - 1, i + 2); k++) ford[k] = 1;
-        }
-      }
 
       // superelevation from smoothed curvature (outside of the curve raised)
       const bank = new Float64Array(n);
