@@ -189,7 +189,7 @@ function skinMat(): MeshStandardNodeMaterial {
   m.metalness = 0;
   const cell = hash12(positionLocal.xz.mul(340).floor().add(positionLocal.y.mul(340).floor()));
   const tone = cell.mul(0.09).add(0.955);
-  const c = new Color('#997050');
+  const c = new Color('#8d6647');
   m.colorNode = vec3(c.r, c.g, c.b).mul(tone);
   m.roughnessNode = float(0.62).add(cell.mul(0.1));
   return m;
@@ -338,12 +338,12 @@ function handParts2(s: Hand2Spec): HandOut {
     }
     const xo = new Vector3().crossVectors(y, z).normalize();
     const palmUp = y.clone();
-    const slab = new RoundedBoxGeometry(0.058, 0.02, 0.062, 3, 0.01);
+    const slab = new RoundedBoxGeometry(0.063, 0.022, 0.066, 3, 0.011);
     m.makeBasis(xo, y, z);
     m.setPosition(s.knuckleC.clone().addScaledVector(backDir, 0.038).addScaledVector(palmUp, -0.003));
     body.push({ geo: slab, m });
     // dome: low rise toward the knuckles, INSIDE the slab silhouette
-    const dome = new RoundedBoxGeometry(0.05, 0.014, 0.05, 3, 0.007);
+    const dome = new RoundedBoxGeometry(0.054, 0.016, 0.052, 3, 0.008);
     const md = m.clone();
     md.setPosition(
       s.knuckleC.clone().addScaledVector(backDir, 0.03).addScaledVector(palmUp, 0.0068),
@@ -361,7 +361,7 @@ function handParts2(s: Hand2Spec): HandOut {
     const isIndex = fi === 0;
     const base = s.knuckleC.clone().addScaledVector(t, (fi - 1.5) * FSPREAD);
     const curl = isIndex && s.indexCurl ? s.indexCurl : s.curl;
-    const r0 = 0.0085 - fi * 0.0006;
+    const r0 = 0.0092 - fi * 0.0006;
     const lens = [0.029 * fk, 0.023 * fk, 0.013 * fk];
     // knuckle bump at the chain root, tucked into the palm edge
     const kn = new SphereGeometry(r0 * 1.0, 10, 8);
