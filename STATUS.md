@@ -1434,3 +1434,10 @@ P5 impassable warning via surfaceAt lookahead.**
   STATUS:1073).
 - Ledger §6 updated: "bm2 lake white water shards / see-through swells"
   → fixed by the shoreline clamp + pooled flatten this session.
+
+**Next session entry point: read
+`.claude/handoffs/2026-07-03-133508-rando-session-5-m142-water.md` first
+(supersedes the session-4 "next" pointer — M1.4.2 is DONE). Then M1.5
+Cockpit + dashboard v2 + HUD warnings (ROADMAP). MANDATORY PROCESS:
+скрины с русским пояснением в Telegram-бот владельца по ходу работы —
+обязательная часть процесса разработки (см. handoff, раздел процесса).**
