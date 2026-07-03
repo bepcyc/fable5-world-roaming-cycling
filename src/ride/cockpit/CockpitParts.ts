@@ -46,7 +46,8 @@ import {
 import { MeshPhysicalNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { clamp, float, fract, mix, sin, uv, vec3 } from 'three/tsl';
+import { clamp, float, fract, mix, positionLocal, sin, uv, vec3 } from 'three/tsl';
+import { hash12 } from '../../gpu/noise/NoiseTSL';
 import type { RideMode } from '../SurfaceMatrix';
 
 // ---- fit constants (eye-relative) ------------------------------------------
@@ -180,12 +181,17 @@ function gloveMat(): MeshStandardNodeMaterial {
   return m;
 }
 
-/** bare skin — warm tan per the reference photos */
+/** bare skin — warm tan per the reference photos, with a faint ~3 mm
+ *  cellular tone/roughness variation so sunlit skin stops reading as
+ *  molded plastic */
 function skinMat(): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial();
-  m.color = new Color('#997050');
-  m.roughness = 0.66;
   m.metalness = 0;
+  const cell = hash12(positionLocal.xz.mul(340).floor().add(positionLocal.y.mul(340).floor()));
+  const tone = cell.mul(0.09).add(0.955);
+  const c = new Color('#997050');
+  m.colorNode = vec3(c.r, c.g, c.b).mul(tone);
+  m.roughnessNode = float(0.62).add(cell.mul(0.1));
   return m;
 }
 
@@ -359,7 +365,7 @@ function handParts2(s: Hand2Spec): HandOut {
     const lens = [0.029 * fk, 0.023 * fk, 0.013 * fk];
     // knuckle bump at the chain root, tucked into the palm edge
     const kn = new SphereGeometry(r0 * 1.0, 10, 8);
-    body.push({ geo: kn, m: new Matrix4().setPosition(base.clone().addScaledVector(n, -0.001)) });
+    body.push({ geo: kn, m: new Matrix4().setPosition(base.clone().addScaledVector(n, 0.0015)) });
     // ONE smooth flesh arc through the joint waypoints (capsule chains
     // read as caterpillars — the kinks poke through the skin)
     let theta = curl[0];
@@ -454,11 +460,11 @@ function hoodParts(hoodPoint: Vector3, side: 1 | -1, flareDeg: number): Part[] {
   const body = new CapsuleGeometry(0.019, 0.062, 4, 12);
   body.applyMatrix4(new Matrix4().makeScale(0.85, 1, 1.08));
   parts.push(place(body, hoodPoint.clone().add(new Vector3(0, 0.014, -0.016)), bodyDir));
-  const horn = new SphereGeometry(0.0175, 12, 10);
-  horn.applyMatrix4(new Matrix4().makeScale(0.82, 1.12, 1.3));
+  const horn = new SphereGeometry(0.0185, 12, 10);
+  horn.applyMatrix4(new Matrix4().makeScale(0.82, 1.15, 1.4));
   parts.push({
     geo: horn,
-    m: new Matrix4().setPosition(hoodPoint.clone().add(new Vector3(0, 0.03, -0.062))),
+    m: new Matrix4().setPosition(hoodPoint.clone().add(new Vector3(0, 0.032, -0.07))),
   });
   return parts;
 }
@@ -702,11 +708,11 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
       } else {
         // road ref: bare hands draped OVER the hoods, knuckles up
         addHand({
-          knuckleC: hp.clone().add(new Vector3(side * 0.002, 0.034, -0.048)),
+          knuckleC: hp.clone().add(new Vector3(side * 0.002, 0.031, -0.046)),
           tHat: new Vector3(side * 0.985, -0.08, -0.15),
           nHat: new Vector3(side * 0.1, 0.9, -0.42),
           fHat: new Vector3(side * 0.03, -0.35, -0.94),
-          curl: [0.35, 0.95, 1.0],
+          curl: [0.42, 1.05, 1.0],
           thumbUnder: false,
           gloved: false,
           bracelet: side === 1,
