@@ -1305,8 +1305,14 @@ fixed timestep, route-following with an on-screen junction chooser.
   owner; gravel-river classifier + inherited water artifacts unchanged
   (ledger §6).
 
-**Next session entry point:** M1.4 BLE sensor layer (ROADMAP) — the seam
-is ready: SensorSource with powerW, bikes gate on a source, RideHud badges
-by source.kind ('ble' path exists in the type). FTMS + power + CSC + HR,
-connect UI, dropout probe P6, demo badge P7. Physics consumes it with zero
-changes (BikeRig reads source.read().powerW).
+**Next session entry point: read the full handoff first —
+`.claude/handoffs/2026-07-03-111330-rando-session-3-m13-physics.md`
+(gitignored, lives on disk).** Then M1.4 BLE sensor layer (ROADMAP) — the
+seam is ready: SensorSource with powerW, bikes gate on a source, RideHud
+badges by source.kind ('ble' path exists in the type). FTMS + power + CSC +
+HR, connect UI, dropout probe P6, demo badge P7. Physics consumes it with
+zero changes (BikeRig reads source.read().powerW). **Owner directive
+2026-07-03: M1.4 идёт БЕЗ реальных девайсов — принимается лучшая
+реализация агента, если она подкреплена глубоким исследованием темы
+(спеки FTMS/CPS/CSC/HRS, per-brand quirks, Web Bluetooth ограничения);
+исследование фиксировать в docs/notes/.**
