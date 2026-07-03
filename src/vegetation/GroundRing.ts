@@ -24,6 +24,7 @@ import {
   Group,
   Matrix4,
   Mesh,
+  Vector2,
   Vector3,
   Vector4,
 } from 'three';
@@ -32,7 +33,6 @@ import {
   IndirectStorageBufferAttribute,
   IrradianceNode,
   MeshStandardNodeMaterial,
-  StorageBufferAttribute,
   type Renderer,
   type StorageBufferNode,
   type StorageTexture,
@@ -355,15 +355,13 @@ export class GroundRing {
     const heights = instancedArray(off, 'float');
     this.counters = instancedArray(this.caps.length, 'uint').toAtomic();
     const counters = this.counters;
-    const capBuf = storage(
-      new StorageBufferAttribute(new Uint32Array(this.caps), 1),
-      'uint',
-      this.caps.length,
-    );
-    const offBuf = storage(
-      new StorageBufferAttribute(new Uint32Array(offsets), 1),
-      'uint',
-      this.caps.length,
+    // group (offset, cap) is a UNIFORM array, NOT storage: with these two in
+    // storage every ring cull bound 9 storage buffers — one over the WebGPU
+    // baseline maxStorageBuffersPerShaderStage=8, so baseline-limit adapters
+    // (owner's tablet, ?limitcap=mobile) rejected every ring pipeline: bald
+    // ground, then device loss. Values are exact in f32 (offsets ≪ 2^24).
+    const grpU = uniformArray(
+      this.caps.map((cap, i) => new Vector2(offsets[i] ?? 0, cap)),
     );
 
     const clearK = Fn(() => {
@@ -415,9 +413,10 @@ export class GroundRing {
     };
 
     const appendRing = (g: NI, wc: NV2, y: NF): void => {
+      const grp = grpU.element(g) as unknown as NV2;
       const idx = atomicAdd(counters.element(g), uint(1)) as unknown as NU;
-      If(idx.lessThan(capBuf.element(g) as unknown as NU), () => {
-        const at = (offBuf.element(g) as unknown as NU).add(idx);
+      If(idx.lessThan(grp.y.toUint() as unknown as NU), () => {
+        const at = (grp.x.toUint() as unknown as NU).add(idx);
         // pack biased cell coords 16|16 (cells span ±~10k)
         cells.element(at).assign(
           wc.x.add(CELL_BIAS).toUint().shiftLeft(uint(16)).bitOr(wc.y.add(CELL_BIAS).toUint()),
@@ -772,16 +771,17 @@ export class GroundRing {
       }
     }
     const indirectStore = storage(indirectAttr, 'uint', D * 5);
-    const drawGroupBuf = storage(new StorageBufferAttribute(drawGroups, 1), 'uint', D);
+    // draw→group map is a tiny static table — uniform, not storage
+    const drawGroupU = uniformArray(Array.from(drawGroups, (g) => g));
 
     const indirectK = Fn(() => {
       const i = instanceIndex;
       If(i.greaterThanEqual(D), () => {
         Return();
       });
-      const g = drawGroupBuf.element(i) as unknown as NU;
+      const g = (drawGroupU.element(i) as unknown as NF).toInt();
       const raw = atomicLoad(counters.element(g)) as unknown as NU;
-      const cap = capBuf.element(g) as unknown as NU;
+      const cap = (grpU.element(g) as unknown as NV2).y.toUint() as unknown as NU;
       indirectStore.element(i.mul(5).add(1)).assign(raw.greaterThan(cap).select(cap, raw));
     })().compute(D);
     indirectK.setName('ringIndirect');
