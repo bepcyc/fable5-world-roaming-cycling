@@ -22,7 +22,7 @@ import type { FlyCamera, GroundProbe } from '../core/FlyCamera';
 import { stepBike, type BikeMode, type SolverState } from './BikeSolver';
 import type { RouteGraph } from './RouteGraph';
 import type { KeyboardPowerSource, SensorSource } from './Sensors';
-import { MODE_LIMITS, surfaceName, type RideMode } from './SurfaceMatrix';
+import { MODE_LIMITS, surfaceDef, surfaceName, type RideMode } from './SurfaceMatrix';
 
 const EYE_SADDLE = 1.62; // m — seated eye height
 const MOUNT_MAX_DIST = 30; // m — nearest road within this or bike is refused
@@ -48,6 +48,21 @@ export interface JunctionPreview {
   selected: number;
 }
 
+/** P5: first impassable point ahead along the default route */
+export interface HazardAhead {
+  distM: number;
+  kind: 'surface' | 'slope';
+  /** surface name (kind=surface) or grade fraction as string (kind=slope) */
+  what: string;
+}
+
+// P5 lookahead tuning: scan far enough that the HUD can warn ≥2 s out at
+// any legal speed; rescan cheaply on a coarse cadence, not every step
+const HAZARD_SCAN_S = 0.15;
+const HAZARD_STEP_M = 3;
+const HAZARD_LOOK_S = 6;
+const HAZARD_LOOK_MIN_M = 60;
+
 export interface RideState {
   mode: RideMode;
   riding: boolean;
@@ -64,6 +79,8 @@ export interface RideState {
   distM: number;
   junction: JunctionPreview | null;
   note: string | null;
+  /** P5: nearest impassable point on the default route ahead (null = clear) */
+  hazard: HazardAhead | null;
 }
 
 export class BikeRig {
@@ -86,6 +103,8 @@ export class BikeRig {
   private note: string | null = null;
   private noteT = 0;
   private brake = false;
+  private hazard: HazardAhead | null = null;
+  private hazardScanT = 0;
   // fixed-step pose pair — the camera interpolates between them with the
   // engine's fixedAlpha (render smoothness AND dashboard==solver parity at
   // coarse ?dt values: pose-delta speed integrates exactly)
@@ -157,6 +176,7 @@ export class BikeRig {
       distM: this.distM,
       junction: this.junction,
       note: this.note,
+      hazard: this.hazard,
     };
   }
 
@@ -271,6 +291,7 @@ export class BikeRig {
     if (this.mode === 'hike') return;
     this.mode = 'hike';
     this.junction = null;
+    this.hazard = null;
     this.solver = { v: 0, stalled: false };
     this.fly.setMode('walk');
     this.flash('ON FOOT');
@@ -367,6 +388,13 @@ export class BikeRig {
     // junction preview for the chooser UI
     this.updateJunctionPreview();
 
+    // P5 hazard lookahead — coarse cadence, ~20 probes max per scan
+    this.hazardScanT -= dt;
+    if (this.hazardScanT <= 0) {
+      this.hazardScanT = HAZARD_SCAN_S;
+      this.hazard = this.scanHazard();
+    }
+
     // pose: probed ground carries the carved road surface (+bank is visual
     // only for now — cockpit lean lands with M1.5)
     const sm2 = this.graph.sample(this.edge, this.s);
@@ -388,6 +416,88 @@ export class BikeRig {
     c['ride.blocked'] = out.blocked ? 1 : 0;
     c['ride.stalled'] = out.stalled ? 1 : 0;
     c['ride.mode'] = MODE_ORDER.indexOf(this.mode);
+  }
+
+  /**
+   * P5: walk the DEFAULT route ahead (current chooser pick at the first
+   * junction, straightest exit beyond) sampling surface + travel grade;
+   * return the first point the CURRENT mode cannot enter.
+   */
+  private scanHazard(): HazardAhead | null {
+    if (!this.riding) return null;
+    const mode = this.mode;
+    const limit = MODE_LIMITS[mode].maxSlope;
+    const look = Math.max(HAZARD_LOOK_MIN_M, this.solver.v * HAZARD_LOOK_S);
+    let edge = this.edge;
+    let s = this.s;
+    let dir = this.dir;
+    let travelled = 0;
+    let firstJunction = true;
+    let guard = 96;
+    while (travelled < look && guard-- > 0) {
+      const e = this.graph.edges[edge];
+      if (!e) break;
+      const remain = dir > 0 ? e.length - s : s;
+      const step = Math.min(HAZARD_STEP_M, look - travelled);
+      if (step < remain) {
+        s += step * dir;
+        travelled += step;
+        const sm = this.graph.sample(edge, s);
+        const g = this.probe(sm.x, sm.z);
+        const grade = sm.grade * dir;
+        if (surfaceDef(g.surfaceId).modes[mode].status === 'blocked') {
+          return { distM: travelled, kind: 'surface', what: surfaceName(g.surfaceId) };
+        }
+        if (Math.abs(grade) > limit) {
+          return { distM: travelled, kind: 'slope', what: `${(grade * 100).toFixed(0)}%` };
+        }
+      } else {
+        // cross the node the way the rider would
+        travelled += remain;
+        const nodeId = dir > 0 ? e.b : e.a;
+        const exits = this.graph.exits(nodeId, e.id);
+        if (exits.length === 0) break; // dead end U-turns before any zone
+        let arm = null;
+        if (firstJunction && this.junction && exits.length >= 2) {
+          const opts = this.buildOptions(nodeId, e.id);
+          arm = opts[this.junction.selected]?.arm ?? null;
+        }
+        if (!arm) {
+          const inSm = this.graph.sample(e.id, dir > 0 ? e.length : 0);
+          arm = this.straightestExit(nodeId, e.id, inSm.tx * dir, inSm.tz * dir);
+        }
+        if (!arm) break;
+        firstJunction = false;
+        edge = arm.edge;
+        dir = arm.end === 0 ? 1 : -1;
+        s = dir > 0 ? 0 : (this.graph.edges[edge]?.length ?? 0);
+      }
+    }
+    return null;
+  }
+
+  private straightestExit(
+    nodeId: number,
+    arrivedEdge: number,
+    inx: number,
+    inz: number,
+  ): { edge: number; end: 0 | 1 } | null {
+    const exits = this.graph.exits(nodeId, arrivedEdge);
+    let best: { arm: { edge: number; end: 0 | 1 }; turn: number } | null = null;
+    for (const arm of exits) {
+      const oe = this.graph.edges[arm.edge];
+      if (!oe) continue;
+      const sm = this.graph.sample(
+        oe.id,
+        arm.end === 0 ? Math.min(10, oe.length) : Math.max(oe.length - 10, 0),
+      );
+      const outDir = arm.end === 0 ? 1 : -1;
+      const ox = sm.tx * outDir;
+      const oz = sm.tz * outDir;
+      const turn = Math.abs(Math.atan2(inx * oz - inz * ox, inx * ox + inz * oz));
+      if (!best || turn < best.turn) best = { arm, turn };
+    }
+    return best?.arm ?? null;
   }
 
   private buildOptions(nodeId: number, arrivedEdge: number): JunctionOption[] {

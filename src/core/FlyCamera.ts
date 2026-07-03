@@ -209,6 +209,12 @@ export class FlyCamera {
     return this.modeV;
   }
 
+  /** ride travel heading as rendered THIS frame (rideDriver-interpolated) —
+   *  the cockpit's yaw anchor; free mouse-look (yaw) stays independent */
+  get rideViewHeading(): number {
+    return this.rideHeading;
+  }
+
   /**
    * Switch walk/fly. Walking needs a ground probe; entering walk snaps the
    * eye onto the terrain below the current position. Leaving walk strips

@@ -20,6 +20,7 @@
 import type { Engine } from '../core/Engine';
 import type { FlyCamera } from '../core/FlyCamera';
 import type { BikeRig, JunctionPreview, Turn } from './BikeRig';
+import { Cockpit } from './cockpit/Cockpit';
 import { RideRecorder } from './RideRecorder';
 import type { SensorSource } from './Sensors';
 
@@ -63,6 +64,14 @@ const STYLE = `
   background:rgba(30,10,6,0.62);border:1px solid rgba(255,140,90,0.35);
   backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
   opacity:0;transition:opacity 0.25s}
+#ride-hazard{position:fixed;top:88px;left:50%;transform:translate(-50%,0);
+  z-index:1001;pointer-events:none;text-align:center;
+  font:bold 13px/1.3 ui-monospace,Menlo,monospace;letter-spacing:0.08em;
+  padding:8px 18px;border-radius:10px;color:#ffe08a;
+  background:rgba(38,26,4,0.66);border:1px solid rgba(255,209,102,0.45);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  opacity:0;transition:opacity 0.25s}
+#ride-hazard .rz-dist{color:#fff3cf}
 #ride-banner.info{color:#dcefe4;background:rgba(8,16,12,0.62);
   border-color:rgba(160,220,190,0.28)}
 #ride-junction{position:fixed;bottom:15%;left:50%;transform:translate(-50%,12px);
@@ -130,9 +139,13 @@ export class RideHud {
   private speed: Card;
   private power: Card;
   private grade: Card;
+  private dist: Card;
   private cadence: Card;
   private heart: Card;
   private banner: HTMLDivElement;
+  private hazardEl: HTMLDivElement;
+  /** M1.5 first-person cockpit — self-driving once constructed */
+  cockpit: Cockpit | null = null;
   private junctionEl: HTMLDivElement;
   private junctionRow: HTMLDivElement;
   private junctionTitle: HTMLDivElement;
@@ -168,6 +181,7 @@ export class RideHud {
     this.speed = makeCard('SPEED', 'km/h', '#eaf6ee');
     this.power = makeCard('POWER', 'W', '#ffd166');
     this.grade = makeCard('GRADE', '%', '#cfe3d6');
+    this.dist = makeCard('DISTANCE', 'km', '#dcefe4');
     this.cadence = makeCard('CADENCE', 'rpm', '#bcd9ff');
     this.heart = makeCard('HEART RATE', 'bpm', '#ff8f88');
     this.root.append(
@@ -175,6 +189,7 @@ export class RideHud {
       this.speed.root,
       this.power.root,
       this.grade.root,
+      this.dist.root,
       this.cadence.root,
       this.heart.root,
     );
@@ -185,6 +200,11 @@ export class RideHud {
     this.banner = document.createElement('div');
     this.banner.id = 'ride-banner';
     document.body.appendChild(this.banner);
+
+    // P5: amber pre-warning strip (impassable zone ahead on the route)
+    this.hazardEl = document.createElement('div');
+    this.hazardEl.id = 'ride-hazard';
+    document.body.appendChild(this.hazardEl);
 
     this.junctionEl = document.createElement('div');
     this.junctionEl.id = 'ride-junction';
@@ -213,12 +233,16 @@ export class RideHud {
   /** BikeRig attaches after world build (needs the road graph) */
   attachRig(rig: BikeRig): void {
     this.rig = rig;
+    // M1.5 cockpit: rides the same rig/sensor state; zero footprint until
+    // a bike is mounted (group hidden, uniforms parked)
+    this.cockpit = new Cockpit(this.engine, this.fly, rig, this.source);
   }
 
   private applyVisibility(): void {
     this.root.style.display = this.visible ? 'flex' : 'none';
     if (!this.visible) {
       this.banner.style.opacity = '0';
+      this.hazardEl.style.opacity = '0';
       this.junctionEl.classList.remove('on');
     }
   }
@@ -267,9 +291,12 @@ export class RideHud {
       const pct = st.grade * 100;
       this.grade.value.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}`;
       this.grade.value.style.color = pct > 1 ? '#ff9d7a' : pct < -1 ? '#8fd8ff' : '#cfe3d6';
+      const km = st.distM / 1000;
+      this.dist.value.textContent = km >= 100 ? km.toFixed(1) : km.toFixed(2);
     } else {
       this.grade.value.textContent = '—';
       this.grade.value.style.color = '#cfe3d6';
+      this.dist.value.textContent = '—';
     }
 
     // mode chip
@@ -279,6 +306,28 @@ export class RideHud {
     if (this.chipIco.dataset['m'] !== mode) {
       this.chipIco.dataset['m'] = mode;
       this.chipIco.innerHTML = ico;
+    }
+
+    // P5 pre-warning: impassable zone ahead on the route. Shows when the
+    // zone is inside the reaction window (≥2 s guaranteed: window is 3.5 s
+    // at speed, floored at 12 m for near-standstill approaches).
+    {
+      const hz = st?.riding ? st.hazard : null;
+      const v = st?.vMs ?? 0;
+      const windowM = Math.min(Math.max(v * 3.5, 12), 60);
+      const show = hz !== null && !st?.blocked && hz.distM <= windowM;
+      if (show && hz) {
+        const label =
+          hz.kind === 'slope'
+            ? `TOO STEEP AHEAD (${hz.what})`
+            : `${hz.what.toUpperCase().replace(/-/g, ' ')} AHEAD`;
+        this.hazardEl.innerHTML = `⚠ ${label} · <span class="rz-dist">${Math.max(Math.round(hz.distM / 5) * 5, 5)} m</span> — DISMOUNT (M) OR TURN`;
+        this.hazardEl.style.opacity = '1';
+      } else {
+        this.hazardEl.style.opacity = '0';
+      }
+      this.engine.stats.counters['ride.hazardShown'] = show ? 1 : 0;
+      this.engine.stats.counters['ride.hazardDm'] = hz ? Math.round(hz.distM * 10) : -1;
     }
 
     // banner: hard states win, then transient notes

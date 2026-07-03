@@ -52,6 +52,7 @@ import type { Atmosphere } from '../sky/Atmosphere';
 import { CLOUD_BOTTOM, CLOUD_TOP, type Clouds } from '../sky/Clouds';
 import { GradeUniforms, gradeParamsAt } from './ColorScript';
 import { runiform } from '../gpu/RenderUniform';
+import { cockpitVelU } from '../ride/cockpit/CockpitVelocity';
 import { gtaoLayer } from './Gtao';
 import { HalfResMrtNode, type HalfResEntry } from './HalfResMrt';
 
@@ -495,7 +496,17 @@ export class PostStack {
       const d = (depthTex.load(texel as unknown as Parameters<typeof depthTex.load>[0]) as unknown as NV4).x;
       const posV = getViewPosition(uvv, d, uProjInv);
       const posW = uCamWorld.mul(vec4(posV, 1)).xyz;
-      const posVPrev = uPrevView.mul(vec4(posW, 1)).xyz;
+      // cockpit pixels (M1.5) move with the bike rig, not the world: the
+      // static-world reprojection is wrong for them under every camera
+      // move (assessment §2.6). Anything nearer than the cockpit bound is
+      // cockpit (ride eye height keeps the world beyond it): send those
+      // pixels through the rig's own prev/cur transform.
+      const isCockpit = float(cockpitVelU.on)
+        .greaterThan(0.5)
+        .and(posV.length().lessThan(float(cockpitVelU.maxDist)));
+      const posWCk = cockpitVelU.prev.mul(cockpitVelU.curInv.mul(vec4(posW, 1))).xyz;
+      const posWSrc = isCockpit.select(posWCk, posW);
+      const posVPrev = uPrevView.mul(vec4(posWSrc, 1)).xyz;
       const clipPrev = uPrevProj.mul(vec4(posVPrev, 1));
       const uvPrevRaw = clipPrev.xy.div(clipPrev.w).mul(0.5).add(0.5);
       const uvPrev = vec2(uvPrevRaw.x, uvPrevRaw.y.oneMinus());
