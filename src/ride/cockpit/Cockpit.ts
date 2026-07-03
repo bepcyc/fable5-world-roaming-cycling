@@ -81,6 +81,8 @@ export class Cockpit {
   private prevM = new Matrix4();
   private lastM = new Matrix4();
   private hasPrev = false;
+  /** ride timer (s) — accumulates while actually moving (auto-pause) */
+  private rideS = 0;
   /** ?ckdbg=1|road|gravel|mtb — cockpit pinned to the free camera gaze in
    *  ANY mode, for shape/aesthetic inspection from arbitrary --cam poses */
   private dbg: RideMode | null;
@@ -199,16 +201,19 @@ export class Cockpit {
     // wheel spin (front wheel: top moves toward -Z)
     this.build.wheel.rotation.x -= (v / WHEEL_R) * dt;
 
-    // ---- live screen: data page + route map + hazard strip (owner ref)
+    // ---- live screen: reference metrics page (map page under ?ckmap=1)
+    if (v > 0.4) this.rideS += dt; // auto-pause like a real head unit
+    const read = this.source()?.read();
     const pose2 = this.fly.getPose();
     this.screen.update(
       dt,
       {
         kmh: v * 3.6,
-        powerW: st.riding ? st.powerW : (this.source()?.read().powerW ?? null),
-        cadenceRpm: this.source()?.read().cadenceRpm ?? null,
+        powerW: st.riding ? st.powerW : (read?.powerW ?? null),
+        cadenceRpm: read?.cadenceRpm ?? null,
+        hrBpm: read?.heartRateBpm ?? null,
         distM: st.distM,
-        gradePct: st.riding ? st.grade * 100 : null,
+        elapsedS: this.rideS,
         hazard: st.hazard
           ? { distM: st.hazard.distM, label: st.hazard.kind === 'slope' ? 'STEEP' : st.hazard.what.toUpperCase() }
           : null,

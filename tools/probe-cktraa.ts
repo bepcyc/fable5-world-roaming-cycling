@@ -72,7 +72,10 @@ function buildMask(a: Raw, b: Raw): boolean[] {
   for (let y = Y0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const luma = 0.299 * px(a, x, y, 0) + 0.587 * px(a, x, y, 1) + 0.114 * px(a, x, y, 2);
-      if (luma < 80 && pxDiff(a, b, x, y) < 6) mask[(y - Y0) * W + x] = true;
+      // M1.5.2 cockpit is brighter (bare-skin hands, slimmer dark mass) --
+      // luma<80 collapsed the mask to the threshold edge; 95 still sits
+      // well below the sunlit-asphalt floor at the probe framing
+      if (luma < 95 && pxDiff(a, b, x, y) < 6) mask[(y - Y0) * W + x] = true;
     }
   }
   return mask;

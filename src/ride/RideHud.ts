@@ -164,8 +164,12 @@ export class RideHud {
     this.fly = fly;
     this.engine = engine;
     this.source = source;
-    const ride = new URLSearchParams(window.location.search).get('ride');
-    this.visible = (ride !== null && ride !== '0') || engine.params.rideDev;
+    const q = new URLSearchParams(window.location.search);
+    const ride = q.get('ride');
+    // ?dash=0 hides the DOM dashboard (cockpit-only judge frames -- the
+    // computer screen carries the metrics per the M1.5.2 references)
+    this.visible =
+      ((ride !== null && ride !== '0') || engine.params.rideDev) && q.get('dash') !== '0';
 
     const style = document.createElement('style');
     style.textContent = STYLE;
