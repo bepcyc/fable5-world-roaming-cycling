@@ -20,11 +20,18 @@ run-nixos: deps
     for _ in $(seq 1 50); do curl -sf http://localhost:5173/ >/dev/null 2>&1 && break; sleep 0.2; done
     google-chrome \
       --user-data-dir="$HOME/.cache/laas-chrome-profile" \
-      --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan \
+      --enable-unsafe-webgpu --enable-features=Vulkan \
       --new-window http://localhost:5173/
 
 # Verified remotely 2026-07-02: Pop!_OS 24.04, RX 6800 XT (RADV NAVI21), Chrome 149
 # at /usr/bin/google-chrome, X11; node/npm NOT installed there — guard below says so.
+# NO --use-angle=vulkan (2026-07-04): WebGPU runs on Dawn's own Vulkan backend,
+# never through ANGLE — adding it makes ANGLE's GL-on-Vulkan backend open a
+# SECOND, uncoordinated Vulkan client against the same GPU. That contention
+# native-crashes the GPU process (SIGFPE, exit_code=136) the moment ride mode
+# mounts the cockpit, 100% reproducible, headed-Chrome only (never headless —
+# see tools/probe-real-crash.ts). Confirmed by dropping the flag: crash gone,
+# 2/2 clean runs cycling every bike mode.
 # Pop!_OS / AMD RX box: dev server + Chrome with WebGPU/Vulkan flags (dedicated profile)
 run-rxgpu:
     #!/usr/bin/env bash
@@ -47,7 +54,7 @@ run-rxgpu:
     if [ -z "$BROWSER" ]; then echo "no Chrome/Chromium found — install google-chrome-stable"; exit 1; fi
     "$BROWSER" \
       --user-data-dir="$HOME/.cache/laas-chrome-profile" \
-      --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan \
+      --enable-unsafe-webgpu --enable-features=Vulkan \
       --new-window http://localhost:5173/
 
 # run on LAN Wi-Fi for a phone/tablet. Plain HTTP (no TLS cert). WebGPU + Web

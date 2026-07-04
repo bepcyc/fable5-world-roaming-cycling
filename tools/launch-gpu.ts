@@ -35,7 +35,13 @@ interface GpuRecipe {
   args: string[];
 }
 
-const LINUX_FLAGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=vulkan'];
+// NO --use-angle=vulkan: WebGPU runs on Dawn's own Vulkan backend, never
+// through ANGLE. Adding it opens a second, uncoordinated Vulkan client
+// (ANGLE's GL-on-Vulkan) against the same GPU, which native-crashes the GPU
+// process (SIGFPE) under real (headed, on-screen) presentation — invisible
+// here since this launcher is headless, but matches the real `run-rxgpu`
+// crash 1:1 (see Justfile run-rxgpu, tools/probe-real-crash.ts).
+const LINUX_FLAGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan'];
 const USER = process.env['USER'] ?? '';
 const BIN_CANDIDATES = [
   process.env['CHROME_BIN'],
