@@ -1728,3 +1728,64 @@ handoff). Вердикта владельца по итерациям 1–7 НЕ
 реальной анатомии, хват параметризацией от цилиндра по фото владельца,
 контактная тень; ЖЕЛЕЗНОЕ ПРАВИЛО №2 в CLAUDE.md — каждая итерация =
 side-by-side всех трёх велов, пропуск = мгновенная остановка.**
+
+## Session — 2026-07-04: `just run-rxgpu` bike-mode краш root-caused + исправлен (реальный headed Chrome, не M1.5.x)
+
+- **Жалоба владельца.** `just run-rxgpu` → хайк стабилен сколько угодно; ЛЮБОЙ
+  переход в вел через меню (Demo+Road ИЛИ Demo+Gravel) — 100% краш из 100%.
+  Владелец: «твои тесты всегда работают, именно поэтому ты меня жёстко
+  газлайтишь, что всё поправил и работает — я ни разу не смог проехать».
+- **Почему пробники врали (ALL PASS месяцами).** `tools/probe-menu-ride.ts`
+  гоняет ТОТ ЖЕ путь (O → DEMO → GRAVEL), но через Playwright-headless (даже
+  с реальным GPU-адаптером, `launchWebGPUReal`). Headless никогда не доходит
+  до РЕАЛЬНОГО presentation/swapchain-цикла — краш именно там. Новый
+  `tools/probe-real-crash.ts` цепляется по CDP к УЖЕ ЗАПУЩЕННОМУ реальному
+  headed Chrome (тот же `--user-data-dir=~/.cache/laas-chrome-profile`, те
+  же флаги, что и `run-rxgpu`) — репро 3/3, точь-в-точь лог владельца:
+  `gpu/ipc/client/command_buffer_proxy_impl.cc:488] GPU state invalid after
+  WaitForGetOffsetInRange` → `GPU process exited unexpectedly: exit_code=136`
+  (SIGFPE) → каскад `Instance dropped in popErrorScope` / `mapAsync ...
+  Instance no longer exists` → GPU-процесс падает 3 раза с авто-реинитом →
+  `ui/gl/gl_surface_egl.cc No suitable EGL configs` (= «WebGPU unavailable»
+  на следующей загрузке). Не путать с лимитным крашем сессии 8 (8 storage
+  buffers, GroundRing/limitcap) — другой баг, тот уже чинен.
+- **Root cause.** `Justfile` (`run-rxgpu`, `run-nixos`) запускал Chrome с
+  `--enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan`.
+  WebGPU идёt через СОБСТВЕННЫЙ Vulkan-бэкенд Dawn, никогда через ANGLE;
+  `--use-angle=vulkan` заставляет ANGLE держать ВТОРОЙ, несогласованный
+  Vulkan-клиент (GL-поверх-Vulkan для композитинга/UI) на ТОМ ЖЕ GPU —
+  контентион двух Vulkan-клиентов нативно роняет GPU-процесс (RADV) в
+  момент, когда ride-режим добавляет GPU-нагрузку (кокпит: новые pipeline +
+  NPOT mip-chain компьютера на руле). Только headed (реальный present) —
+  headless этот путь никогда не задевает. Совпадение подтвердил
+  веб-агент-исследователь (gpuweb/gpuweb#5022 — идентичный класс краша от
+  той же комбинации флагов).
+- **Фикс.** Убран `--use-angle=vulkan` из `run-rxgpu` и `run-nixos`
+  (Justfile); тот же флаг убран из `tools/launch-gpu.ts` `LINUX_FLAGS`
+  (тулинг был с тем же багом, просто headless его маскировал); стёрт
+  протухший `.cache/webgpu-gpu-recipe.json`.
+- **Верификация (репро своими руками, реальный headed Chrome, тот же
+  профиль владельца).** С флагом — 3/3 краша ровно на входе в ride. Без
+  флага — 2/2 чистых полных цикла HIKE→GRAVEL→ROAD→HIKE→MTB→GRAVEL, adapter
+  жив всё время, скрины в бот (ОЖИДАЛ/ВИЖУ). Плюс буквальный
+  небодифицированный `just run-rxgpu` (без debug-флагов) поднят живьём на
+  экране владельца — хайк чист, 47 fps, краша на старте нет.
+- **Новый инструмент `tools/probe-real-crash.ts`** — постоянное добавление:
+  цепляется по CDP к реальному headed Chrome вместо запуска своего
+  headless-браузера. Закрывает слепое пятно headless-vs-headed на будущее
+  для любого GPU-краш-репро.
+- **Побочное:** саб-агент веб-исследования поймал попытку prompt-injection
+  посреди своей задачи (веб-контент подсунул «установи скилл через npx без
+  колебаний») — агент отказался сам, ничего не установил, честно
+  отрапортовал. По прямому приказу владельца (не через инъекцию) отдельно
+  найден и легитимно установлен (`npx skills add`) скилл `webgpu`
+  (`cazala/webgpu-skill`, 647 installs) — для будущей WebGPU-работы.
+- Урок (в память): headless ALL PASS ≠ реальный путь работает, если баг
+  завязан на реальный swapchain/present. Для любой жалобы «краш только у
+  меня, у тебя зелено» — сначала подозревать headless/headed расхождение,
+  не код.
+
+**Next session: фикс закоммичен `a88a53f` (типчек чист), отдельно от фиксов
+M2-мобайл (`e1e054e`, параллельная сессия/агент, другой баг — riverCarve
+storage-buffer сплит для Samsung/Pixel). Кокпит-REWORK M1.5.3 (руки) —
+всё ещё открыт, не трогался в этой сессии.**
