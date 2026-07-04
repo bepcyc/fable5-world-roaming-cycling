@@ -40,8 +40,9 @@ import {
   vec4,
 } from 'three/tsl';
 import { bilerpFloatBuffer, uvToGrid } from '../BufferSample';
-import type { NF, NI, NU, NV2, NV4 } from '../TSLTypes';
+import type { NB, NF, NI, NU, NV2, NV4 } from '../TSLTypes';
 import type { FloatBuffer } from './HeightSynthesis';
+import { LOG_LEN_MAX, VegClass } from './Scatter';
 import type { UintBuffer } from './SurfaceClassify';
 import { ROAD_CLASSES, RoadNetwork } from '../../ride/RoadNetwork';
 import { SurfaceId } from '../../ride/SurfaceMatrix';
@@ -387,10 +388,30 @@ export class RoadField {
   }
 
   // ------------------------------------------------------------------ audit
-  /** count instances of a scatter layer inside the road surface (probe) */
+  /**
+   * count instances of a scatter layer inside the road surface (probe).
+   *
+   * Track C3 (owner-reported: a fallen log lying across a road): a plain
+   * CENTER test misses a log whose midpoint sits just outside the road but
+   * whose several-metre length still crosses it. When a layer supplies
+   * `bufB` (the yaw/idF buffer), Log-class instances (VegClass.Log, read
+   * from idF) are checked at BOTH placed endpoints instead — the same
+   * LOG_LEN_MAX constant and rotation convention (VegInstance.ts: rx =
+   * x·cos+z·sin, rz = z·cos−x·sin) the extras scatter kernel uses for its
+   * own extent-aware road gate, scaled by the instance's real per-instance
+   * scale (A.w) so audit and placement agree on the same worst-case
+   * footprint. Every other class in a `bufB` layer still gets the original
+   * center-only test. Layers with no Log instances can omit `bufB`.
+   */
   async vegAudit(
     renderer: Renderer,
-    layers: { name: string; bufA: StorageBufferNode<'vec4'>; count: number; margin: number }[],
+    layers: {
+      name: string;
+      bufA: StorageBufferNode<'vec4'>;
+      bufB?: StorageBufferNode<'vec4'>;
+      count: number;
+      margin: number;
+    }[],
   ): Promise<Record<string, number>> {
     const out: Record<string, number> = {};
     for (const layer of layers) {
@@ -399,19 +420,34 @@ export class RoadField {
         continue;
       }
       const counter = instancedArray(1, 'uint').toAtomic();
+      const bufB = layer.bufB;
+      const margin = layer.margin;
       const kernel = Fn(() => {
         const i = instanceIndex;
         If(i.greaterThanEqual(uint(layer.count)), () => {
           Return();
         });
         const A = layer.bufA.element(i) as unknown as NV4;
-        const s = this.sampleBaked(vec2(A.x, A.z));
-        If(
-          s.halfW.greaterThan(0.01).and(s.dist.lessThan(s.halfW.add(layer.margin))),
-          () => {
-            atomicAdd(counter.element(0), uint(1));
-          },
-        );
+        const center = vec2(A.x, A.z);
+        const hitAt = (p: NV2): NB => {
+          const ps = this.sampleBaked(p);
+          return ps.halfW.greaterThan(0.01).and(ps.dist.lessThan(ps.halfW.add(margin)));
+        };
+        let hit = hitAt(center);
+        if (bufB) {
+          const B = bufB.element(i) as unknown as NV4;
+          const isLog = B.w.div(8).floor().equal(float(VegClass.Log));
+          const yaw = B.x;
+          const half = float(LOG_LEN_MAX / 2).mul(A.w);
+          const dx = yaw.cos().mul(half);
+          const dz = yaw.sin().mul(half).negate();
+          const off = vec2(dx, dz);
+          const hitLog = hitAt(center.add(off)).or(hitAt(center.sub(off)));
+          hit = isLog.select(hitLog, hit) as NB;
+        }
+        If(hit, () => {
+          atomicAdd(counter.element(0), uint(1));
+        });
       })().compute(layer.count);
       kernel.setName(`roadVegAudit-${layer.name}`);
       await renderer.computeAsync(kernel);

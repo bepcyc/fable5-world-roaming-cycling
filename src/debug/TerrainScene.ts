@@ -88,7 +88,16 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
         (hf.roadField as NonNullable<typeof hf.roadField>).vegAudit(engine.renderer, [
           { name: 'trees', bufA: scatter.trees.bufA, count: scatter.trees.count, margin: 0 },
           { name: 'under', bufA: scatter.understory.bufA, count: scatter.understory.count, margin: 0 },
-          { name: 'extras', bufA: scatter.extras.bufA, count: scatter.extras.count, margin: 0 },
+          // Track C3: bufB carries idF (class) + yaw, needed to check Log
+          // instances by their placed EXTENTS instead of center (RoadField
+          // vegAudit header) — only 'extras' holds Log/Stump instances.
+          {
+            name: 'extras',
+            bufA: scatter.extras.bufA,
+            bufB: scatter.extras.bufB,
+            count: scatter.extras.count,
+            margin: 0,
+          },
           { name: 'stones', bufA: scatter.stones.bufA, count: scatter.stones.count, margin: 0 },
           { name: 'treesBand', bufA: scatter.trees.bufA, count: scatter.trees.count, margin: 8 },
           { name: 'stonesBand', bufA: scatter.stones.bufA, count: scatter.stones.count, margin: 8 },

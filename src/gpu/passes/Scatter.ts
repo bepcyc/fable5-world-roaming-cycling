@@ -28,6 +28,7 @@ import {
   Return,
   atomicAdd,
   atomicLoad,
+  bool,
   float,
   instanceIndex,
   instancedArray,
@@ -45,7 +46,7 @@ import type { WorldSeed } from '../../core/Seed';
 import type { Heightfield } from '../../world/Heightfield';
 import { LAKE_LEVEL, TREELINE, WORLD_SIZE } from '../../world/WorldConst';
 import { fbm3 } from '../noise/NoiseTSL';
-import type { NF, NI, NU, NV2, NV4 } from '../TSLTypes';
+import type { F, NB, NF, NI, NU, NV2, NV4 } from '../TSLTypes';
 
 /** geometry-pool class ids (variant index lives in the low 3 bits of idF) */
 export const enum VegClass {
@@ -361,6 +362,26 @@ export function canopyAt(tex: StorageTexture, wxz: NV2): NF {
   return (texture(tex, uv) as unknown as NV4).x;
 }
 
+/**
+ * Track C3 (owner-reported: a fallen log lying across a road). The extras
+ * kernel's flat roadGate(wpos, 1.2) tests the instance CENTER only; a log
+ * several metres long can have its center just past that flat margin while
+ * its far end still reaches the surfaced width. Per-instance BASE geometry
+ * length isn't available in the extras compute kernel — it's baked once per
+ * pool variant, in JS, by Deadfall.ts buildLog(), which runs later
+ * (VegLibrary is built after runScatter) — so this stands in for the
+ * formula's own worst case, multiplied by the REAL per-instance scale
+ * (known in-kernel) for a tight-as-possible half-length margin. Exported so
+ * RoadField.vegAudit's Log extent check uses the SAME constant (anti-drift,
+ * same rule as sampleBaked being the one shared road sampler).
+ */
+export const LOG_LEN_MAX = 5.2; // Deadfall.ts buildLog(): 2.6 + rng.float()*2.6
+// Deadfall.ts buildStump(): r0 = 0.22 + rng.float()*0.14 → conservative max
+// root-flare radius (m). Stumps are compact (root ball, not a beam), so this
+// only nudges the flat extras margin — unlike the log's multi-metre
+// half-length, it rarely changes the outcome by itself.
+const STUMP_RADIUS_MAX = 0.36;
+
 export async function runScatter(
   renderer: Renderer,
   hf: Heightfield,
@@ -375,7 +396,10 @@ export async function runScatter(
   // zone beyond the surfaced half-width, per layer (trunks stay off the
   // verge; small stones may sit close to the edge like real road margins).
   const road = hf.roadField?.latBuf ? hf.roadField : null;
-  const roadGate = (wpos: NV2, margin: number): void => {
+  // margin may be a plain clearance constant OR a per-instance TSL expression
+  // (Track C3: extent-aware Log/Stump margins below, derived from the real
+  // per-instance scale) — `F` accepts either.
+  const roadGate = (wpos: NV2, margin: F): void => {
     if (!road) return;
     const rs = road.sampleBaked(wpos);
     If(rs.halfW.greaterThan(0.01).and(rs.dist.lessThan(rs.halfW.add(margin))), () => {
@@ -665,11 +689,57 @@ export async function runScatter(
       Return();
     });
     const h2 = cellHash2(cell, sE ^ 0x15bd);
+    const isRock = cls.greaterThanEqual(int(VegClass.Boulder));
+    // moved up from below the variant/decay block: scale must be known
+    // before the extent-aware road gate (Track C3) that follows.
+    const scale = isRock.select(
+      h2.y.pow(2).mul(1.9).add(0.5),
+      h2.y.mul(0.6).add(0.7),
+    );
+
+    // extent-aware road exclusion (Track C3, owner-reported: a log lying
+    // across the road). roadGate(wpos, 1.2) above only tested the instance
+    // CENTER; gate Log instances at BOTH placed endpoints — the SAME sample
+    // positions RoadField.vegAudit checks (yaw/half formula identical), so
+    // gate and audit read the same bilerped field values and cannot
+    // disagree near curved roads. A center-footprint test alone is not
+    // enough: dist is a 2 m-texel bilerped field, and across a multi-metre
+    // log the interpolation error can exceed the flat clearance. Stumps are
+    // compact — center test with root-flare footprint suffices. Boulder/
+    // Slab keep the flat margin only.
+    const yaw = cellHash(cell, sE ^ 0x2a6b).mul(TAU);
+    const roadHit = (p: NV2, margin: F): NB => {
+      if (!road) return bool(false) as unknown as NB;
+      const rs = road.sampleBaked(p);
+      return rs.halfW.greaterThan(0.01).and(rs.dist.lessThan(rs.halfW.add(margin))) as NB;
+    };
+    const logHalf = scale.mul(LOG_LEN_MAX / 2);
+    const logOff = vec2(yaw.cos().mul(logHalf), yaw.sin().mul(logHalf).negate());
+    If(
+      cls
+        .equal(int(VegClass.Log))
+        .and(
+          roadHit(wpos.add(logOff), 1.2)
+            .or(roadHit(wpos.sub(logOff), 1.2))
+            .or(roadHit(wpos, logHalf.add(1.2))),
+        ),
+      () => {
+        Return();
+      },
+    );
+    If(
+      cls
+        .equal(int(VegClass.Stump))
+        .and(roadHit(wpos, scale.mul(STUMP_RADIUS_MAX).add(1.2))),
+      () => {
+        Return();
+      },
+    );
+
     const mJit = m.add(h2.x.mul(0.3).sub(0.15));
     const decay = mJit
       .greaterThan(0.62)
       .select(float(2), mJit.greaterThan(0.35).select(float(1), float(0)));
-    const isRock = cls.greaterThanEqual(int(VegClass.Boulder));
     // boulder/slab variants are context-keyed like StoneL: 0/1 pale bedrock
     // blocks on exposed rock, scree slopes, or dry pale soil (everywhere
     // the splat is pale — they must match the ground), 2/3 dark mossy
@@ -690,14 +760,10 @@ export async function runScatter(
         isRock.select(rockV, cellHash(cell, sE ^ 0x44d7).mul(4).floor().min(3)),
       );
 
-    const scale = isRock.select(
-      h2.y.pow(2).mul(1.9).add(0.5),
-      h2.y.mul(0.6).add(0.7),
-    );
     // rocks bed deeper on slopes — a perched block on an incline floats
     const bed = s.slope.mul(0.9).add(1);
     const sink = isRock.select(scale.mul(0.28).mul(bed), float(0.08));
-    const yaw = cellHash(cell, sE ^ 0x2a6b).mul(TAU);
+    // yaw hoisted above the extent-aware road gate (Track C3)
     const idF = float(cls).mul(8).add(variant);
 
     append(

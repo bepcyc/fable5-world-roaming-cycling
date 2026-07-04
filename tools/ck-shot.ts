@@ -9,6 +9,11 @@
  *     --power 260 --settle 300 --w 1600 --h 900 --out shots/wip/m152/x.png
  *
  * Prints ride.kmh100/grade1000 so downhill spots can be picked by sweep.
+ *
+ * --burst N (default 1): after the normal shot, capture N-1 more frames in
+ * the same boot, advancing --burstGap (default 3) frames between each, and
+ * write them alongside --out with -b0, -b1, ... suffixes before the
+ * extension. Omit --burst (or pass 1) for identical single-shot behavior.
  */
 
 import { LAAS_ORIGIN } from './launch';
@@ -36,6 +41,12 @@ function parseArgs(argv: string[]): Args {
 const str = (v: string | boolean | undefined): string | undefined =>
   typeof v === 'string' ? v : undefined;
 
+// insert -bN before the extension: shots/x.png, 2 -> shots/x-b2.png
+function burstPath(out: string, i: number): string {
+  const dot = out.lastIndexOf('.');
+  return dot === -1 ? `${out}-b${i}` : `${out.slice(0, dot)}-b${i}${out.slice(dot)}`;
+}
+
 async function main(): Promise<void> {
   const a = parseArgs(process.argv.slice(2));
   const cls = str(a['cls']) ?? 'gravel-fine';
@@ -46,6 +57,8 @@ async function main(): Promise<void> {
   const h = Number(str(a['h']) ?? 900);
   const out = str(a['out']) ?? 'shots/wip/m152/ck-shot.png';
   const extra = str(a['extra']) ?? '';
+  const burstN = Number(str(a['burst']) ?? 1);
+  const burstGap = Number(str(a['burstGap']) ?? 3);
 
   const { browser } = await launchWebGPUReal();
   const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
@@ -87,6 +100,18 @@ async function main(): Promise<void> {
   console.log(`[ck-shot] ${cls}@${frac} ${power}W → ${kmh.toFixed(1)} km/h, grade ${grade.toFixed(1)}%`);
   await page.screenshot({ path: out as `${string}.png`, type: 'png' });
   console.log(`[ck-shot] wrote ${out}`);
+
+  if (burstN > 1) {
+    const written: string[] = [];
+    for (let i = 0; i < burstN; i++) {
+      if (i > 0) await settle(burstGap);
+      const path = burstPath(out, i);
+      await page.screenshot({ path: path as `${string}.png`, type: 'png' });
+      written.push(path);
+    }
+    console.log(`[ck-shot] burst wrote: ${written.join(', ')}`);
+  }
+
   await browser.close();
 }
 

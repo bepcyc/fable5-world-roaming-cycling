@@ -98,8 +98,10 @@ export class FlyCamera {
   private lastMouseAt = -1e9;
   /** ride pose provider — called DURING update so the camera always renders
    *  the freshest fixed-step interpolation (BikeRig installs it) */
-  rideDriver: ((out: { x: number; y: number; z: number; heading: number }) => void) | null = null;
-  private rideOut = { x: 0, y: 0, z: 0, heading: 0 };
+  rideDriver:
+    | ((out: { x: number; y: number; z: number; heading: number; roll: number }) => void)
+    | null = null;
+  private rideOut = { x: 0, y: 0, z: 0, heading: 0, roll: 0 };
   // jump input buffer: keydown-edge timestamp — a tap shorter than a frame
   // still jumps on the next grounded update (≤150 ms grace)
   private jumpAt = -1;
@@ -345,7 +347,10 @@ export class FlyCamera {
       this.pitch += pt * (1 - Math.exp(-dt * RIDE_ALIGN_RATE * 0.6));
     }
     this.basePos.copy(this.ridePos);
-    this.applyRotation(0);
+    // eye rolls a fraction of the bike lean; fades out during free-look so a
+    // world-stable gaze off to the side never tilts the horizon
+    const align = Math.max(Math.cos(this.yaw - this.rideHeading), 0);
+    this.applyRotation(this.rideOut.roll * align);
     this.camera.position.copy(this.basePos);
     this.camera.updateMatrixWorld();
   }

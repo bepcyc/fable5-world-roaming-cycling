@@ -25,6 +25,31 @@ import type { KeyboardPowerSource, SensorSource } from './Sensors';
 import { MODE_LIMITS, surfaceDef, surfaceName, type RideMode } from './SurfaceMatrix';
 
 const EYE_SADDLE = 1.62; // m — seated eye height
+const G = 9.81; // m/s² — centripetal lean denominator
+// --- Track B "ride feel" (pose-only; BikeSolver physics untouched) --------
+// B1 eye-Y suspension: one-pole low-pass on the raw ground-eye height so the
+// eye floats over carve micro-steps instead of snapping vertex to vertex.
+const SUSP_RATE = 5; // one-pole rate 1/s (?ridesusp= override; ≤0 disables)
+const SUSP_DEV_MAX = 0.2; // m — suspended eye clamped to raw ± this
+// B2 eye roll: the eye takes a small fraction of the bike's cornering lean
+// plus a share of the road bank (superelevation), never the full lean.
+const ROLL_LEAN_FRAC = 0.35; // fraction of bike lean the eye rolls (?rideroll=)
+const ROLL_BANK_K = 0.6; // road-bank contribution (?ridebank=)
+const ROLL_MAX = 0.08; // rad — hard cap on eye roll
+const ROLL_RATE = 4; // exp-damp rate 1/s toward roll target
+const RIDE_YAWRATE_RATE = 5; // exp-damp rate 1/s for the pose yaw-rate estimate
+// B6 look-ahead trajectory (pure pursuit toward a point down the route)
+const TRAJ_LOOK_S = 1.2; // seconds of speed to look ahead (?ridelook=)
+const TRAJ_LOOK_MIN = 6; // m
+const TRAJ_LOOK_MAX = 25; // m
+const TRAJ_PURSUIT_K = 3.5; // proportional yaw-rate gain on heading error
+const TRAJ_ALAT_MAX = 4.5; // m/s² — lateral-accel budget capping yaw rate
+const TRAJ_YAWRATE_FLOOR = 0.9; // rad/s — min yaw-rate cap at speed
+const TRAJ_ERR_SNAP = 0.5; // rad — above this the cap releases (U-turn resync)
+const APEX_MAX = 0.5; // m — max lateral apex cut (?rideapex=; 0 disables)
+const APEX_MARGIN = 0.35; // m — keep this clear of the lane edge
+const APEX_WIN_S = 0.8; // seconds of speed for the apex smoothing window
+const APEX_RATE = 6; // exp-damp rate 1/s into the pose offset
 const MOUNT_MAX_DIST = 30; // m — nearest road within this or bike is refused
 const JUNCTION_BASE_M = 45; // chooser appears at max(this, v * 5.5) meters
 const JUNCTION_LEAD_S = 5.5;
@@ -81,6 +106,9 @@ export interface RideState {
   note: string | null;
   /** P5: nearest impassable point on the default route ahead (null = clear) */
   hazard: HazardAhead | null;
+  /** B4: signed road bank at the ridden point (+ raises the outside) —
+   *  the cockpit sits on the banked surface */
+  bank: number;
 }
 
 export class BikeRig {
@@ -110,6 +138,26 @@ export class BikeRig {
   // coarse ?dt values: pose-delta speed integrates exactly)
   private posePrev = { x: 0, y: 0, z: 0, heading: 0 };
   private poseCur = { x: 0, y: 0, z: 0, heading: 0 };
+  // --- Track B ride-feel state (pose generation only) ---------------------
+  // B1: suspended eye-Y (one-pole); B2: eye roll (fixed-step pair + smoother);
+  // B6: pure-pursuit heading + apex offset. Runtime-tunable knobs mirror the
+  // ?ride* query params and the __laasDbg.rideFeel setters.
+  private suspY: number | null = null;
+  private rollSm = 0;
+  private rollPrev = 0;
+  private rollCur = 0;
+  private lastFixedHeading: number | null = null;
+  private yawRateSm = 0;
+  private headingCur = 0;
+  private offX = 0;
+  private offZ = 0;
+  private bank = 0;
+  private suspRate = SUSP_RATE;
+  private rollLeanFrac = ROLL_LEAN_FRAC;
+  private rollBankK = ROLL_BANK_K;
+  private trajOn = true;
+  private lookS = TRAJ_LOOK_S;
+  private apexMax = APEX_MAX;
 
   constructor(
     engine: Engine,
@@ -151,7 +199,55 @@ export class BikeRig {
       let dh = c.heading - p.heading;
       dh = Math.atan2(Math.sin(dh), Math.cos(dh));
       out.heading = p.heading + dh * a;
+      out.roll = this.rollPrev + (this.rollCur - this.rollPrev) * a;
     };
+
+    // ride-feel knobs: ?ride* query params (read once here, pattern
+    // Cockpit.ts) then live-tunable via __laasDbg.rideFeel setters
+    const q = new URLSearchParams(window.location.search);
+    const num = (k: string, d: number): number => {
+      const v = q.get(k);
+      const n = v === null ? NaN : parseFloat(v);
+      return Number.isFinite(n) ? n : d;
+    };
+    this.suspRate = num('ridesusp', SUSP_RATE);
+    this.rollLeanFrac = num('rideroll', ROLL_LEAN_FRAC);
+    this.rollBankK = num('ridebank', ROLL_BANK_K);
+    this.lookS = num('ridelook', TRAJ_LOOK_S);
+    this.apexMax = num('rideapex', APEX_MAX);
+    this.trajOn = q.get('ridetraj') !== '0';
+    const dbg =
+      (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
+    dbg['rideFeel'] = {
+      setRoll: (k: number): void => {
+        this.rollLeanFrac = k;
+      },
+      setBank: (k: number): void => {
+        this.rollBankK = k;
+      },
+      setSusp: (rate: number): void => {
+        this.suspRate = rate;
+      },
+      setTraj: (on: boolean): void => {
+        this.trajOn = on;
+      },
+      setLook: (s: number): void => {
+        this.lookS = s;
+      },
+      setApex: (m: number): void => {
+        this.apexMax = m;
+      },
+      state: (): { rollMrad: number; eyeDevMm: number; offMm: number; hdgErrMrad: number } => {
+        const cc = this.engine.stats.counters;
+        return {
+          rollMrad: cc['ride.rollMrad'] ?? 0,
+          eyeDevMm: cc['ride.eyeDevMm'] ?? 0,
+          offMm: cc['ride.offMm'] ?? 0,
+          hdgErrMrad: cc['ride.hdgErrMrad'] ?? 0,
+        };
+      },
+    };
+    (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg;
   }
 
   get riding(): boolean {
@@ -177,6 +273,7 @@ export class BikeRig {
       junction: this.junction,
       note: this.note,
       hazard: this.hazard,
+      bank: this.bank,
     };
   }
 
@@ -225,6 +322,16 @@ export class BikeRig {
   private seedPose(x: number, y: number, z: number, heading: number): void {
     this.posePrev = { x, y, z, heading };
     this.poseCur = { x, y, z, heading };
+    // ride-feel state starts settled on the seed pose (no snap on mount)
+    this.suspY = y;
+    this.rollSm = 0;
+    this.rollPrev = 0;
+    this.rollCur = 0;
+    this.lastFixedHeading = heading;
+    this.yawRateSm = 0;
+    this.headingCur = heading;
+    this.offX = 0;
+    this.offZ = 0;
     this.fly.beginRide(x, y, z, heading);
   }
 
@@ -406,17 +513,112 @@ export class BikeRig {
       this.hazard = this.scanHazard();
     }
 
-    // pose: probed ground carries the carved road surface (+bank is visual
-    // only for now — cockpit lean lands with M1.5)
+    // ---- pose generation: Track B "ride feel" (pose-only; the physics above
+    // is already integrated). Heading = pure-pursuit toward a look-ahead
+    // point; position = center-line + small apex offset; eye Y = suspended
+    // over the (offset) carved surface; roll = a fraction of lean + bank.
     const sm2 = this.graph.sample(this.edge, this.s);
-    const g2 = this.probe(sm2.x, sm2.z);
+    const e2 = this.graph.edges[this.edge];
+    const v = out.v;
+    const tangentHeading = this.heading(sm2.tx, sm2.tz);
+
+    // B6 heading — pure pursuit. ?ridetraj=0 restores the exact legacy
+    // tangent heading; low speed / imminent dead end falls back to tangent.
+    let hdgErr = 0;
+    if (this.trajOn && v >= 0.5) {
+      const L = Math.max(TRAJ_LOOK_MIN, Math.min(v * this.lookS, TRAJ_LOOK_MAX));
+      const tgt = this.walkAhead(this.edge, this.s, this.dir, L);
+      if (tgt.reached >= 2) {
+        // bearing to target in the SAME frame as heading() (atan2(-x, -z))
+        const bearing = Math.atan2(-(tgt.x - sm2.x), -(tgt.z - sm2.z));
+        let err = bearing - this.headingCur;
+        err = Math.atan2(Math.sin(err), Math.cos(err));
+        hdgErr = err;
+        const cap = Math.max(TRAJ_YAWRATE_FLOOR, TRAJ_ALAT_MAX / Math.max(v, 3));
+        let rate = err * TRAJ_PURSUIT_K;
+        // inside the snap band, hold the lateral-accel cap; a big error
+        // (U-turn / teleport) releases it so the view resyncs within ~30°
+        if (Math.abs(err) <= TRAJ_ERR_SNAP) rate = Math.max(Math.min(rate, cap), -cap);
+        const h = this.headingCur + rate * dt;
+        this.headingCur = Math.atan2(Math.sin(h), Math.cos(h));
+      } else {
+        this.headingCur = tangentHeading;
+      }
+    } else {
+      this.headingCur = tangentHeading;
+    }
+
+    // B2 eye roll — yaw-rate fed from the ACTUAL pose heading (headingCur),
+    // so anticipated lean comes for free. Bank sign: bank raises the OUTSIDE
+    // of a curve, so in a correctly superelevated corner the bank term AGREES
+    // with the lean term; if they fight on a hairpin, flip the *this.dir on
+    // the bank term below.
+    if (this.lastFixedHeading === null) this.lastFixedHeading = this.headingCur;
+    let dh = this.headingCur - this.lastFixedHeading;
+    dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+    this.lastFixedHeading = this.headingCur;
+    this.yawRateSm += (dh / dt - this.yawRateSm) * (1 - Math.exp(-dt * RIDE_YAWRATE_RATE));
+    const lean = Math.max(Math.min((v * this.yawRateSm) / G, 0.2), -0.2);
+    const rollTarget = Math.max(
+      Math.min(this.rollLeanFrac * lean + this.rollBankK * sm2.bank * this.dir, ROLL_MAX),
+      -ROLL_MAX,
+    );
+    this.rollSm += (rollTarget - this.rollSm) * (1 - Math.exp(-dt * ROLL_RATE));
+    this.rollPrev = this.rollCur;
+    this.rollCur = this.rollSm;
+
+    // B6 apex — nudge the ridden line toward the average of a point behind,
+    // here, and a point ahead, bounded by the lane half-width. Disabled by
+    // ?ridetraj=0 or ?rideapex=0 (offset relaxes/snaps to the center-line).
+    if (this.trajOn && this.apexMax > 0 && v >= 0.5 && e2) {
+      const W = Math.max(5, Math.min(v * APEX_WIN_S, 14));
+      const sBehind = Math.max(Math.min(this.s - W * this.dir, e2.length), 0);
+      const behind = this.graph.sample(this.edge, sBehind);
+      const ahead = this.walkAhead(this.edge, this.s, this.dir, W);
+      const avgX = (behind.x + sm2.x + ahead.x) / 3;
+      const avgZ = (behind.z + sm2.z + ahead.z) / 3;
+      let ox = avgX - sm2.x;
+      let oz = avgZ - sm2.z;
+      const cap = Math.max(0, Math.min(this.apexMax, e2.cls.halfWidth - APEX_MARGIN));
+      const mag = Math.hypot(ox, oz);
+      if (mag > cap && mag > 1e-6) {
+        ox = (ox / mag) * cap;
+        oz = (oz / mag) * cap;
+      }
+      const ak = 1 - Math.exp(-dt * APEX_RATE);
+      this.offX += (ox - this.offX) * ak;
+      this.offZ += (oz - this.offZ) * ak;
+    } else if (this.trajOn && this.apexMax > 0) {
+      // too slow to carve — relax the offset back to the center-line
+      const ak = 1 - Math.exp(-dt * APEX_RATE);
+      this.offX += (0 - this.offX) * ak;
+      this.offZ += (0 - this.offZ) * ak;
+    } else {
+      this.offX = 0;
+      this.offZ = 0;
+    }
+
+    // probe the OFFSET point so the eye height + bank track the surface the
+    // wheels actually ride, not the center-line
+    const px = sm2.x + this.offX;
+    const pz = sm2.z + this.offZ;
+    const g2 = this.probe(px, pz);
+
+    // B1 eye-Y suspension — one-pole over the raw ground eye, clamped so the
+    // eye never floats more than SUSP_DEV_MAX off the true surface
+    const yRaw = g2.ground + EYE_SADDLE;
+    if (this.suspRate <= 0 || this.suspY === null) {
+      this.suspY = yRaw;
+    } else {
+      this.suspY += (yRaw - this.suspY) * (1 - Math.exp(-dt * this.suspRate));
+      this.suspY = Math.max(Math.min(this.suspY, yRaw + SUSP_DEV_MAX), yRaw - SUSP_DEV_MAX);
+    }
+
+    // B4: expose the ridden bank so the cockpit sits on the banked surface
+    this.bank = sm2.bank * this.dir;
+
     this.posePrev = this.poseCur;
-    this.poseCur = {
-      x: sm2.x,
-      y: g2.ground + EYE_SADDLE,
-      z: sm2.z,
-      heading: this.heading(sm2.tx, sm2.tz),
-    };
+    this.poseCur = { x: px, y: this.suspY, z: pz, heading: this.headingCur };
 
     // counters — probes assert against THESE (dashboard parity check)
     const c = this.engine.stats.counters;
@@ -427,6 +629,11 @@ export class BikeRig {
     c['ride.blocked'] = out.blocked ? 1 : 0;
     c['ride.stalled'] = out.stalled ? 1 : 0;
     c['ride.mode'] = MODE_ORDER.indexOf(this.mode);
+    // Track B ride-feel telemetry (__laasDbg.rideFeel.state mirrors these)
+    c['ride.rollMrad'] = Math.round(this.rollCur * 1000);
+    c['ride.eyeDevMm'] = Math.round((this.suspY - yRaw) * 1000);
+    c['ride.offMm'] = Math.round(Math.hypot(this.offX, this.offZ) * 1000);
+    c['ride.hdgErrMrad'] = Math.round(hdgErr * 1000);
   }
 
   /**
@@ -485,6 +692,68 @@ export class BikeRig {
       }
     }
     return null;
+  }
+
+  /**
+   * B6: walk `dist` metres down the route from (edge, s, dir) and return the
+   * point reached — the same route the rider will take (current chooser pick
+   * at the FIRST junction, straightest exit beyond; dead ends stop early with
+   * reached < dist). Graph-only (no ground probes); clones the scanHazard
+   * traversal, one edge per iteration, guarded to ≤8 crossings.
+   */
+  private walkAhead(
+    startEdge: number,
+    startS: number,
+    startDir: 1 | -1,
+    dist: number,
+  ): { x: number; z: number; reached: number } {
+    let edge = startEdge;
+    let s = startS;
+    let dir: 1 | -1 = startDir;
+    let travelled = 0;
+    let firstJunction = true;
+    let guard = 8;
+    const here = this.graph.sample(edge, s);
+    let px = here.x;
+    let pz = here.z;
+    while (travelled < dist && guard-- > 0) {
+      const e = this.graph.edges[edge];
+      if (!e) break;
+      const remain = dir > 0 ? e.length - s : s;
+      const step = dist - travelled;
+      if (step < remain) {
+        s += step * dir;
+        travelled += step;
+        const sm = this.graph.sample(edge, s);
+        px = sm.x;
+        pz = sm.z;
+        break;
+      }
+      // reach the node at the end of this edge
+      travelled += remain;
+      s = dir > 0 ? e.length : 0;
+      const endSm = this.graph.sample(edge, s);
+      px = endSm.x;
+      pz = endSm.z;
+      const nodeId = dir > 0 ? e.b : e.a;
+      const exits = this.graph.exits(nodeId, e.id);
+      if (exits.length === 0) break; // dead end — stop, reached < dist
+      let arm: { edge: number; end: 0 | 1 } | null = null;
+      if (firstJunction && this.junction && exits.length >= 2) {
+        const opts = this.buildOptions(nodeId, e.id);
+        arm = opts[this.junction.selected]?.arm ?? null;
+      }
+      if (!arm) {
+        const inSm = this.graph.sample(e.id, dir > 0 ? e.length : 0);
+        arm = this.straightestExit(nodeId, e.id, inSm.tx * dir, inSm.tz * dir);
+      }
+      if (!arm) break;
+      firstJunction = false;
+      edge = arm.edge;
+      dir = arm.end === 0 ? 1 : -1;
+      s = dir > 0 ? 0 : (this.graph.edges[edge]?.length ?? 0);
+    }
+    return { x: px, z: pz, reached: travelled };
   }
 
   private straightestExit(

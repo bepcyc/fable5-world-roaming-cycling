@@ -129,6 +129,13 @@ const GRID_N = 512; // 8 m cells over the 4096 m world
 const RESAMPLE_M = 14; // final polyline step
 const MAX_CUT_FILL = 6; // profile may deviate ≤ this from terrain (no viaducts)
 const TARGET_KM = 30.5;
+// Track C2: asphalt gap-retry ladder. MAX_CUT_FILL only bounds the vertical
+// PROFILE (buildRoute), not the A* search — so relaxing it would not help
+// the pathfinder. The actual A* knob is the grade hard-block factor (2.2×
+// by default, see route()'s gradeMul); the retry ladder relaxes THAT.
+const ASPHALT_RETRY_GRADE_MUL = 2.8;
+const ASPHALT_RETRY_JITTER_CELLS = 3; // ± grid cells, seeded jitter
+const ASPHALT_RETRY_ATTEMPTS = 3;
 
 interface Cell {
   x: number;
@@ -201,10 +208,22 @@ class Heap {
 export class RoadNetwork {
   readonly routes: RoadRoute[];
   readonly totalLength: number;
+  /**
+   * diagnostics for probes (Track C2): ASPHALT-only gap/cut counters.
+   * probe-roads asserts BOTH stay at 0 — asphalt has the lowest maxGrade
+   * (0.12) and is the class the retry ladder in generate()/runPlan exists
+   * for; any survivor here means the ladder was exhausted and the route
+   * silently split (see runPlan's flush()).
+   */
+  readonly counters: { asphaltGaps: number; asphaltCuts: number };
 
-  private constructor(routes: RoadRoute[]) {
+  private constructor(
+    routes: RoadRoute[],
+    counters: { asphaltGaps: number; asphaltCuts: number } = { asphaltGaps: 0, asphaltCuts: 0 },
+  ) {
     this.routes = routes;
     this.totalLength = routes.reduce((a, r) => a + r.length, 0);
+    this.counters = counters;
   }
 
   /** flattened segment view (probes / GPU upload) */
@@ -290,6 +309,9 @@ export class RoadNetwork {
     threads = 1,
   ): Promise<RoadNetwork> {
     const rng = seed.rng('roads');
+    // Track C2 counters (probe-roads asserts both are 0 — see RoadNetwork.counters)
+    let asphaltGaps = 0;
+    let asphaltCuts = 0;
     const hAt = (x: number, z: number): number => bilerp(terr.heights, terr.res, x, z);
     const wAt = (x: number, z: number): number => bilerp(terr.waterY, terr.simRes, x, z);
     // conservative water level: MIN over the 3×3 nearest waterY texels.
@@ -449,7 +471,10 @@ export class RoadNetwork {
       markCells(r.pts.map((p) => toCell(p.x, p.z)));
     };
 
-    const route = (from: Cell, to: Cell, spec: RoadClassSpec): Cell[] | null => {
+    // gradeMul: hard-block factor over spec.maxGrade (default 2.2×). The
+    // Track C2 asphalt retry ladder (below) calls this again with a relaxed
+    // factor before giving up on a leg — see asphaltRetry().
+    const route = (from: Cell, to: Cell, spec: RoadClassSpec, gradeMul = 2.2): Cell[] | null => {
       gScore.fill(Infinity);
       came.fill(-1);
       const heap = new Heap();
@@ -478,11 +503,12 @@ export class RoadNetwork {
           if (nd > CLASSIFY.FORD_MAX_DEPTH_M) continue; // deep water: hard block
           const dist = dl * cellM;
           const grade = Math.abs((gh[ni] as number) - ch) / dist;
-          // hard block ≈ 2.2× the class grade: ragged alpine flanks exceed
-          // the design grade on single 8 m steps even where a serpentine is
-          // buildable — the quadratic penalty keeps the AVERAGE at the class
-          // limit and the profile grade-clamp guarantees the ridden gradient
-          if (grade > spec.maxGrade * 2.2) continue;
+          // hard block ≈ gradeMul× the class grade (default 2.2×): ragged
+          // alpine flanks exceed the design grade on single 8 m steps even
+          // where a serpentine is buildable — the quadratic penalty keeps
+          // the AVERAGE at the class limit and the profile grade-clamp
+          // guarantees the ridden gradient
+          if (grade > spec.maxGrade * gradeMul) continue;
           // strong quadratic: pushes the optimum toward LONG shallow
           // contour tacks — wider serpentine sweeps (owner ask), and grades
           // that match real training climbs (avg 6–9%, ramps to the class
@@ -513,6 +539,40 @@ export class RoadNetwork {
       }
       cells.reverse();
       return cells.length > 1 ? cells : null;
+    };
+
+    /**
+     * Track C2 retry ladder for ASPHALT legs only (asphalt's maxGrade=0.12
+     * is the lowest of all classes, so it's the leg most likely to dead-end
+     * on a genuinely hard flank). Rungs, in order — first success wins:
+     *   1. same endpoints, hard-block factor relaxed 2.2× → gradeMul
+     *      ASPHALT_RETRY_GRADE_MUL (MAX_CUT_FILL only bounds the vertical
+     *      profile in buildRoute, not this A* search, so relaxing it would
+     *      not help the pathfinder — the grade hard-block IS the A* knob)
+     *   2. jittered target cell (± ASPHALT_RETRY_JITTER_CELLS grid cells,
+     *      seeded from the 'roads' rng stream — deterministic),
+     *      ASPHALT_RETRY_ATTEMPTS attempts at the same relaxed factor
+     * Returns null only once every rung has failed; the caller then logs an
+     * ASPHALT GAP and falls back to the existing split behaviour.
+     */
+    const asphaltRetry = (from: Cell, to: Cell, spec: RoadClassSpec): Cell[] | null => {
+      const relaxed = route(from, to, spec, ASPHALT_RETRY_GRADE_MUL);
+      if (relaxed) return relaxed;
+      for (let attempt = 0; attempt < ASPHALT_RETRY_ATTEMPTS; attempt++) {
+        const jTo: Cell = {
+          x: Math.min(
+            Math.max(to.x + (rng.int(ASPHALT_RETRY_JITTER_CELLS * 2 + 1) - ASPHALT_RETRY_JITTER_CELLS), 4),
+            N - 5,
+          ),
+          z: Math.min(
+            Math.max(to.z + (rng.int(ASPHALT_RETRY_JITTER_CELLS * 2 + 1) - ASPHALT_RETRY_JITTER_CELLS), 4),
+            N - 5,
+          ),
+        };
+        const leg = route(from, jTo, spec, ASPHALT_RETRY_GRADE_MUL);
+        if (leg) return leg;
+      }
+      return null;
     };
 
     /**
@@ -775,6 +835,7 @@ export class RoadNetwork {
         };
         if (lakeAt(i) && i + 1 < n && lakeAt(i + 1)) {
           const q = poly[i] as number[];
+          if (spec.surfaceId === SurfaceId.Asphalt) asphaltCuts++; // Track C2 counter
           console.warn(
             `[roads] ${name} CUT at i=${i}/${n} (${(q[0] as number).toFixed(0)},${(q[1] as number).toFixed(0)}) ` +
               `wMin=${wAtMin(q[0] as number, q[1] as number).toFixed(1)} ys=${(ys[i] as number).toFixed(1)} terr=${(terrY[i] as number).toFixed(1)}`,
@@ -927,12 +988,28 @@ export class RoadNetwork {
         }
         cells = [];
       };
+      // Track C2: asphalt is a single fragile route (maxGrade 0.12, lowest of
+      // all classes) — a silent split there is a physical gap in THE road,
+      // not a side trail, so it gets the retry ladder before falling back
+      // to the existing split behaviour that every other class still uses.
+      const isAsphalt = cls.surfaceId === SurfaceId.Asphalt;
       for (let i = 0; i < via.length - 1; i++) {
-        let leg = route(toCell(...(via[i] as [number, number])), toCell(...(via[i + 1] as [number, number])), cls);
+        const fromC = toCell(...(via[i] as [number, number]));
+        const toC = toCell(...(via[i + 1] as [number, number]));
+        let leg = route(fromC, toC, cls);
+        if (!leg && isAsphalt) leg = asphaltRetry(fromC, toC, cls);
         if (!leg) {
-          console.warn(
-            `[roads] unroutable leg ${name}[${i}]: (${(via[i] as number[]).map((v) => v.toFixed(0)).join(',')}) → (${(via[i + 1] as number[]).map((v) => v.toFixed(0)).join(',')})`,
-          );
+          const from = (via[i] as number[]).map((val) => val.toFixed(0)).join(',');
+          const to = (via[i + 1] as number[]).map((val) => val.toFixed(0)).join(',');
+          if (isAsphalt) {
+            asphaltGaps++;
+            console.error(
+              `[roads] ASPHALT GAP ${name}[${i}]: (${from}) → (${to}) — retry ladder exhausted ` +
+                `(relaxed grade ${ASPHALT_RETRY_GRADE_MUL}× + ${ASPHALT_RETRY_ATTEMPTS} jittered targets), falling back to split`,
+            );
+          } else {
+            console.warn(`[roads] unroutable leg ${name}[${i}]: (${from}) → (${to})`);
+          }
           flush();
           continue;
         }
@@ -970,6 +1047,6 @@ export class RoadNetwork {
       extra++;
     }
 
-    return new RoadNetwork(routes);
+    return new RoadNetwork(routes, { asphaltGaps, asphaltCuts });
   }
 }

@@ -13,7 +13,11 @@
  *   6. veg exclusion: GPU audit — 0 trees/understory/extras/stones inside
  *      the surfaced width; ±8 m band counts must be > 0 (proves the baked
  *      field is alive — grass shares the SAME sampler, so a live field +
- *      zero hard-gated instances verifies the grass gate transitively)
+ *      zero hard-gated instances verifies the grass gate transitively).
+ *      Track C3: 'extras' Log instances are checked at BOTH placed
+ *      endpoints, not just the center — a fallen log can have its center
+ *      clear of the road while its several-metre length still crosses it
+ *      (RoadField.vegAudit header)
  *
  * Usage: npx tsx tools/probe-roads.ts [--shots] [--verbose]
  *   --shots: 4 composed road bookmarks (asphalt valley / gravel forest /
@@ -27,6 +31,11 @@ import { CLASSIFY, SURFACE_NAMES, SurfaceId } from '../src/ride/SurfaceMatrix';
 
 const CONFORM_M = 0.15;
 const MIN_KM = 30;
+// Track C2: adjacency threshold for the asphalt single-connected-component
+// check — a real routing gap (a leg that failed and got split off) is
+// hundreds of metres wide; a genuine junction/continuation sits within a
+// few metres, so this stays far below the smallest plausible real gap.
+const TOUCH_M = 25;
 const has = (name: string): boolean => process.argv.includes(`--${name}`);
 
 interface PtSample {
@@ -47,6 +56,53 @@ interface RouteData {
   halfWidth: number;
   length: number;
   pts: PtSample[];
+}
+
+/**
+ * Track C2: union-find over route-part endpoints, using the same adjacency
+ * data probe-roads already reads (RouteData.pts). Two parts are joined if
+ * either endpoint of one lies within TOUCH_M of ANY point on the other —
+ * that's how a real junction (or a leg's continuation) looks; a silent
+ * gap-split (runPlan's flush()) leaves parts hundreds of metres apart.
+ * Returns the number of connected components among `parts`.
+ */
+function connectedComponents(parts: RouteData[]): number {
+  const n = parts.length;
+  if (n === 0) return 0;
+  const parent = Array.from({ length: n }, (_, i) => i);
+  const find = (x: number): number => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x] as number] as number;
+      x = parent[x] as number;
+    }
+    return x;
+  };
+  const union = (a: number, b: number): void => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+  const endpoints = (r: RouteData): PtSample[] =>
+    [r.pts[0], r.pts[r.pts.length - 1]].filter((p): p is PtSample => p !== undefined);
+  const touches = (a: RouteData, b: RouteData): boolean => {
+    for (const e of endpoints(a)) {
+      for (const q of b.pts) {
+        if (Math.hypot(e.x - q.x, e.z - q.z) < TOUCH_M) return true;
+      }
+    }
+    for (const e of endpoints(b)) {
+      for (const q of a.pts) {
+        if (Math.hypot(e.x - q.x, e.z - q.z) < TOUCH_M) return true;
+      }
+    }
+    return false;
+  };
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (touches(parts[i] as RouteData, parts[j] as RouteData)) union(i, j);
+    }
+  }
+  return new Set(Array.from({ length: n }, (_, i) => find(i))).size;
 }
 
 async function main(): Promise<void> {
@@ -70,7 +126,7 @@ async function main(): Promise<void> {
   if (bootErr) throw new Error(`App reported fatal error:\n${bootErr}`);
   console.log(`[boot] ready in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
-  const routes = (await page.evaluate(() => {
+  const netData = (await page.evaluate(() => {
     (globalThis as unknown as { __name?: unknown }).__name ??= (t: unknown): unknown => t;
     const hf = (
       window as unknown as { __laasDbg?: { engine?: { heightfield?: unknown } } }
@@ -80,6 +136,8 @@ async function main(): Promise<void> {
       surfaceAtCpuRaw(x: number, z: number): number;
       roads: {
         totalLength: number;
+        // Track C2 diagnostics for probes — see RoadNetwork.counters
+        counters: { asphaltGaps: number; asphaltCuts: number };
         routes: {
           name: string;
           cls: { surfaceId: number; maxGrade: number; halfWidth: number };
@@ -89,30 +147,35 @@ async function main(): Promise<void> {
       } | null;
     };
     if (!hf.roads) return null;
-    return hf.roads.routes.map((r) => ({
-      name: r.name,
-      surfaceId: r.cls.surfaceId,
-      maxGrade: r.cls.maxGrade,
-      halfWidth: r.cls.halfWidth,
-      length: r.length,
-      pts: r.pts.map((p, i) => {
-        const nx = r.pts[i + 1];
-        const grade = nx
-          ? Math.abs(nx.y - p.y) / Math.max(Math.hypot(nx.x - p.x, nx.z - p.z), 1)
-          : 0;
-        return {
-          x: p.x,
-          z: p.z,
-          y: p.y,
-          ground: hf.heightAtCpu(p.x, p.z),
-          depth: hf.waterDepthAtCpu(p.x, p.z),
-          cls: hf.surfaceAtCpuRaw(p.x, p.z),
-          ford: p.ford,
-          grade,
-        };
-      }),
-    }));
-  })) as RouteData[] | null;
+    return {
+      asphaltGaps: hf.roads.counters.asphaltGaps,
+      asphaltCuts: hf.roads.counters.asphaltCuts,
+      routes: hf.roads.routes.map((r) => ({
+        name: r.name,
+        surfaceId: r.cls.surfaceId,
+        maxGrade: r.cls.maxGrade,
+        halfWidth: r.cls.halfWidth,
+        length: r.length,
+        pts: r.pts.map((p, i) => {
+          const nx = r.pts[i + 1];
+          const grade = nx
+            ? Math.abs(nx.y - p.y) / Math.max(Math.hypot(nx.x - p.x, nx.z - p.z), 1)
+            : 0;
+          return {
+            x: p.x,
+            z: p.z,
+            y: p.y,
+            ground: hf.heightAtCpu(p.x, p.z),
+            depth: hf.waterDepthAtCpu(p.x, p.z),
+            cls: hf.surfaceAtCpuRaw(p.x, p.z),
+            ford: p.ford,
+            grade,
+          };
+        }),
+      })),
+    };
+  })) as { asphaltGaps: number; asphaltCuts: number; routes: RouteData[] } | null;
+  const routes = netData?.routes ?? null;
 
   let pass = true;
   const check = (name: string, ok: boolean, detail: string): void => {
@@ -135,6 +198,26 @@ async function main(): Promise<void> {
     ]) {
       check(`class routed: ${SURFACE_NAMES[id]}`, classes.has(id), '');
     }
+
+    // ---- Track C2: asphalt must be ONE road, zero gap/cut events ----------
+    const asphaltParts = routes.filter((r) => r.surfaceId === SurfaceId.Asphalt);
+    const asphaltComponents = connectedComponents(asphaltParts);
+    check(
+      'asphalt: single connected component',
+      asphaltParts.length > 0 && asphaltComponents === 1,
+      `${asphaltParts.length} part(s) → ${asphaltComponents} component(s)` +
+        (asphaltParts.length ? ` [${asphaltParts.map((r) => r.name).join(', ')}]` : ''),
+    );
+    check(
+      'asphalt: zero ASPHALT GAP events',
+      netData !== null && netData.asphaltGaps === 0,
+      `${netData ? netData.asphaltGaps : 'missing (netData null)'}`,
+    );
+    check(
+      'asphalt: zero CUT events',
+      netData !== null && netData.asphaltCuts === 0,
+      `${netData ? netData.asphaltCuts : 'missing (netData null)'}`,
+    );
 
     // junction mask: a point close to a DIFFERENT route's centerline may be
     // legally re-carved/re-stamped by that road — exclude from strict checks
@@ -245,8 +328,13 @@ async function main(): Promise<void> {
     check('veg audit hook', false, 'roadAudit missing');
   } else {
     console.log(`[audit] ${JSON.stringify(audit)}`);
+    // all classes asserted at 0 on the surfaced width; 'extras' is the one
+    // that matters most here — TerrainScene wires its bufB through, so this
+    // count already reflects RoadField.vegAudit's Log-by-extents check
+    // (Track C3), not just centers.
     for (const layer of ['trees', 'under', 'extras', 'stones']) {
-      check(`veg on road: ${layer}`, (audit[layer] ?? -1) === 0, `${audit[layer]}`);
+      const label = layer === 'extras' ? 'extras (logs by extents)' : layer;
+      check(`veg on road: ${label}`, (audit[layer] ?? -1) === 0, `${audit[layer]}`);
     }
     check('audit field alive: trees ±8 m band', (audit['treesBand'] ?? 0) > 0, `${audit['treesBand']}`);
     check('audit field alive: stones ±8 m band', (audit['stonesBand'] ?? 0) > 0, `${audit['stonesBand']}`);

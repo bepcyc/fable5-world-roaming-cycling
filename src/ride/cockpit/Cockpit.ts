@@ -164,7 +164,7 @@ export class Cockpit {
     // cornering lean: balance the centripetal acceleration. Capped LOW:
     // real riders lean the bike, not their eye line — past ~0.2 rad the
     // near forearm sweeps across the lens as a giant blob (owner report)
-    const leanTarget = Math.max(Math.min((v * this.yawRateSm) / G, 0.2), -0.2);
+    const leanTarget = Math.max(Math.min((v * this.yawRateSm) / G + st.bank, 0.2), -0.2);
     this.leanSm += (leanTarget - this.leanSm) * (1 - Math.exp(-dt * 4.5));
     // cadence rocking (one full L/R sway per crank revolution)
     const rpm = this.source()?.read().cadenceRpm ?? 0;
