@@ -44,6 +44,22 @@ async function boot(): Promise<void> {
   bootUI.set(0.02, 'probing WebGPU');
   const diag = await probeWebGPU();
   hooks.diag = diag;
+  // DEV repro: `?limitcap=mobile` caps diag.limits to WebGPU's guaranteed
+  // floor (≈ a mobile GPU) so the desktop reproduces tablet-only device-loss.
+  // buildRequiredLimits() then requests these, and the device enforces them.
+  if (diag.ok && new URLSearchParams(location.search).get('limitcap') === 'mobile') {
+    const floor: Record<string, number> = {
+      maxStorageBuffersPerShaderStage: 8,
+      maxStorageTexturesPerShaderStage: 4,
+      maxStorageBufferBindingSize: 128 << 20,
+      maxBufferSize: 256 << 20,
+    };
+    for (const [k, v] of Object.entries(floor)) {
+      if (diag.limits[k] !== undefined) diag.limits[k] = Math.min(diag.limits[k] as number, v);
+    }
+    // eslint-disable-next-line no-console
+    console.warn('[laas] limitcap=mobile — diag.limits capped to floor', floor);
+  }
   if (!diag.ok) {
     failLoud('WebGPU unavailable — LAAS has no fallback by design', [
       diag.reason ?? 'unknown reason',

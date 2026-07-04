@@ -513,16 +513,30 @@ export async function runFlowRivers(
     // (still lakes vs streaming rivers).
     const spd = isLake.select(float(0), sB);
     flowDir.element(i).assign(g.div(g.length().max(1e-5)).mul(spd));
-    // moisture source: lakes + marshes + rivers + residual erosion water
-    const marsh = lakeD.greaterThan(MARSH_DELTA).select(float(0.8), float(0));
-    const src = isLake
-      .select(float(1), max(sB.mul(0.85), marsh))
-      .add(clamp(erosionWater.element(i).mul(2), 0, 0.35));
-    moistA.element(i).assign(clamp(src, 0, 1));
   })().compute(N);
   carveK.setName('riverCarve');
   opts.onProgress?.('hydrology: carving rivers', 0.72);
   await renderer.computeAsync(carveK);
+
+  // moisture source, split out of riverCarve so carve stays at 8 storage
+  // buffers per compute stage (the mobile floor is maxStorageBuffersPerShaderStage
+  // = 8; carve+moisture was 10 and hard-failed CreateBindGroupLayout → device
+  // loss on Adreno/PowerVR — see `just run-mobile`). Equivalent: flowStrength is
+  // post-carve here (isLake→1, else the same `sB` the inline version used), so
+  // the non-lake branch reads exactly the old value.
+  const moistureSrcK = guard(() => {
+    const { i } = cellXY();
+    const lakeD = lakeDepthB.element(i).toVar();
+    const isLake = lakeD.greaterThan(LAKE_DELTA);
+    const marsh = lakeD.greaterThan(MARSH_DELTA).select(float(0.8), float(0));
+    const s = flowStrength.element(i);
+    const src = isLake
+      .select(float(1), max(s.mul(0.85), marsh))
+      .add(clamp(erosionWater.element(i).mul(2), 0, 0.35));
+    moistA.element(i).assign(clamp(src, 0, 1));
+  })().compute(N);
+  moistureSrcK.setName('moistureSrc');
+  await renderer.computeAsync(moistureSrcK);
 
   // --- 3d. talus relax: carved walls collapse to angle of repose --------------
   // The carve (and any residual erosion notching) leaves near-vertical cell

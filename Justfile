@@ -50,6 +50,73 @@ run-rxgpu:
       --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan \
       --new-window http://localhost:5173/
 
+# run on LAN Wi-Fi for a phone/tablet. Plain HTTP (no TLS cert). WebGPU + Web
+# Bluetooth need a SECURE CONTEXT, which a LAN IP over http is not — so ONCE per
+# client browser, whitelist the origin:
+#   chrome://flags/#unsafely-treat-insecure-origin-as-secure
+#   → paste http://<IP>:5173 → Enabled → relaunch that browser
+# Then open  http://<IP>:5173/?nogate=1  (?nogate=1 skips BrowserGate, which
+# blocks tablets). Prints the exact IP/flag/URL on start. Ctrl+C stops.
+run-lan: deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    IP="${LAN_IP:-$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')}"
+    echo "── LAN mode ─────────────────────────────────────────────"
+    echo "  1) in the tablet's Chrome open:"
+    echo "     chrome://flags/#unsafely-treat-insecure-origin-as-secure"
+    echo "     add  http://${IP}:5173  → Enabled → relaunch Chrome"
+    echo "  2) then open:  http://${IP}:5173/?nogate=1"
+    echo "─────────────────────────────────────────────────────────"
+    LAN=1 npm run dev
+
+# Mobile profile = ?preset=low (half-res grids: heightRes 2048 / simRes 1024)
+# + ?dpr=1. The engine is verified to boot the full world with ZERO WebGPU
+# errors under the COMPLETE mobile floor-limit set (`?limitcap=mobile` on real
+# Chrome+GPU) — the ≤8 storage-buffer river-carve split (FlowRivers.ts) is what
+# unblocks Adreno/PowerVR. What can't be proven off-device: sustained FPS,
+# thermal, GPU-memory OOM — confirm those on the actual phone/tablet.
+
+# Galaxy Tab S8 Ultra (Snapdragon 8 Gen 1, Adreno 730). Lowest-risk target:
+# WebGPU is default-on in Chrome ≥121 on Android 12+ for Adreno (Qualcomm).
+run-samsung: deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    IP="${LAN_IP:-$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')}"
+    echo "── Galaxy Tab S8 Ultra · Adreno 730 ─────────────────────"
+    echo "  needs: Chrome for Android ≥121, Android 12+  (WebGPU default-on)"
+    echo "  1) tablet Chrome → chrome://flags/#unsafely-treat-insecure-origin-as-secure"
+    echo "     add  http://${IP}:5173  → Enabled → relaunch Chrome"
+    echo "  2) sanity: chrome://gpu → WebGPU = 'Hardware accelerated'"
+    echo "  3) open:  http://${IP}:5173/?nogate=1&preset=low&dpr=1"
+    echo "─────────────────────────────────────────────────────────"
+    LAN=1 npm run dev
+
+# Pixel 10 Pro (Tensor G5, Imagination PowerVR DXT-48-1536). Higher-risk:
+# WebGPU on PowerVR only shipped in Chrome ≥139 and needs Android 16, and those
+# drivers are newer/less proven. If WebGPU is missing/unstable there it is the
+# device's browser+GPU support (verify chrome://gpu), not this build — limits
+# are respected. NB: Android 16 "Advanced Protection Mode" disables WebGPU.
+run-pixel: deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    IP="${LAN_IP:-$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')}"
+    echo "── Pixel 10 Pro · Tensor G5 / PowerVR ───────────────────"
+    echo "  needs: Chrome for Android ≥139, Android 16  (PowerVR WebGPU is newer)"
+    echo "  1) phone Chrome → chrome://flags/#unsafely-treat-insecure-origin-as-secure"
+    echo "     add  http://${IP}:5173  → Enabled → relaunch Chrome"
+    echo "  2) sanity: chrome://gpu → WebGPU = 'Hardware accelerated'"
+    echo "     (if not: update Chrome; ensure Advanced Protection Mode is OFF)"
+    echo "  3) open:  http://${IP}:5173/?nogate=1&preset=low&dpr=1"
+    echo "─────────────────────────────────────────────────────────"
+    LAN=1 npm run dev
+
+# stop a dev/preview server holding :5173 or :5174 (orphaned or backgrounded).
+# `just run`/`just run-lan` are foreground — normally just Ctrl+C them.
+stop:
+    #!/usr/bin/env bash
+    pids="$( { lsof -ti tcp:5173 -sTCP:LISTEN 2>/dev/null; lsof -ti tcp:5174 -sTCP:LISTEN 2>/dev/null; } | sort -u )"
+    if [ -n "$pids" ]; then kill $pids && echo "stopped: $pids"; else echo "nothing listening on :5173/:5174"; fi
+
 # strict TypeScript check (the repo's only automated gate)
 typecheck: deps
     npm run typecheck

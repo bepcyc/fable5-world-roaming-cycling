@@ -6,7 +6,7 @@
 
 import { ACESFilmicToneMapping, PerspectiveCamera, Scene } from 'three';
 import { TimestampQuery, WebGPURenderer } from 'three/webgpu';
-import { buildRequiredLimits } from './Diagnostics';
+import { buildRequiredLimits, failLoud } from './Diagnostics';
 import { installMaterialKeyMemo } from '../render/ThreePatches';
 import { installPositionInvariance } from '../render/VegPrepass';
 import { GpuProfiler } from './GpuProfiler';
@@ -98,6 +98,43 @@ export class Engine {
           console.error('[laas] WebGPU uncaptured error:', e.error.message);
         }
       };
+      // Device loss is the mobile failure surface (OOM on unified memory, or a
+      // GPU-watchdog reset under thermal throttle). Desktop rarely hits it.
+      // 'destroyed' is the intentional teardown on page unload — ignore it.
+      void device.lost.then((info) => {
+        if (info.reason === 'destroyed') return;
+        failLoud('WebGPU device lost', [
+          `${info.reason}: ${info.message || '(no message)'}`,
+          '',
+          'On phones/tablets this is almost always GPU out-of-memory or a',
+          'thermal/watchdog reset under load. Try a lighter profile:',
+          '  • ?preset=low (half-res grids)   • ?dpr=1 (or lower)',
+          'and confirm chrome://gpu shows WebGPU "Hardware accelerated".',
+        ]);
+      });
+      // DEV (`?limitcap=mobile`): dump the ACTUAL device limits so we can prove
+      // the whole device — not just the 4 storage limits — is at the mobile
+      // floor while verifying the world boots clean.
+      if (new URLSearchParams(location.search).get('limitcap') === 'mobile') {
+        const L = device.limits;
+        // eslint-disable-next-line no-console
+        console.log(
+          '[laas] limitcap device.limits:',
+          JSON.stringify({
+            maxStorageBuffersPerShaderStage: L.maxStorageBuffersPerShaderStage,
+            maxStorageBufferBindingSize: L.maxStorageBufferBindingSize,
+            maxBufferSize: L.maxBufferSize,
+            maxStorageTexturesPerShaderStage: L.maxStorageTexturesPerShaderStage,
+            maxComputeWorkgroupStorageSize: L.maxComputeWorkgroupStorageSize,
+            maxComputeInvocationsPerWorkgroup: L.maxComputeInvocationsPerWorkgroup,
+            maxUniformBufferBindingSize: L.maxUniformBufferBindingSize,
+            maxSampledTexturesPerShaderStage: L.maxSampledTexturesPerShaderStage,
+            maxBindGroups: L.maxBindGroups,
+            maxColorAttachments: L.maxColorAttachments,
+            maxTextureDimension2D: L.maxTextureDimension2D,
+          }),
+        );
+      }
     }
     const dprCap = params.dpr ?? Math.min(window.devicePixelRatio, 1.5);
     renderer.setPixelRatio(dprCap);
