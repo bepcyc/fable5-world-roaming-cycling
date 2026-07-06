@@ -19,6 +19,8 @@ import {
 } from 'three/webgpu';
 import { canopyAt } from '../gpu/passes/Scatter';
 import {
+  Fn,
+  If,
   cameraPosition,
   clamp,
   float,
@@ -331,20 +333,32 @@ export class TerrainTiles {
       mat.alphaTest = 0.5;
     }
 
-    // Shift+W surface overlay (live uniform): flat per-class palette painted as
-    // UNLIT emissive so classification reads independent of sun/shadow, plus the
-    // real polygon wireframe (triangle edges of THIS patch grid). Off
-    // (surfaceDbgU=0) leaves natural shading untouched.
+    // Shift+C surface overlay (live uniform): flat per-class palette painted as
+    // UNLIT emissive + the real polygon wireframe of THIS patch grid.
+    // GATED BY A COHERENT If(uniform) BRANCH: when off, the GPU SKIPS the whole
+    // overlay compute (palette + 2× fwidth wireframe) — the frame costs exactly
+    // what it did before the overlay existed. A plain uniform-mix computed the
+    // overlay every frame regardless, and that unconditional cost tipped a live
+    // ultrawide frame past the AMD GPU timeout on toggle → device wedge/reset
+    // (2026-07-06). The branch is uniform ⇒ no divergence, derivatives legal.
     {
       const u = surfaceDbgU as unknown as NF;
-      const prevEmis = (mat.emissiveNode as NV3 | null) ?? vec3(0);
-      mat.colorNode = (mat.colorNode as unknown as NV3).mul(u.oneMinus());
-      // patch-local grid coords: integer at every vertex row/col of the mesh
+      const baseEmis = (mat.emissiveNode as NV3 | null) ?? vec3(0);
       const segs = PATCH_SEGS + 2;
       const gc = positionLocal.xz.add(0.5 + s).div(1 + 2 * s).mul(segs);
-      const edge = polyWire(gc);
-      const fill = mix(prevEmis, shading.surfaceDebugNode, u);
-      mat.emissiveNode = mix(fill, vec3(0.015), u.mul(edge).mul(0.85));
+      // albedo scale is a cheap multiply — leave it as a plain blend
+      mat.colorNode = (mat.colorNode as unknown as NV3).mul(u.oneMinus());
+      // the EXPENSIVE part (palette + 2× fwidth wireframe) lives inside a
+      // coherent If so the GPU skips it entirely when off. If MUST run inside a
+      // Fn stack — calling it at material-assembly level throws (null stack).
+      mat.emissiveNode = Fn(() => {
+        const e = (baseEmis as NV3).toVar();
+        If(u.greaterThan(0.5), () => {
+          const edge = polyWire(gc);
+          e.assign(mix(shading.surfaceDebugNode, vec3(0.015), edge.mul(0.85)));
+        });
+        return e;
+      })();
     }
 
     this.mesh = new InstancedMesh(patch, mat, MAX_TILES);
@@ -403,12 +417,19 @@ export class TerrainTiles {
       (farMat as unknown as { setupLightMap: () => unknown }).setupLightMap = () =>
         new IrradianceNode(farIrr as unknown as ConstructorParameters<typeof IrradianceNode>[0]);
     }
-    // Shift+W surface overlay on the far shell (natural classes only; no roads)
+    // Shift+C surface overlay on the far shell (natural classes only; no roads).
+    // Same coherent-branch gating as the near tiles — zero cost when off.
     {
       const u = surfaceDbgU as unknown as NF;
-      const prevEmis = (farMat.emissiveNode as NV3 | null) ?? vec3(0);
+      const baseEmis = (farMat.emissiveNode as NV3 | null) ?? vec3(0);
       farMat.colorNode = (farMat.colorNode as unknown as NV3).mul(u.oneMinus());
-      farMat.emissiveNode = mix(prevEmis, farShading.surfaceDebugNode, u);
+      farMat.emissiveNode = Fn(() => {
+        const e = (baseEmis as NV3).toVar();
+        If(u.greaterThan(0.5), () => {
+          e.assign(farShading.surfaceDebugNode);
+        });
+        return e;
+      })();
     }
     this.farShell = new Mesh(ring, farMat);
     this.farShell.frustumCulled = false;

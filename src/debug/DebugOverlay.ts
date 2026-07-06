@@ -52,7 +52,7 @@ export class DebugOverlay {
     ].join(';');
     document.body.appendChild(this.el);
 
-    // Shift+W surface-overlay legend (top-left). Hidden until the mode is on.
+    // Shift+C surface-overlay legend (top-left). Hidden until the mode is on.
     this.badge = document.createElement('div');
     this.badge.id = 'surfdbg-legend';
     this.badge.style.cssText = [
@@ -66,7 +66,7 @@ export class DebugOverlay {
     const rgb = (c: readonly number[]): string =>
       `rgb(${Math.round((c[0] as number) * 255)},${Math.round((c[1] as number) * 255)},${Math.round((c[2] as number) * 255)})`;
     this.badge.innerHTML =
-      '<b>surface overlay</b> — Shift+W<br>' +
+      '<b>surface overlay</b> — Shift+C<br>' +
       LEGEND.map(
         ([label, key]) =>
           `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;vertical-align:-1px;background:${rgb(SURF_COL[key])};border:1px solid #0006"></span>${label}`,
@@ -80,8 +80,9 @@ export class DebugOverlay {
         this.visible = !this.visible;
         this.el.style.display = this.visible ? 'block' : 'none';
       }
-      // Shift+W: toggle the surface-debug overlay (defeats FlyCamera forward)
-      if (e.code === 'KeyW' && e.shiftKey) {
+      // Shift+C: toggle the surface-debug overlay. C (not W) so the toggle
+      // never doubles as FlyCamera forward / ride pedal (KeyW is movement).
+      if (e.code === 'KeyC' && e.shiftKey) {
         e.preventDefault();
         this.badge.style.display = toggleSurfaceDbg() ? 'block' : 'none';
       }

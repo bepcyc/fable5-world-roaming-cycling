@@ -124,11 +124,11 @@ async function boot(): Promise<void> {
   }
 
   new Hud(engine, params);
-  // ?surfdbg=1 boots the Shift+W surface overlay on (tools/shoot.ts repro)
+  // ?surfdbg=1 boots the Shift+C surface overlay on (tools/shoot.ts repro)
   if (new URLSearchParams(window.location.search).get('surfdbg') === '1') {
     setSurfaceDbg(true);
   }
-  new DebugOverlay(engine, fly, params); // Shift+D: live scene-repro params; Shift+W: surface overlay
+  new DebugOverlay(engine, fly, params); // Shift+D: live scene-repro params; Shift+C: surface overlay
   // ride layer (M1.3): power source seam → dashboard + bike physics.
   // ?ride=demo = fake sensors (DEMO badge); ?ridedev=1 = keyboard bike
   // (DEV badge); no source = bikes locked, dashboard shows "—".

@@ -354,18 +354,28 @@ export function waterMaterial(
     mat.opacityNode = float(1);
   }
 
-  // Shift+W surface overlay: paint water bright red + world grid, fully opaque,
+  // Shift+C surface overlay: paint water bright red + world grid, fully opaque,
   // UNLIT — so it reads as an unmistakable red sheet wherever the engine calls
   // this fragment "water" (surfaceDbgU is the shared live toggle).
   {
+    // Coherent-branch gating (see TerrainTiles): the EXPENSIVE wireframe fwidth
+    // lives inside a Fn+If so the GPU skips it when off — the unconditional
+    // version's extra per-fragment work over the whole clipmap contributed to
+    // the 2026-07-06 GPU wedge. Cheap blends (albedo scale, opacity) stay plain.
     const u = surfaceDbgU as unknown as NF;
-    // water clipmap verts are integer cell coords → its own polygon wireframe,
-    // which makes a floating/tilted "gel" sheet unmistakable (the mesh tilts)
-    const edge = polyWire(positionLocal.xz);
-    const red = mix(palette(SURF_COL.water), vec3(0.015), edge.mul(0.85));
+    const baseEmis = mat.emissiveNode as unknown as NV3;
     mat.colorNode = (mat.colorNode as unknown as NV3).mul(u.oneMinus());
-    mat.emissiveNode = mix(mat.emissiveNode as unknown as NV3, red, u);
     mat.opacityNode = mix(mat.opacityNode as unknown as NF, float(1), u);
+    mat.emissiveNode = Fn(() => {
+      const e = baseEmis.toVar();
+      If(u.greaterThan(0.5), () => {
+        // water clipmap verts are integer cell coords → its own polygon
+        // wireframe; a floating/tilted "gel" sheet reads clearly (mesh tilts)
+        const edge = polyWire(positionLocal.xz);
+        e.assign(mix(palette(SURF_COL.water), vec3(0.015), edge.mul(0.85)));
+      });
+      return e;
+    })();
   }
 
   return mat;

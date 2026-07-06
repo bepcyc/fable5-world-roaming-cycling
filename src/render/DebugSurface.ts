@@ -4,7 +4,7 @@
  * world-space grid, so classification defects (misclassified water, hairline
  * "micro roads", stray sticks) jump out at a glance.
  *
- * Driven by ONE live uniform (surfaceDbgU 0/1) so Shift+W toggles it without
+ * Driven by ONE live uniform (surfaceDbgU 0/1) so Shift+C toggles it without
  * rebuilding any material graph. `?surfdbg=1` sets it at boot (tools/shoot.ts
  * repro). Terrain classes are painted from the SAME continuous weights the
  * natural shader uses (TerrainMaterial); water is the WaterSurface mesh; both

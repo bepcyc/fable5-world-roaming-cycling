@@ -78,7 +78,7 @@ export interface TerrainShading {
   roughnessNode: NF;
   /** final shading normal in WORLD space (for probe irradiance) */
   worldNormalNode: NV3;
-  /** Shift+W surface-debug color: flat per-class palette + world grid, painted
+  /** Shift+C surface-debug color: flat per-class palette + world grid, painted
    *  from the same class weights as colorNode. Applied by the caller as an
    *  UNLIT emissive when surfaceDbgU is on. */
   surfaceDebugNode: NV3;
@@ -268,7 +268,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   col = mix(col, snowCol, snowW);
   col = col.mul(macroTint.add(1));
 
-  // ---------- Shift+W surface-debug palette (natural classes) --------------------
+  // ---------- Shift+C surface-debug palette (natural classes) --------------------
   // Same weights as the composite above, but flat separable colors. Road
   // classes override this inside the road block below; the grid + return
   // happen just before the shading result is assembled.
