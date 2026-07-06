@@ -194,6 +194,14 @@ export class Heightfield {
     progress(0.74, 'roads: routing network');
     const roadHeights = new Float32Array(await renderer.getArrayBufferAsync(hf.height.value));
     hf.cpuWaterY = new Float32Array(await renderer.getArrayBufferAsync(hf.waterY.value));
+    // moisture mirror: the router's wetland/mud-avoidance signal (the mud
+    // classifier is moisture-driven — water depth alone cannot see bogs)
+    const roadMoisture = new Float32Array(
+      await renderer.getArrayBufferAsync(hf.flow.moisture.value),
+    );
+    const roadRiverDepth = new Float32Array(
+      await renderer.getArrayBufferAsync(hf.flow.riverDepth.value),
+    );
     hf.roads = await RoadNetwork.generate(
       seed,
       mp,
@@ -202,6 +210,8 @@ export class Heightfield {
         heights: roadHeights,
         simRes: cfg.simRes,
         waterY: hf.cpuWaterY,
+        moisture: roadMoisture,
+        riverDepth: roadRiverDepth,
       },
       resolveThreads(params.threads),
     );
@@ -209,6 +219,17 @@ export class Heightfield {
     hf.roadField = new RoadField(hf.roads);
     await hf.roadField.carve(renderer, hf.height, hf.res);
     await hf.roadField.bake(renderer);
+
+    // post-carve water reconcile (owner 2026-07-06: «прокапывание ямки
+    // СНАЧАЛА, потом кладите гель»): waterY freezes BEFORE the road carve
+    // lowers ground, so a cutting under a perched pond left the water
+    // hanging as a tilted sheet over the new cut. Re-run the containment
+    // clamp near roads against the CARVED terrain, then drop residual
+    // zero-depth films to dry; waterYFar + the CPU mirror are rebuilt after.
+    progress(0.8, 'water: post-carve reconcile');
+    await hf.reconcileWaterAfterCarve(renderer, roadHeights);
+    hf.waterYFar = await Heightfield.reduceWaterY(renderer, hf.waterY, cfg.simRes, 8);
+    hf.cpuWaterY = new Float32Array(await renderer.getArrayBufferAsync(hf.waterY.value));
 
     progress(0.82, 'terrain: deriving maps');
     await hf.rebuildDerivedMaps(renderer);
@@ -471,7 +492,216 @@ export class Heightfield {
     })().compute(res * res);
     copyK.setName('waterYCopy');
     await renderer.computeAsync([cliffK, copyK]);
+
+    // DIG-THE-PIT (owner directive 2026-07-06): water must sit IN the terrain,
+    // never perch ON it like gel. Two coupled passes on the SIM bed (mutated in
+    // place, BEFORE composeEroded — the dug channels flow into the terrain mesh
+    // and, downstream, into road routing which reads the composed height):
+    //
+    //  1. CLAMP the surface to its containment rim — a wet cell may not stand
+    //     above the LOWEST dry neighbour bed by more than SHORE_LAP, so a sheet
+    //     can never float over adjacent lower dry ground (the tilted-sheet
+    //     defect). Iterated 4× so the clamp walks down a slope of wet cells.
+    //  2. DIG the bed under every wet cell to at least MIN_DEPTH below the
+    //     (now contained) surface, guaranteeing a real basin/trench to hold the
+    //     water instead of a zero-depth film.
+    const SHORE_LAP = 0.4; // m the surface may lap above a dry neighbour bed
+    const MIN_DEPTH = 1.2; // m of water column carved under every wet cell
+    const clampK = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(res * res), () => {
+        Return();
+      });
+      const x = i.mod(res).toInt();
+      const y = i.div(res).toInt();
+      const xm = clamp(float(x).sub(1), 0, res - 1).toInt();
+      const xp = clamp(float(x).add(1), 0, res - 1).toInt();
+      const ym = clamp(float(y).sub(1), 0, res - 1).toInt();
+      const yp = clamp(float(y).add(1), 0, res - 1).toInt();
+      const b = bed.element(i);
+      const L = out.element(i).toVar();
+      const wetHere = L.greaterThan(b.sub(0.1));
+      const escape = float(1e9).toVar(); // lowest DRY-neighbour bed
+      const nbrs = [
+        [xm, y], [xp, y], [x, ym], [x, yp],
+        [xm, ym], [xp, ym], [xm, yp], [xp, yp],
+      ] as const;
+      for (const [ox, oy] of nbrs) {
+        const ni = (oy as NI).mul(res).add(ox as NI);
+        const nb = bed.element(ni);
+        const dry = out.element(ni).lessThan(nb.sub(0.1)); // submerged sentinel
+        escape.assign(dry.select(escape.min(nb), escape));
+      }
+      // clamp surface down to the rim (only where a real dry rim was found)
+      const capped = escape.lessThan(1e8).select(L.min(escape.add(SHORE_LAP)), L);
+      tmp.element(i).assign(wetHere.select(capped, L));
+    })().compute(res * res);
+    clampK.setName('waterYClamp');
+    for (let it = 0; it < 4; it++) {
+      await renderer.computeAsync([clampK, copyK]);
+    }
+    // dig the bed under water so the contained surface always has real depth
+    const digK = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(res * res), () => {
+        Return();
+      });
+      const b = bed.element(i);
+      const L = out.element(i);
+      const wetHere = L.greaterThan(b.sub(0.1));
+      bed.element(i).assign(wetHere.select(b.min(L.sub(MIN_DEPTH)), b));
+    })().compute(res * res);
+    digK.setName('waterYDig');
+    await renderer.computeAsync(digK);
     return out;
+  }
+
+  /**
+   * Post-carve water reconcile (owner directive 2026-07-06: dig the pit
+   * FIRST, then pour the gel). waterY is frozen before RoadField.carve
+   * mutates the full-res height, so a road cutting under a perched pond
+   * left the pond hanging over the new, lower ground — a tilted water
+   * sheet beside the road. Near roads (and ONLY where the carve actually
+   * LOWERED the ground under standing water) this pass:
+   *   1. re-runs the containment clamp against the CARVED terrain — the
+   *      pond surface drops to its new lowest dry rim;
+   *   2. dries residual zero-depth films so no shore-lap sliver survives
+   *      on the road cut.
+   * Fords are exempt (their water IS the crossing); everything farther
+   * than 40 m from a road corridor (max carve apron 26 m + slack) is
+   * untouched — reference water bodies cannot change.
+   */
+  private async reconcileWaterAfterCarve(
+    renderer: Renderer,
+    preCarveHeights: Float32Array,
+  ): Promise<void> {
+    const rf = this.roadField;
+    const wy = this.waterY;
+    if (!rf?.latBuf || !wy) return;
+    const res = this.simRes;
+    const fullRes = this.res;
+
+    // pre-carve full-res heights → sim-res mirror (CPU bilinear, boot-time)
+    const preSim = new Float32Array(res * res);
+    for (let z = 0; z < res; z++) {
+      for (let x = 0; x < res; x++) {
+        const gx = Math.min(Math.max(((x + 0.5) / res) * fullRes - 0.5, 0), fullRes - 1.001);
+        const gz = Math.min(Math.max(((z + 0.5) / res) * fullRes - 0.5, 0), fullRes - 1.001);
+        const x0 = Math.floor(gx);
+        const z0 = Math.floor(gz);
+        const fx = gx - x0;
+        const fz = gz - z0;
+        const at = (xx: number, zz: number): number =>
+          preCarveHeights[Math.min(zz, fullRes - 1) * fullRes + Math.min(xx, fullRes - 1)] ?? 0;
+        const t = at(x0, z0) * (1 - fx) + at(x0 + 1, z0) * fx;
+        const b = at(x0, z0 + 1) * (1 - fx) + at(x0 + 1, z0 + 1) * fx;
+        preSim[z * res + x] = t * (1 - fz) + b * fz;
+      }
+    }
+    const preBuf = instancedArray(preSim, 'float');
+
+    const bedPost = instancedArray(res * res, 'float');
+    const eligible = instancedArray(res * res, 'float');
+    const prepK = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(res * res), () => {
+        Return();
+      });
+      const x = i.mod(res).toInt();
+      const y = i.div(res).toInt();
+      const uv = vec2(float(x).add(0.5), float(y).add(0.5)).div(res);
+      const p = uv.sub(0.5).mul(WORLD_SIZE);
+      const carved = this.sampleHeightFrom(this.height, p);
+      bedPost.element(i).assign(carved);
+      const rs = rf.sampleBaked(p);
+      const dug = (preBuf.element(i) as NF).sub(carved).greaterThan(0.2);
+      const ok = rs.halfW
+        .greaterThan(0.01)
+        .and(rs.ford.lessThan(0.5))
+        .and(rs.dist.lessThan(40))
+        .and(dug);
+      eligible.element(i).assign(ok.select(float(1), float(0)));
+    })().compute(res * res);
+    prepK.setName('waterReconcilePrep');
+    await renderer.computeAsync(prepK);
+
+    const tmp = instancedArray(res * res, 'float');
+    const SHORE = 0.05; // rim lap over a road cut: essentially none
+    const clampK = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(res * res), () => {
+        Return();
+      });
+      const x = i.mod(res).toInt();
+      const y = i.div(res).toInt();
+      const xm = clamp(float(x).sub(1), 0, res - 1).toInt();
+      const xp = clamp(float(x).add(1), 0, res - 1).toInt();
+      const ym = clamp(float(y).sub(1), 0, res - 1).toInt();
+      const yp = clamp(float(y).add(1), 0, res - 1).toInt();
+      const b = bedPost.element(i);
+      const L = wy.element(i).toVar();
+      const wetHere = L.greaterThan(b.sub(0.05));
+      const escape = float(1e9).toVar();
+      const nbrs = [
+        [xm, y], [xp, y], [x, ym], [x, yp],
+        [xm, ym], [xp, ym], [xm, yp], [xp, yp],
+      ] as const;
+      for (const [ox, oy] of nbrs) {
+        const ni = (oy as NI).mul(res).add(ox as NI);
+        const nb = bedPost.element(ni);
+        const dry = wy.element(ni).lessThan(nb.sub(0.05));
+        escape.assign(dry.select(escape.min(nb), escape));
+      }
+      const capped = escape.lessThan(1e8).select(L.min(escape.add(SHORE)), L);
+      tmp.element(i).assign(
+        eligible.element(i).greaterThan(0.5).and(wetHere).select(capped, L),
+      );
+    })().compute(res * res);
+    clampK.setName('waterReconcileClamp');
+    const copyK = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(res * res), () => {
+        Return();
+      });
+      wy.element(i).assign(tmp.element(i));
+    })().compute(res * res);
+    copyK.setName('waterReconcileCopy');
+    for (let it = 0; it < 8; it++) {
+      await renderer.computeAsync([clampK, copyK]);
+    }
+
+    // residual films (depth < 8 cm over the carved ground) near roads → dry
+    const filmK = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(res * res), () => {
+        Return();
+      });
+      const x = i.mod(res).toInt();
+      const y = i.div(res).toInt();
+      const xm = clamp(float(x).sub(1), 0, res - 1).toInt();
+      const xp = clamp(float(x).add(1), 0, res - 1).toInt();
+      const ym = clamp(float(y).sub(1), 0, res - 1).toInt();
+      const yp = clamp(float(y).add(1), 0, res - 1).toInt();
+      const b = bedPost.element(i).toVar();
+      const bMin = b
+        .min(bedPost.element(y.mul(res).add(xm)))
+        .min(bedPost.element(y.mul(res).add(xp)))
+        .min(bedPost.element(ym.mul(res).add(x)))
+        .min(bedPost.element(yp.mul(res).add(x)))
+        .min(bedPost.element(ym.mul(res).add(xm)))
+        .min(bedPost.element(ym.mul(res).add(xp)))
+        .min(bedPost.element(yp.mul(res).add(xm)))
+        .min(bedPost.element(yp.mul(res).add(xp)));
+      const L = wy.element(i).toVar();
+      const wetHere = L.greaterThan(b.sub(0.05));
+      const thin = L.sub(b).lessThan(0.08);
+      tmp.element(i).assign(
+        eligible.element(i).greaterThan(0.5).and(wetHere).and(thin)
+          .select(bMin.sub(2), L),
+      );
+    })().compute(res * res);
+    filmK.setName('waterReconcileFilm');
+    await renderer.computeAsync([filmK, copyK]);
   }
 
   private static async reduceWaterY(

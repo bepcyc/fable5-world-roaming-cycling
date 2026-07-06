@@ -272,7 +272,8 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   const weather = new WeatherState(froxels, sunSky.atmosphere, clouds, sunSky, engine.scene);
   engine.onUpdate((_dt, wt) => weather.update(wt));
   // clickable settings (owner ask): weather / ToD / bike mode / key help
-  new OptionsMenu(ctx.hooks, weather, bootTod);
+  const optionsMenu = new OptionsMenu(ctx.hooks, weather, bootTod);
+  ctx.hooks.openSettings = () => optionsMenu.show();
 
   // HDR post stack: aerial perspective, clouds, GTAO, TRAA, bloom, exposure, grade
   ctx.progress(0.98, 'post: building pipeline');

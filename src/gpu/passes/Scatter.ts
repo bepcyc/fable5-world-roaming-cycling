@@ -376,6 +376,10 @@ export function canopyAt(tex: StorageTexture, wxz: NV2): NF {
  * same rule as sampleBaked being the one shared road sampler).
  */
 export const LOG_LEN_MAX = 5.2; // Deadfall.ts buildLog(): 2.6 + rng.float()*2.6
+/** VegLibrary branch pool: twigGeometry len ≤ 0.52 m × 6.5 xz bake scale.
+ *  Same role as LOG_LEN_MAX — worst-case base length for extent-aware road
+ *  gating of fallen branches (owner repro: sticks lying across the road). */
+export const BRANCH_LEN_MAX = 3.4;
 // Deadfall.ts buildStump(): r0 = 0.22 + rng.float()*0.14 → conservative max
 // root-flare radius (m). Stumps are compact (root ball, not a beam), so this
 // only nudges the flat extras margin — unlike the log's multi-metre
@@ -684,8 +688,11 @@ export async function runScatter(
       });
     });
 
-    // logs slide off steep ground; decay class follows moisture
-    If(cls.equal(int(VegClass.Log)).and(s.slope.greaterThan(0.5)), () => {
+    // logs slide off steep ground; decay class follows moisture. 0.38 (was
+    // 0.5): a 5 m rigid tube on a 0.5 slope floats ~1.3 m at the ends —
+    // owner-visible "палки, торчащие из склона" — lean is shear-based and
+    // cannot bed a lying log into the incline
+    If(cls.equal(int(VegClass.Log)).and(s.slope.greaterThan(0.38)), () => {
       Return();
     });
     const h2 = cellHash2(cell, sE ^ 0x15bd);
@@ -840,8 +847,10 @@ export async function runScatter(
       .mul(repose)
       .mul(float(1).sub(s.snow.mul(0.85)));
     // branches need ground that holds them — steep bare slopes grew
-    // floating white sticks (user-visible artifact)
-    const branchFlat = float(1).sub(smoothstep(0.45, 0.75, s.slope));
+    // floating white sticks (user-visible artifact). Tightened 0.45–0.75 →
+    // 0.28–0.5: a rigid multi-metre stick centered on a 0.5+ incline still
+    // arcs clear off the ground at both ends (owner repro, 2026-07-06)
+    const branchFlat = float(1).sub(smoothstep(0.28, 0.5, s.slope));
     const branchW = canopy.mul(0.6).mul(
       byBiome(s.bioId, [0, 0.2, 1, 1, 0.3, 0.7]),
     ).mul(branchFlat);
@@ -894,6 +903,27 @@ export async function runScatter(
     });
 
     const yaw = cellHash(cell, sS ^ 0x3d3d).mul(TAU);
+    // extent-aware road exclusion for BRANCHES (owner repro 2026-07-06:
+    // sticks lying across the road). Same rule as the extras kernel's Log
+    // gate: the flat roadGate(wpos, 0.4) above tests the CENTER only, but a
+    // branch is up to BRANCH_LEN_MAX × scale long — gate both placed
+    // endpoints with the same yaw convention (VegInstance: rx = x·cos+z·sin,
+    // rz = z·cos−x·sin ⇒ endpoint offset (cos·h, −sin·h)).
+    const branchHit = (p: NV2): NB => {
+      if (!road) return bool(false) as unknown as NB;
+      const rs = road.sampleBaked(p);
+      return rs.halfW.greaterThan(0.01).and(rs.dist.lessThan(rs.halfW.add(0.4))) as NB;
+    };
+    const brHalf = scale.mul(BRANCH_LEN_MAX / 2);
+    const brOff = vec2(yaw.cos().mul(brHalf), yaw.sin().mul(brHalf).negate());
+    If(
+      cls
+        .equal(int(VegClass.Branch))
+        .and(branchHit(wpos.add(brOff)).or(branchHit(wpos.sub(brOff)))),
+      () => {
+        Return();
+      },
+    );
     const idF = float(cls).mul(8).add(variant);
     append(
       stoneCount,

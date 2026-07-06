@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LAAS</title>
+    <link rel="preload" as="image" href="/splash/hero.webp" />
     <style>
       html, body {
         margin: 0;
@@ -60,6 +61,214 @@
         background: #5fae8f;
         transition: width 0.2s ease;
       }
+
+      /* ---- shared glass-menu design tokens (matches src/debug/OptionsMenu.ts) ---- */
+      :root {
+        --menu-accent: #5fae8f;
+        --menu-panel-bg: rgba(10, 14, 12, 0.82);
+        --menu-panel-border: rgba(255, 255, 255, 0.12);
+        --menu-text: #cfe3d6;
+        --menu-text-bright: #eaf6ee;
+        --menu-text-dim: #7d9c8d;
+      }
+
+      /* ---- splash / main menu (visible instantly — pure HTML+CSS, no JS wait) ---- */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2000;
+        overflow: hidden;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+      #splash[hidden] { display: none; }
+      #splash-bg {
+        position: absolute;
+        inset: -4%;
+        background: #0b0f0d center/cover no-repeat url('/splash/hero.webp');
+        animation: laas-kenburns 42s ease-in-out infinite alternate;
+      }
+      @keyframes laas-kenburns {
+        0%   { transform: scale(1.0) translate(0, 0); }
+        100% { transform: scale(1.07) translate(-1.2%, -0.8%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash-bg { animation: none; }
+      }
+      #splash-scrim {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, rgba(6, 9, 8, 0.88) 0%, rgba(6, 9, 8, 0.55) 34%, rgba(6, 9, 8, 0) 60%),
+          linear-gradient(0deg, rgba(6, 9, 8, 0.6) 0%, rgba(6, 9, 8, 0) 42%);
+      }
+      #splash-content {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 6vh 5vw;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 22px;
+        max-width: 460px;
+      }
+      #splash-title {
+        font-size: 32px;
+        letter-spacing: 0.4em;
+        color: var(--menu-text-bright);
+        text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
+      }
+      #splash-sub {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: var(--menu-text-dim);
+        margin-top: -14px;
+      }
+      .menu-col {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 100%;
+      }
+      .menu-btn {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 20px;
+        border-radius: 14px;
+        background: var(--menu-panel-bg);
+        border: 1px solid var(--menu-panel-border);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        color: var(--menu-text);
+        font: bold 13px/1.2 ui-monospace, Menlo, monospace;
+        letter-spacing: 0.14em;
+        cursor: pointer;
+        user-select: none;
+        transition: transform 0.16s, background 0.16s, border-color 0.16s, opacity 0.16s;
+      }
+      .menu-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+      .menu-btn:hover { background: rgba(24, 32, 28, 0.86); transform: translateX(4px); border-color: rgba(255, 255, 255, 0.22); }
+      .menu-btn.primary { border-color: rgba(95, 174, 143, 0.55); }
+      .menu-btn.primary:hover { border-color: var(--menu-accent); }
+      .menu-btn[data-disabled="1"] { opacity: 0.55; cursor: default; pointer-events: none; transform: none !important; }
+      #splash-hint {
+        font-size: 10.5px;
+        letter-spacing: 0.08em;
+        color: var(--menu-text-dim);
+        min-height: 14px;
+      }
+
+      /* "machine" settings drawer (graphics preset / cpu threads) — main menu only */
+      #msettings {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: flex-end;
+        padding: 6vh 5vw;
+      }
+      #msettings.on { display: flex; }
+      .msettings-card {
+        width: 340px;
+        max-width: 92vw;
+        background: var(--menu-panel-bg);
+        border: 1px solid var(--menu-panel-border);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-radius: 16px;
+        padding: 16px 18px 18px;
+        color: var(--menu-text);
+      }
+      .msettings-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font: bold 12px/1.2 ui-monospace, Menlo, monospace;
+        letter-spacing: 0.2em;
+        color: var(--menu-text-bright);
+        margin-bottom: 12px;
+      }
+      .msettings-x {
+        width: 26px; height: 26px; border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; color: var(--menu-text-dim);
+        font: 14px/1 ui-monospace, monospace;
+        border: 1px solid transparent;
+      }
+      .msettings-x:hover { color: var(--menu-text-bright); border-color: rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); }
+      .msettings-h {
+        font: bold 9.5px/1.2 ui-monospace, Menlo, monospace;
+        letter-spacing: 0.18em;
+        color: var(--menu-text-dim);
+        margin: 12px 0 7px;
+      }
+      .msettings-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+      .msettings-card-item {
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
+        padding: 9px 4px 7px; border-radius: 11px; min-height: 36px; justify-content: center;
+        background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(255, 255, 255, 0.09);
+        font: bold 9.5px/1.2 ui-monospace, Menlo, monospace; letter-spacing: 0.06em;
+        color: #9db8ab; cursor: pointer; user-select: none; transition: all 0.16s;
+        text-transform: uppercase;
+      }
+      .msettings-card-item:hover { background: rgba(255, 255, 255, 0.1); }
+      .msettings-card-item.sel {
+        color: #ffe9b0; border-color: rgba(255, 209, 102, 0.8);
+        background: linear-gradient(180deg, rgba(66, 56, 24, 0.55), rgba(46, 42, 22, 0.55));
+      }
+      .msettings-hint { font: 10px/1.4 ui-monospace, monospace; color: #ffb84d; margin-top: 10px; min-height: 13px; }
+      .msettings-seed-row { display: flex; gap: 7px; align-items: center; }
+      #msettings-seed-input {
+        flex: 1; min-width: 0; background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 11px;
+        color: #cfe3d6; font: bold 13px/1.2 ui-monospace, Menlo, monospace;
+        padding: 8px 10px; text-align: center;
+      }
+      #msettings-seed-input::-webkit-outer-spin-button,
+      #msettings-seed-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      .msettings-seed-btn {
+        padding: 9px 12px; border-radius: 11px; background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.09); color: #9db8ab; cursor: pointer;
+        font: bold 9.5px/1.2 ui-monospace, Menlo, monospace; letter-spacing: 0.06em;
+        text-transform: uppercase; user-select: none; transition: all 0.16s; white-space: nowrap;
+      }
+      .msettings-seed-btn:hover { background: rgba(255, 255, 255, 0.1); }
+      .msettings-seed-btn.primary { color: #ffe9b0; border-color: rgba(255, 209, 102, 0.5); }
+      .msettings-seed-btn.primary:hover { border-color: rgba(255, 209, 102, 0.8); }
+
+      /* pause overlay — no art, just a scrim over the frozen game frame */
+      #pause {
+        position: fixed;
+        inset: 0;
+        z-index: 1500;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(6, 9, 8, 0.6);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+      #pause.on { display: flex; }
+      #pause-card {
+        width: 300px;
+        background: var(--menu-panel-bg);
+        border: 1px solid var(--menu-panel-border);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-radius: 18px;
+        padding: 22px 22px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      #pause-title {
+        font: bold 14px/1.2 ui-monospace, monospace;
+        letter-spacing: 0.32em;
+        color: var(--menu-text-bright);
+        margin-bottom: 6px;
+      }
     </style>
   </head>
   <body>
@@ -69,6 +278,100 @@
       <div id="boot-msg">initializing</div>
       <div class="bar"><div id="boot-bar"></div></div>
     </div>
+
+    <!-- main menu: pure HTML+CSS so the art+buttons paint before main.ts runs -->
+    <div id="splash">
+      <div id="splash-bg"></div>
+      <div id="splash-scrim"></div>
+      <div id="splash-content">
+        <div id="splash-title">L A A S</div>
+        <div id="splash-sub">world-roaming cycling</div>
+        <div class="menu-col">
+          <button class="menu-btn primary" id="btn-start" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            <span id="btn-start-label">START</span>
+          </button>
+          <button class="menu-btn" id="btn-settings" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.2 12a7.2 7.2 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 00-2.1-1.2L14.3 3h-4l-.4 2.7a7.4 7.4 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7.3 7.3 0 000 2.4l-2 1.5 2 3.4 2.3-1c.6.5 1.4.9 2.1 1.2l.4 2.7h4l.4-2.7a7.4 7.4 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>
+            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+          </button>
+          <button class="menu-btn" id="btn-exit" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><path d="M12 7v5" stroke-linecap="round"/></svg>
+            <span data-i18n data-de="BEENDEN" data-ru="ВЫХОД">EXIT</span>
+          </button>
+        </div>
+        <div id="splash-hint"></div>
+      </div>
+
+      <div id="msettings">
+        <div class="msettings-card">
+          <div class="msettings-title">
+            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+            <div class="msettings-x" id="msettings-close">✕</div>
+          </div>
+          <div class="msettings-h" data-i18n data-de="GRAFIK (NEUSTART)" data-ru="ГРАФИКА (ПЕРЕЗАГРУЗКА)">GRAPHICS (RELOAD)</div>
+          <div class="msettings-row" id="msettings-preset"></div>
+          <div class="msettings-h" data-i18n data-de="SEED (NEUSTART)" data-ru="СИД (ПЕРЕЗАГРУЗКА)">SEED (RELOAD)</div>
+          <div class="msettings-seed-row">
+            <input type="number" id="msettings-seed-input" min="0" max="4294967295" step="1" />
+            <div class="msettings-seed-btn" id="msettings-seed-random">🎲</div>
+            <div class="msettings-seed-btn primary" id="msettings-seed-apply">APPLY</div>
+          </div>
+          <div class="msettings-h" data-i18n data-de="CPU-THREADS" data-ru="ПОТОКИ CPU">CPU THREADS</div>
+          <div class="msettings-row" id="msettings-threads"></div>
+          <div class="msettings-h" data-i18n data-de="SPRACHE" data-ru="ЯЗЫК">LANGUAGE</div>
+          <div class="msettings-row" id="msettings-language"></div>
+          <div class="msettings-hint" id="msettings-hint"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- in-game pause: ESC toggles; engine.paused freezes the frame beneath it -->
+    <div id="pause">
+      <div id="pause-card">
+        <div id="pause-title" data-i18n data-de="PAUSE" data-ru="ПАУЗА">PAUSE</div>
+        <div class="menu-col">
+          <button class="menu-btn primary" id="btn-resume" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            <span data-i18n data-de="FORTSETZEN" data-ru="ПРОДОЛЖИТЬ">RESUME</span>
+          </button>
+          <button class="menu-btn" id="btn-pause-settings" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.2 12a7.2 7.2 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 00-2.1-1.2L14.3 3h-4l-.4 2.7a7.4 7.4 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7.3 7.3 0 000 2.4l-2 1.5 2 3.4 2.3-1c.6.5 1.4.9 2.1 1.2l.4 2.7h4l.4-2.7a7.4 7.4 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>
+            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+          </button>
+          <button class="menu-btn" id="btn-mainmenu" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7M6 10v9h12v-9"/></svg>
+            <span data-i18n data-de="HAUPTMENÜ" data-ru="ГЛАВНОЕ МЕНЮ">MAIN MENU</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- pre-paint language promoter: keeps the splash flash-free for a
+         persisted non-English choice — must run synchronously, before the
+         deferred module script, against nodes already parsed above.
+         'laas.lang' must match I18n.ts's LANG_LS_KEY. -->
+    <script>
+      (function () {
+        try {
+          var q = new URLSearchParams(location.search).get('lang');
+          var lang = q === 'de' || q === 'ru' ? q : null;
+          if (!lang) {
+            var ls = localStorage.getItem('laas.lang');
+            if (ls === 'de' || ls === 'ru') lang = ls;
+          }
+          if (lang) {
+            var nodes = document.querySelectorAll('[data-i18n]');
+            for (var i = 0; i < nodes.length; i++) {
+              var v = nodes[i].getAttribute('data-' + lang);
+              if (v) nodes[i].textContent = v;
+            }
+          }
+        } catch (e) {
+          /* headless probes / storage-disabled — stay English */
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

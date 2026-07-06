@@ -62,6 +62,7 @@ import {
 } from 'three/tsl';
 import type { StorageTexture } from 'three/webgpu';
 import { PERIOD_FBM } from '../gpu/passes/NoiseBake';
+import { SURF_COL, palette, polyWire, surfaceDbgU } from './DebugSurface';
 import { bilerpVec2Buffer } from '../gpu/BufferSample';
 import { canopyAt } from '../gpu/passes/Scatter';
 import type { ProbeGI } from '../gpu/passes/ProbeGI';
@@ -351,6 +352,20 @@ export function waterMaterial(
     mat.colorNode = vec3(0);
     mat.emissiveNode = paint;
     mat.opacityNode = float(1);
+  }
+
+  // Shift+W surface overlay: paint water bright red + world grid, fully opaque,
+  // UNLIT — so it reads as an unmistakable red sheet wherever the engine calls
+  // this fragment "water" (surfaceDbgU is the shared live toggle).
+  {
+    const u = surfaceDbgU as unknown as NF;
+    // water clipmap verts are integer cell coords → its own polygon wireframe,
+    // which makes a floating/tilted "gel" sheet unmistakable (the mesh tilts)
+    const edge = polyWire(positionLocal.xz);
+    const red = mix(palette(SURF_COL.water), vec3(0.015), edge.mul(0.85));
+    mat.colorNode = (mat.colorNode as unknown as NV3).mul(u.oneMinus());
+    mat.emissiveNode = mix(mat.emissiveNode as unknown as NV3, red, u);
+    mat.opacityNode = mix(mat.opacityNode as unknown as NF, float(1), u);
   }
 
   return mat;

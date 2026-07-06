@@ -32,6 +32,10 @@ export class Engine {
   worldTime = 0;
   /** wall-clock elapsed (sec) since start */
   elapsed = 0;
+  /** runtime pause (menu/pause-screen) — dt is clamped to 0 so worldTime,
+   *  fixed-step physics and updateFns all hold still; render/stats/settle
+   *  keep running so a frozen frame stays visible under the pause overlay */
+  paused = false;
 
   /** when set, the frame loop renders through this instead of renderer.render */
   post: { render(): void; meter(renderer: WebGPURenderer): void } | null = null;
@@ -191,7 +195,7 @@ export class Engine {
     const t = timeMs / 1000;
     const rawDt = this.lastT === null ? 1 / 60 : t - this.lastT;
     this.lastT = t;
-    const dt = Math.min(Math.max(rawDt, 0), 0.1);
+    const dt = this.paused ? 0 : Math.min(Math.max(rawDt, 0), 0.1);
     this.elapsed += dt;
     if (!this.params.freeze) this.worldTime += dt;
 
@@ -202,7 +206,7 @@ export class Engine {
     // fixed-timestep simulation drains BEFORE the variable updates so the
     // frame's movers/copies see the freshest physics state; excess backlog
     // is dropped (guard), never simulated in one giant unstable step
-    if (this.fixedFns.length > 0) {
+    if (this.fixedFns.length > 0 && !this.paused) {
       this.fixedAcc += dt;
       let steps = 0;
       while (this.fixedAcc >= this.fixedDt && steps < MAX_FIXED_STEPS) {
@@ -213,7 +217,9 @@ export class Engine {
       if (this.fixedAcc > this.fixedDt) this.fixedAcc = this.fixedDt; // drop backlog
       this.fixedAlpha = this.fixedAcc / this.fixedDt;
     }
-    for (const fn of this.updateFns) fn(dt, this.worldTime);
+    if (!this.paused) {
+      for (const fn of this.updateFns) fn(dt, this.worldTime);
+    }
     const c1 = performance.now();
 
     if (this.post) {

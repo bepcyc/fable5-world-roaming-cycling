@@ -47,7 +47,8 @@ import {
   causticTintParts,
 } from '../render/Caustics';
 import { DISP, buildTerrainShading } from '../render/TerrainMaterial';
-import type { NF } from '../gpu/TSLTypes';
+import { polyWire, surfaceDbgU } from '../render/DebugSurface';
+import type { NF, NV3 } from '../gpu/TSLTypes';
 import { PERIOD_FBM, PERIOD_RID, PERIOD_VAL } from '../gpu/passes/NoiseBake';
 import type { Heightfield } from './Heightfield';
 import { macroTerrain } from './MacroMap';
@@ -330,6 +331,22 @@ export class TerrainTiles {
       mat.alphaTest = 0.5;
     }
 
+    // Shift+W surface overlay (live uniform): flat per-class palette painted as
+    // UNLIT emissive so classification reads independent of sun/shadow, plus the
+    // real polygon wireframe (triangle edges of THIS patch grid). Off
+    // (surfaceDbgU=0) leaves natural shading untouched.
+    {
+      const u = surfaceDbgU as unknown as NF;
+      const prevEmis = (mat.emissiveNode as NV3 | null) ?? vec3(0);
+      mat.colorNode = (mat.colorNode as unknown as NV3).mul(u.oneMinus());
+      // patch-local grid coords: integer at every vertex row/col of the mesh
+      const segs = PATCH_SEGS + 2;
+      const gc = positionLocal.xz.add(0.5 + s).div(1 + 2 * s).mul(segs);
+      const edge = polyWire(gc);
+      const fill = mix(prevEmis, shading.surfaceDebugNode, u);
+      mat.emissiveNode = mix(fill, vec3(0.015), u.mul(edge).mul(0.85));
+    }
+
     this.mesh = new InstancedMesh(patch, mat, MAX_TILES);
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
@@ -385,6 +402,13 @@ export class TerrainTiles {
       const farIrr = opts.gi.irradiance(positionWorld, farShading.worldNormalNode);
       (farMat as unknown as { setupLightMap: () => unknown }).setupLightMap = () =>
         new IrradianceNode(farIrr as unknown as ConstructorParameters<typeof IrradianceNode>[0]);
+    }
+    // Shift+W surface overlay on the far shell (natural classes only; no roads)
+    {
+      const u = surfaceDbgU as unknown as NF;
+      const prevEmis = (farMat.emissiveNode as NV3 | null) ?? vec3(0);
+      farMat.colorNode = (farMat.colorNode as unknown as NV3).mul(u.oneMinus());
+      farMat.emissiveNode = mix(prevEmis, farShading.surfaceDebugNode, u);
     }
     this.farShell = new Mesh(ring, farMat);
     this.farShell.frustumCulled = false;

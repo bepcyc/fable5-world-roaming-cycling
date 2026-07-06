@@ -18,9 +18,10 @@
  * (see CockpitVelocity.ts) — no smear under camera rotation or travel.
  */
 
-import { Matrix4 } from 'three';
+import { Matrix4, type Object3D } from 'three';
 import type { Engine } from '../../core/Engine';
 import type { FlyCamera } from '../../core/FlyCamera';
+import { t } from '../../core/I18n';
 import type { BikeRig } from '../BikeRig';
 import type { SensorSource } from '../Sensors';
 import { SurfaceId, type RideMode } from '../SurfaceMatrix';
@@ -86,6 +87,16 @@ export class Cockpit {
   /** ?ckdbg=1|road|gravel|mtb — cockpit pinned to the free camera gaze in
    *  ANY mode, for shape/aesthetic inspection from arbitrary --cam poses */
   private dbg: RideMode | null;
+  /** the loaded Adventurer rig (arms/hands — head/legs/feet/torso already
+   *  hidden by attachRider itself for the transparent-rider look). Found via
+   *  the __laasDbg.riderGrip hook RiderBody.ts already exposes for probes —
+   *  NOT a fresh lookup mechanism of our own — because the glTF loads
+   *  asynchronously (GLTFLoader.load callback) and isn't attached to the
+   *  scene yet when this constructor returns; `update()` polls for it once. */
+  private riderRig: Object3D | null = null;
+  /** Shift+H toggle (owner directive 2026-07-07): current hands are a known
+   *  rough placeholder, hidden by default as a temporary measure */
+  private riderVisible = false;
 
   constructor(
     engine: Engine,
@@ -104,6 +115,11 @@ export class Cockpit {
     engine.scene.add(this.build.root);
     cockpitVelU.maxDist.value = this.build.maxDist;
     engine.onUpdate((dt, wt) => this.update(dt, wt));
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'KeyH' || !e.shiftKey) return;
+      this.riderVisible = !this.riderVisible;
+      if (this.riderRig) this.riderRig.visible = this.riderVisible;
+    });
     // probe hook (tools/probe-cktraa.ts): live-toggle the TRAA velocity fix
     const dbg =
       (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
@@ -117,6 +133,18 @@ export class Cockpit {
   private velFix = true;
 
   private update(dt: number, wt: number): void {
+    if (!this.riderRig) {
+      // the Adventurer glTF loads asynchronously (RiderBody.ts attachRider,
+      // GLTFLoader.load callback) — poll __laasDbg.riderGrip (its own probe
+      // hook) each frame until the rig actually lands in the scene
+      const dbg = (window as unknown as { __laasDbg?: { riderGrip?: { rig?: Object3D } } })
+        .__laasDbg;
+      const found = dbg?.riderGrip?.rig;
+      if (found) {
+        this.riderRig = found;
+        this.riderRig.visible = this.riderVisible;
+      }
+    }
     const st = this.rig.state();
     if (this.dbg) st.mode = this.dbg;
     const riding = this.dbg !== null || (st.riding && this.fly.mode === 'ride');
@@ -219,7 +247,11 @@ export class Cockpit {
         distM: st.distM,
         elapsedS: this.rideS,
         hazard: st.hazard
-          ? { distM: st.hazard.distM, label: st.hazard.kind === 'slope' ? 'STEEP' : st.hazard.what.toUpperCase() }
+          ? {
+              distM: st.hazard.distM,
+              label:
+                st.hazard.kind === 'slope' ? t('cockpit.steep') : t('surface.' + st.hazard.what).toUpperCase(),
+            }
           : null,
       },
       {

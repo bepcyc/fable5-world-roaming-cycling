@@ -57,6 +57,17 @@ const BIN_CANDIDATES = [
 const CANDIDATES: GpuRecipe[] = [
   // Linux: system browser headless with the full Vulkan flag set
   ...BIN_CANDIDATES.map((p) => ({ headless: true, executablePath: p, args: LINUX_FLAGS })),
+  // Headless-only ANGLE fallback: without a display, Chrome's native path
+  // yields SwiftShader on some boxes (RX 6800/RDNA-2, flag matrix verified
+  // 2026-07-04: unsafe+vulkan → swiftshader; +--use-angle=vulkan → amd/rdna-2).
+  // HEADLESS ONLY — under real headed presentation this flag is the SIGFPE
+  // GPU-process crash (see the LINUX_FLAGS comment above); never add it to
+  // the headed candidates below.
+  ...BIN_CANDIDATES.map((p) => ({
+    headless: true,
+    executablePath: p,
+    args: [...LINUX_FLAGS, '--use-angle=vulkan'],
+  })),
   // Mac (upstream): bundled Chromium exposes a Metal adapter out of the box
   { headless: true, channel: 'chromium', args: [] },
   { headless: true, channel: 'chromium', args: ['--enable-unsafe-webgpu'] },

@@ -73,6 +73,9 @@ export interface LaasHooks {
   settle: ((frames?: number) => Promise<void>) | null;
   /** enable/disable fly-camera input (flythrough takes the wheel) */
   flyCamEnabled: ((on: boolean) => void) | null;
+  /** opens the in-world OptionsMenu (weather/ToD/bike/keys) — set once the
+   *  world scene builds it; the pause-menu's "Settings" button calls this */
+  openSettings: (() => void) | null;
 }
 
 declare global {
@@ -98,6 +101,7 @@ export function initHooks(): LaasHooks {
     setTimeOfDay: null,
     settle: null,
     flyCamEnabled: null,
+    openSettings: null,
   };
   window.__laas = hooks;
   return hooks;

@@ -10,6 +10,7 @@ import {
 } from './core/Diagnostics';
 import { Engine } from './core/Engine';
 import { FlyCamera } from './core/FlyCamera';
+import { GameMenu } from './core/GameMenu';
 import { initHooks } from './core/Hooks';
 import { parseCamString, parseParams } from './core/Params';
 import { WorldSeed } from './core/Seed';
@@ -20,6 +21,7 @@ import { buildSanityScene } from './debug/SanityScene';
 import { buildShadowTestScene } from './debug/ShadowTestScene';
 import { buildTerrainScene } from './debug/TerrainScene';
 import { buildScene, registerScene, type WorldContext } from './debug/Scenes';
+import { setSurfaceDbg } from './render/DebugSurface';
 import { BikeRig } from './ride/BikeRig';
 import { RideHud } from './ride/RideHud';
 import { RouteGraph } from './ride/RouteGraph';
@@ -39,6 +41,10 @@ async function boot(): Promise<void> {
   // WebGPU each get a clear notice instead of a broken boot (?nogate=1 skips)
   if (!browserGate()) return;
   const params = parseParams();
+  // splash+menu is static markup in index.html — this only wires behavior
+  // onto it, and boot() below keeps running in the background regardless
+  // of whether the user has clicked Start yet
+  const gameMenu = new GameMenu(hooks, params);
   const bootUI = new BootUI(hooks);
 
   bootUI.set(0.02, 'probing WebGPU');
@@ -76,6 +82,7 @@ async function boot(): Promise<void> {
 
   bootUI.set(0.08, 'creating renderer');
   const engine = await Engine.create(params, hooks);
+  gameMenu.bindEngine(engine);
 
   // FlyCamera's update MUST register before any scene system: updateFns run
   // in registration order, and subsystems copy camera state in their own
@@ -117,7 +124,11 @@ async function boot(): Promise<void> {
   }
 
   new Hud(engine, params);
-  new DebugOverlay(engine, fly, params); // Shift+D: live scene-repro params
+  // ?surfdbg=1 boots the Shift+W surface overlay on (tools/shoot.ts repro)
+  if (new URLSearchParams(window.location.search).get('surfdbg') === '1') {
+    setSurfaceDbg(true);
+  }
+  new DebugOverlay(engine, fly, params); // Shift+D: live scene-repro params; Shift+W: surface overlay
   // ride layer (M1.3): power source seam → dashboard + bike physics.
   // ?ride=demo = fake sensors (DEMO badge); ?ridedev=1 = keyboard bike
   // (DEV badge); no source = bikes locked, dashboard shows "—".
@@ -189,6 +200,7 @@ async function boot(): Promise<void> {
   engine.start();
   await engine.settle(6);
   bootUI.hide();
+  gameMenu.onWorldReady();
   hooks.ready = true;
   // eslint-disable-next-line no-console
   console.log('[laas] ready');

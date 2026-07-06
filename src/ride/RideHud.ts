@@ -19,6 +19,7 @@
 
 import type { Engine } from '../core/Engine';
 import type { FlyCamera } from '../core/FlyCamera';
+import { t } from '../core/I18n';
 import type { BikeRig, JunctionPreview, Turn } from './BikeRig';
 import { Cockpit } from './cockpit/Cockpit';
 import { RideRecorder } from './RideRecorder';
@@ -44,7 +45,7 @@ const STYLE = `
   -webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.09);
   border-radius:10px;padding:7px 14px 8px;min-width:88px;text-align:center;
   color:#87a094;box-shadow:0 2px 10px rgba(0,0,0,0.25)}
-.rh-label{font-size:9px;letter-spacing:0.12em;opacity:0.85}
+.rh-label{font-size:9px;letter-spacing:0.12em;opacity:0.85;text-transform:uppercase}
 .rh-value{font-size:26px;font-weight:700;line-height:1.12;
   font-variant-numeric:tabular-nums;transition:color 0.3s}
 .rh-unit{font-size:9px;opacity:0.8}
@@ -54,7 +55,7 @@ const STYLE = `
   border:1px solid rgba(255,255,255,0.09);color:#cfe3d6;
   box-shadow:0 2px 10px rgba(0,0,0,0.25)}
 .rh-chip .ico{width:22px;height:22px;opacity:0.95}
-.rh-chip .lbl{font:bold 9px/1.1 ui-monospace,Menlo,monospace;letter-spacing:0.12em}
+.rh-chip .lbl{font:bold 9px/1.1 ui-monospace,Menlo,monospace;letter-spacing:0.12em;text-transform:uppercase}
 .rh-badge{align-self:flex-start;border-radius:8px;padding:3px 7px;
   font:bold 9px/1.2 ui-monospace,Menlo,monospace;letter-spacing:0.1em}
 #ride-banner{position:fixed;top:23%;left:50%;transform:translate(-50%,0);
@@ -63,14 +64,14 @@ const STYLE = `
   padding:10px 22px;border-radius:12px;color:#ffd9c9;
   background:rgba(30,10,6,0.62);border:1px solid rgba(255,140,90,0.35);
   backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-  opacity:0;transition:opacity 0.25s}
+  opacity:0;transition:opacity 0.25s;text-transform:uppercase}
 #ride-hazard{position:fixed;top:88px;left:50%;transform:translate(-50%,0);
   z-index:1001;pointer-events:none;text-align:center;
   font:bold 13px/1.3 ui-monospace,Menlo,monospace;letter-spacing:0.08em;
   padding:8px 18px;border-radius:10px;color:#ffe08a;
   background:rgba(38,26,4,0.66);border:1px solid rgba(255,209,102,0.45);
   backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-  opacity:0;transition:opacity 0.25s}
+  opacity:0;transition:opacity 0.25s;text-transform:uppercase}
 #ride-hazard .rz-dist{color:#fff3cf}
 #ride-banner.info{color:#dcefe4;background:rgba(8,16,12,0.62);
   border-color:rgba(160,220,190,0.28)}
@@ -80,7 +81,7 @@ const STYLE = `
   font-family:ui-monospace,Menlo,Consolas,monospace}
 #ride-junction.on{opacity:1;transform:translate(-50%,0)}
 .rj-title{font:bold 11px/1.2 ui-monospace,Menlo,monospace;letter-spacing:0.18em;
-  color:#e9f4ed;text-shadow:0 1px 6px rgba(0,0,0,0.7);margin-bottom:7px}
+  color:#e9f4ed;text-shadow:0 1px 6px rgba(0,0,0,0.7);margin-bottom:7px;text-transform:uppercase}
 .rj-dist{color:#ffd166}
 .rj-row{display:flex;gap:10px;justify-content:center}
 .rj-opt{width:76px;border-radius:12px;padding:9px 6px 7px;
@@ -180,16 +181,16 @@ export class RideHud {
     // mode chip
     this.chip = document.createElement('div');
     this.chip.className = 'rh-chip';
-    this.chip.innerHTML = `<svg class="ico" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"></svg><div class="lbl">HIKE</div>`;
+    this.chip.innerHTML = `<svg class="ico" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"></svg><div class="lbl">${t('mode.hike')}</div>`;
     this.chipIco = this.chip.querySelector('svg') as SVGSVGElement;
     this.chipLbl = this.chip.querySelector('.lbl') as HTMLDivElement;
 
-    this.speed = makeCard('SPEED', 'km/h', '#eaf6ee');
-    this.power = makeCard('POWER', 'W', '#ffd166');
-    this.grade = makeCard('GRADE', '%', '#cfe3d6');
-    this.dist = makeCard('DISTANCE', 'km', '#dcefe4');
-    this.cadence = makeCard('CADENCE', 'rpm', '#bcd9ff');
-    this.heart = makeCard('HEART RATE', 'bpm', '#ff8f88');
+    this.speed = makeCard(t('ride.speed'), 'km/h', '#eaf6ee');
+    this.power = makeCard(t('ride.power'), 'W', '#ffd166');
+    this.grade = makeCard(t('ride.grade'), '%', '#cfe3d6');
+    this.dist = makeCard(t('ride.distance'), 'km', '#dcefe4');
+    this.cadence = makeCard(t('ride.cadence'), 'rpm', '#bcd9ff');
+    this.heart = makeCard(t('ride.heartRate'), 'bpm', '#ff8f88');
     this.root.append(
       this.chip,
       this.speed.root,
@@ -213,7 +214,7 @@ export class RideHud {
 
     this.junctionEl = document.createElement('div');
     this.junctionEl.id = 'ride-junction';
-    this.junctionEl.innerHTML = `<div class="rj-title">TURN AHEAD · <span class="rj-dist">0 m</span></div><div class="rj-row"></div><div class="rj-hint"><b>←</b> / <b>→</b> choose</div>`;
+    this.junctionEl.innerHTML = `<div class="rj-title">${t('ride.turnAhead')} · <span class="rj-dist">0 m</span></div><div class="rj-row"></div><div class="rj-hint">${t('ride.turnHint')}</div>`;
     this.junctionTitle = this.junctionEl.querySelector('.rj-dist') as HTMLDivElement;
     this.junctionRow = this.junctionEl.querySelector('.rj-row') as HTMLDivElement;
     document.body.appendChild(this.junctionEl);
@@ -268,9 +269,9 @@ export class RideHud {
     this.badgeEl?.remove();
     this.badgeEl = null;
     if (this.source?.kind === 'demo') {
-      this.badgeEl = makeBadge('DEMO', '#ffb84d', 'rgba(64,44,4,0.75)', 'simulated cadence/HR/power — connect real sensors for real data');
+      this.badgeEl = makeBadge('DEMO', '#ffb84d', 'rgba(64,44,4,0.75)', t('ride.demoBadgeHint'));
     } else if (this.source?.kind === 'dev') {
-      this.badgeEl = makeBadge('DEV', '#7fc4ff', 'rgba(6,30,52,0.75)', 'keyboard bike — W pedal, Shift burst, +/- watts, S/Space brake');
+      this.badgeEl = makeBadge('DEV', '#7fc4ff', 'rgba(6,30,52,0.75)', t('ride.devBadgeHint'));
     }
     if (this.badgeEl) this.root.appendChild(this.badgeEl);
   }
@@ -342,7 +343,7 @@ export class RideHud {
 
     // mode chip
     const mode = st?.mode ?? 'hike';
-    this.chipLbl.textContent = mode.toUpperCase();
+    this.chipLbl.textContent = t('mode.' + mode);
     const ico = MODE_ICON[mode] ?? MODE_ICON['hike'] ?? '';
     if (this.chipIco.dataset['m'] !== mode) {
       this.chipIco.dataset['m'] = mode;
@@ -360,9 +361,9 @@ export class RideHud {
       if (show && hz) {
         const label =
           hz.kind === 'slope'
-            ? `TOO STEEP AHEAD (${hz.what})`
-            : `${hz.what.toUpperCase().replace(/-/g, ' ')} AHEAD`;
-        this.hazardEl.innerHTML = `⚠ ${label} · <span class="rz-dist">${Math.max(Math.round(hz.distM / 5) * 5, 5)} m</span> — DISMOUNT (M) OR TURN`;
+            ? t('ride.hazardSlope', { pct: hz.what })
+            : t('ride.hazardSurface', { surface: t('surface.' + hz.what) });
+        this.hazardEl.innerHTML = `⚠ ${label} · <span class="rz-dist">${Math.max(Math.round(hz.distM / 5) * 5, 5)} m</span> ${t('ride.dismountOrTurn')}`;
         this.hazardEl.style.opacity = '1';
       } else {
         this.hazardEl.style.opacity = '0';
@@ -375,12 +376,12 @@ export class RideHud {
     if (st?.blocked) {
       this.showBanner(
         Math.abs(st.grade) > (this.rig?.modeMaxSlope() ?? 1)
-          ? `TOO STEEP FOR ${mode.toUpperCase()} — ${(st.grade * 100).toFixed(0)} % · DISMOUNT (M)`
-          : `${st.surface.toUpperCase()} BLOCKS ${mode.toUpperCase()} — DISMOUNT (M)`,
+          ? t('ride.tooSteep', { mode: t('mode.' + mode), pct: (st.grade * 100).toFixed(0) })
+          : t('ride.surfaceBlocks', { surface: t('surface.' + st.surface), mode: t('mode.' + mode) }),
         false,
       );
     } else if (st?.stalled) {
-      this.showBanner(`BOGGED DOWN IN ${st.surface.toUpperCase()} — DISMOUNT (M)`, false);
+      this.showBanner(t('ride.bogged', { surface: t('surface.' + st.surface) }), false);
     } else if (st?.note) {
       this.showBanner(st.note, true);
     } else {
@@ -411,7 +412,7 @@ export class RideHud {
         const el = document.createElement('div');
         el.className = 'rj-opt';
         const color = CLS_COLOR[o.cls] ?? '#cfe3d6';
-        el.innerHTML = `${turnSvg(o.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${o.cls}</div>`;
+        el.innerHTML = `${turnSvg(o.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${t('surface.' + o.cls)}</div>`;
         this.junctionRow.appendChild(el);
       }
     }

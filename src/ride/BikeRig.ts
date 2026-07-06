@@ -19,6 +19,7 @@
 
 import type { Engine } from '../core/Engine';
 import type { FlyCamera, GroundProbe } from '../core/FlyCamera';
+import { t } from '../core/I18n';
 import { stepBike, type BikeMode, type SolverState } from './BikeSolver';
 import type { RouteGraph } from './RouteGraph';
 import type { KeyboardPowerSource, SensorSource } from './Sensors';
@@ -368,25 +369,25 @@ export class BikeRig {
   private mount(mode: RideMode): boolean {
     if (mode === 'hike') return false;
     if (!this.source) {
-      this.flash('BIKES LOCKED — NO POWER SOURCE (?ride=ble to connect sensors)');
+      this.flash(t('ride.lockedNoPower'));
       return false;
     }
     // BLE honesty gate: a BLE source with no live power channel is the same
     // as no source — connect the trainer/power meter first (Pillar C)
     if (this.source.kind === 'ble' && this.source.read().powerW === null) {
-      this.flash('BIKES LOCKED — CONNECT A POWER SOURCE (trainer or power meter)');
+      this.flash(t('ride.lockedConnectPower'));
       return false;
     }
     if (this.riding) {
       // already on the network — just swap machines
       this.mode = mode;
-      this.flash(`${mode.toUpperCase()} BIKE`);
+      this.flash(t('ride.mountBike', { mode: t('mode.' + mode) }));
       return true;
     }
     const pose = this.fly.getPose();
     const pr = this.graph.project(pose.p[0], pose.p[2]);
     if (pr.edge < 0 || pr.dist > MOUNT_MAX_DIST) {
-      this.flash(`NO ROAD WITHIN ${MOUNT_MAX_DIST} m`);
+      this.flash(t('ride.noRoadWithin', { dist: MOUNT_MAX_DIST }));
       return false;
     }
     this.edge = pr.edge;
@@ -401,7 +402,7 @@ export class BikeRig {
     this.mode = mode;
     const g = this.probe(sm.x, sm.z);
     this.seedPose(sm.x, g.ground + EYE_SADDLE, sm.z, this.heading(sm.tx, sm.tz));
-    this.flash(`${mode.toUpperCase()} BIKE`);
+    this.flash(t('ride.mountBike', { mode: t('mode.' + mode) }));
     return true;
   }
 
@@ -412,7 +413,7 @@ export class BikeRig {
     this.hazard = null;
     this.solver = { v: 0, stalled: false };
     this.fly.setMode('walk');
-    this.flash('ON FOOT');
+    this.flash(t('ride.onFoot'));
   }
 
   private flash(msg: string): void {
@@ -486,7 +487,7 @@ export class BikeRig {
         this.dir = this.dir > 0 ? -1 : 1;
         this.s = this.dir > 0 ? 0 : e.length;
         this.solver.v *= 0.25;
-        this.flash('DEAD END — U-TURN');
+        this.flash(t('ride.deadEndUturn'));
         this.junction = null;
         ds = 0;
         break;

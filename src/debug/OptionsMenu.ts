@@ -18,6 +18,7 @@
  */
 
 import type { LaasHooks } from '../core/Hooks';
+import { t } from '../core/I18n';
 import { MODE_ICON } from '../ride/RideHud';
 import type { WeatherKind, WeatherState } from '../sky/Weather';
 
@@ -67,14 +68,14 @@ const STYLE = `
   border:1px solid transparent;transition:all 0.15s}
 .opt-x:hover{color:#eaf6ee;border-color:rgba(255,255,255,0.15);background:rgba(255,255,255,0.06)}
 .opt-h{font:bold 9.5px/1.2 ui-monospace,Menlo,monospace;letter-spacing:0.18em;
-  color:#7d9c8d;margin:12px 0 7px}
+  color:#7d9c8d;margin:12px 0 7px;text-transform:uppercase}
 .opt-grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}
 .opt-grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
 .opt-card{display:flex;flex-direction:column;align-items:center;gap:4px;
   padding:9px 4px 7px;border-radius:11px;min-height:46px;justify-content:center;
   background:rgba(255,255,255,0.045);border:1px solid rgba(255,255,255,0.09);
   font:bold 9.5px/1.2 ui-monospace,Menlo,monospace;letter-spacing:0.06em;color:#9db8ab;
-  cursor:pointer;user-select:none;transition:all 0.16s}
+  cursor:pointer;user-select:none;transition:all 0.16s;text-transform:uppercase}
 .opt-card svg{width:22px;height:22px;opacity:0.9}
 .opt-card:hover{background:rgba(255,255,255,0.1);transform:translateY(-1px)}
 .opt-card.sel{color:#ffe9b0;border-color:rgba(255,209,102,0.8);
@@ -119,20 +120,14 @@ const WX_ICON: Record<WeatherKind, string> = {
 };
 
 const WEATHERS: WeatherKind[] = ['dry', 'rain', 'after-rain', 'fog'];
-const WX_LABEL: Record<WeatherKind, string> = {
-  dry: 'DRY',
-  rain: 'RAIN',
-  'after-rain': 'AFTER RAIN',
-  fog: 'FOG',
-};
 const MODES = ['hike', 'road', 'gravel', 'mtb'];
 
 /** power sources: label / icon / hint (BLE reloads into the boot flow) */
 const SOURCES: { kind: SourceKind; label: string; icon: string; hint: string }[] = [
-  { kind: 'none', label: 'OFF', hint: 'no power source — bikes locked (honesty rule)', icon: '<circle cx="12" cy="12" r="7.5" fill="none" stroke-width="1.7"/><path d="M7 17L17 7" stroke-width="1.7" stroke-linecap="round"/>' },
-  { kind: 'demo', label: 'DEMO', hint: 'simulated watts/cadence/HR — DEMO badge shows', icon: '<path d="M5 17V9.5M9.5 17V6M14 17v-6.5M18.5 17V8" stroke-width="1.9" stroke-linecap="round"/>' },
-  { kind: 'dev', label: 'KEYS', hint: 'keyboard bike: W pedal, Shift burst, +/- watts', icon: '<rect x="3.5" y="7" width="17" height="10" rx="2" fill="none" stroke-width="1.6"/><path d="M6.5 10h1M9.5 10h1M12.5 10h1M15.5 10h1M7.5 13.5h9" stroke-width="1.6" stroke-linecap="round"/>' },
-  { kind: 'ble', label: 'BLE ↻', hint: 'real sensors — reloads with the connect panel', icon: '<path d="M12 3.5v17l4.5-4L9 9.5M12 12l4.5-4L12 3.5" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' },
+  { kind: 'none', label: t('source.off'), hint: t('source.offHint'), icon: '<circle cx="12" cy="12" r="7.5" fill="none" stroke-width="1.7"/><path d="M7 17L17 7" stroke-width="1.7" stroke-linecap="round"/>' },
+  { kind: 'demo', label: t('source.demo'), hint: t('source.demoHint'), icon: '<path d="M5 17V9.5M9.5 17V6M14 17v-6.5M18.5 17V8" stroke-width="1.9" stroke-linecap="round"/>' },
+  { kind: 'dev', label: t('source.keys'), hint: t('source.keysHint'), icon: '<rect x="3.5" y="7" width="17" height="10" rx="2" fill="none" stroke-width="1.6"/><path d="M6.5 10h1M9.5 10h1M12.5 10h1M15.5 10h1M7.5 13.5h9" stroke-width="1.6" stroke-linecap="round"/>' },
+  { kind: 'ble', label: t('source.ble'), hint: t('source.bleHint'), icon: '<path d="M12 3.5v17l4.5-4L9 9.5M12 12l4.5-4L12 3.5" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' },
 ];
 
 export class OptionsMenu {
@@ -156,7 +151,7 @@ export class OptionsMenu {
 
     this.fab = document.createElement('div');
     this.fab.id = 'opt-fab';
-    this.fab.title = 'settings (O)';
+    this.fab.title = t('opt.fabTitle');
     this.fab.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.2 12a7.2 7.2 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 00-2.1-1.2L14.3 3h-4l-.4 2.7a7.4 7.4 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7.3 7.3 0 000 2.4l-2 1.5 2 3.4 2.3-1c.6.5 1.4.9 2.1 1.2l.4 2.7h4l.4-2.7a7.4 7.4 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>';
     document.body.appendChild(this.fab);
@@ -168,7 +163,7 @@ export class OptionsMenu {
     // title row
     const title = document.createElement('div');
     title.className = 'opt-title';
-    title.innerHTML = `<span>SETTINGS</span>`;
+    title.innerHTML = `<span>${t('opt.title')}</span>`;
     const x = document.createElement('div');
     x.className = 'opt-x';
     x.textContent = '✕';
@@ -177,13 +172,13 @@ export class OptionsMenu {
     this.panel.appendChild(title);
 
     // WEATHER
-    this.panel.appendChild(h('WEATHER'));
+    this.panel.appendChild(h(t('opt.weather')));
     const wxRow = document.createElement('div');
     wxRow.className = 'opt-grid2';
     for (const w of WEATHERS) {
       const b = card(
         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${WX_ICON[w]}</svg>`,
-        WX_LABEL[w],
+        t('weather.' + w),
       );
       b.addEventListener('click', () => {
         this.weather.set(w);
@@ -195,7 +190,7 @@ export class OptionsMenu {
     this.panel.appendChild(wxRow);
 
     // TIME OF DAY
-    this.panel.appendChild(h('TIME OF DAY'));
+    this.panel.appendChild(h(t('opt.timeOfDay')));
     const wrap = document.createElement('div');
     wrap.className = 'opt-todwrap';
     const tod = document.createElement('input');
@@ -209,7 +204,7 @@ export class OptionsMenu {
     out.className = 'opt-todv';
     const outB = document.createElement('b');
     outB.textContent = fmtTod(Number(tod.value));
-    out.append(mk('span', 'dawn'), outB, mk('span', 'dusk'));
+    out.append(mk('span', t('opt.dawn')), outB, mk('span', t('opt.dusk')));
     // live label while dragging; the expensive sky/IBL/shadow re-bake fires
     // on release only
     tod.addEventListener('input', () => {
@@ -224,7 +219,7 @@ export class OptionsMenu {
 
     // POWER SOURCE — without one the bikes are LOCKED (Pillar C honesty);
     // this is exactly why "clicking ROAD did nothing" before (owner bug)
-    this.panel.appendChild(h('POWER SOURCE'));
+    this.panel.appendChild(h(t('opt.powerSource')));
     const srcRow = document.createElement('div');
     srcRow.className = 'opt-grid4';
     this.srcRow = srcRow;
@@ -252,13 +247,13 @@ export class OptionsMenu {
     this.panel.appendChild(srcRow);
 
     // BIKE
-    this.panel.appendChild(h('BIKE'));
+    this.panel.appendChild(h(t('opt.bike')));
     const modeRow = document.createElement('div');
     modeRow.className = 'opt-grid4';
     for (const m of MODES) {
       const b = card(
         `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor">${MODE_ICON[m] ?? ''}</svg>`,
-        m.toUpperCase(),
+        t('mode.' + m),
       );
       b.addEventListener('click', () => {
         const ride = this.rideCtl();
@@ -266,7 +261,7 @@ export class OptionsMenu {
         if (!ok && m !== 'hike') {
           if (this.sourceKind() === 'none') {
             // the silent-refusal trap: point at the POWER SOURCE section
-            this.showHint('bikes need a power source — pick one above');
+            this.showHint(t('opt.needPowerHint'));
             this.srcRow?.classList.remove('opt-shake');
             void this.srcRow?.offsetWidth; // restart the animation
             this.srcRow?.classList.add('opt-shake');
@@ -277,9 +272,9 @@ export class OptionsMenu {
             if (spot) {
               ride.teleportEdge(spot.edge, spot.s, 1);
               ok = ride.setMode(m);
-              this.showHint(ok ? `teleported to the nearest ${spot.cls}` : (ride.state().note ?? '').toLowerCase());
+              this.showHint(ok ? t('opt.teleportedTo', { surface: t('surface.' + spot.cls) }) : (ride.state().note ?? ''));
             } else {
-              this.showHint((ride.state().note ?? 'no rideable road on the map').toLowerCase());
+              this.showHint(ride.state().note ?? t('opt.noRideableRoad'));
             }
           }
         }
@@ -296,15 +291,15 @@ export class OptionsMenu {
     this.panel.appendChild(this.hint);
 
     // KEYS
-    this.panel.appendChild(h('KEYS'));
+    this.panel.appendChild(h(t('opt.keys')));
     const keys = document.createElement('div');
     keys.className = 'opt-keys';
     keys.innerHTML =
-      `<b>M</b> bike mode    <b>V</b> walk/fly\n` +
-      `<b>B</b> dashboard    <b>O</b> this menu\n` +
-      `<b>←/→</b> pick turn   <b>Space/S</b> brake\n` +
-      `<b>[ ]</b> time        <b>1..9</b> views\n` +
-      `<b>Shift+D</b> debug   <b>Ctrl+E</b> .fit`;
+      `<b>M</b> ${t('opt.keyBikeMode')}    <b>V</b> ${t('opt.keyWalkFly')}\n` +
+      `<b>B</b> ${t('opt.keyDashboard')}    <b>O</b> ${t('opt.keyThisMenu')}\n` +
+      `<b>←/→</b> ${t('opt.keyPickTurn')}   <b>Space/S</b> ${t('opt.keyBrake')}\n` +
+      `<b>[ ]</b> ${t('opt.keyTime')}        <b>1..9</b> ${t('opt.keyViews')}\n` +
+      `<b>Shift+D</b> ${t('opt.keyDebug')}   <b>Ctrl+E</b> .fit`;
     this.panel.appendChild(keys);
 
     this.fab.addEventListener('click', (e) => {
@@ -376,6 +371,15 @@ export class OptionsMenu {
       }
     }
     return best ? { edge: best.edge, s: best.s, cls: best.cls } : null;
+  }
+
+  /** open the panel programmatically (pause-menu "Settings" button).
+   *  Deferred a tick: the caller's own click is still bubbling toward
+   *  `document`, where this class's own "click outside closes" listener
+   *  lives — opening synchronously would see this.open flip true and
+   *  immediately close it again within that same click. */
+  show(): void {
+    window.setTimeout(() => this.toggle(true), 0);
   }
 
   private toggle(to?: boolean): void {

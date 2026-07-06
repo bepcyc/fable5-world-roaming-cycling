@@ -49,6 +49,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clamp, float, fract, mix, positionLocal, sin, uv, vec3 } from 'three/tsl';
 import { hash12 } from '../../gpu/noise/NoiseTSL';
 import type { RideMode } from '../SurfaceMatrix';
+import { attachRider } from './RiderBody';
 
 // ---- fit constants (eye-relative) ------------------------------------------
 // high/close on purpose: at the ride gaze (pitch ≈ −0.06, vfov 55°) the
@@ -460,12 +461,17 @@ function hoodParts(hoodPoint: Vector3, side: 1 | -1, flareDeg: number): Part[] {
   const body = new CapsuleGeometry(0.019, 0.062, 4, 12);
   body.applyMatrix4(new Matrix4().makeScale(0.85, 1, 1.08));
   parts.push(place(body, hoodPoint.clone().add(new Vector3(0, 0.014, -0.016)), bodyDir));
-  const horn = new SphereGeometry(0.0185, 12, 10);
-  horn.applyMatrix4(new Matrix4().makeScale(0.82, 1.15, 1.4));
-  parts.push({
-    geo: horn,
-    m: new Matrix4().setPosition(hoodPoint.clone().add(new Vector3(0, 0.032, -0.07))),
-  });
+  // HORN (горб) RESTORED (session 13): the reference hood has a tall nose
+  // that rises ABOVE the closed fist — the hammer-grip web (thumb-index)
+  // presses against its back. Session 12 removed it because the DOWN-curl
+  // (bar-hang) fingers clipped it; with the rolled hammer grip the fingers
+  // wrap the hood BODY below/behind the horn, so it stands proud like the
+  // reference. Slight forward lean, like the ref photo.
+  const horn = new CapsuleGeometry(0.0135, 0.03, 4, 12);
+  horn.applyMatrix4(new Matrix4().makeScale(0.8, 1, 1));
+  parts.push(
+    place(horn, hoodPoint.clone().add(new Vector3(0, 0.034, -0.05)), new Vector3(0, 0.95, -0.3).normalize()),
+  );
   return parts;
 }
 
@@ -683,9 +689,40 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
       [hoodR, 1],
       [hoodL, -1],
     ] as [Vector3, 1 | -1][]) {
-      // aero wing's widened chord overhangs the hood zone — push the
-      // hood assembly forward so it rises clear of the wing edge
-      const hp = spec.aero ? hp0.clone().add(new Vector3(0, 0.004, -0.026)) : hp0;
+      // NB: the old aero shift (0,0.004,-0.026) pushed the hood — and with
+      // it the GRIP TARGET — 26 mm FORWARD of the real bar tube, so the
+      // hand landed forward of the bar and the fingers overshot it into
+      // mid-air (owner: "рука проходит сквозь руль"; probe-bar: fingertips
+      // 80 mm past the drop). Keep the hood AT the bar so the hand grips it.
+      const hp = hp0;
+      // expose the REAL hood body line (steer-space) so the rider's grip
+      // targets and the measurable-grip probe share one source of truth —
+      // hands land on the hoods BY CONSTRUCTION (owner: measurable grip)
+      if (side === 1) {
+        // grip line pulled BACK onto the bar (−0.016 → −0.002 fwd): the
+        // residual 14 mm forward offset still seated the knuckles ahead of
+        // the tube, so the forward fingers reached past it to the hood/lever
+        // (the L middle/index overshoot). At the bar they curl DOWN to wrap.
+        g.userData.hoodR = hp.clone().add(new Vector3(0, 0.016, -0.002));
+        g.userData.hoodDir = new Vector3(0.06, -0.24, -0.96).normalize();
+        g.userData.hoodRad = 0.018; // mean of the 0.016/0.019 capsule
+        // brake lever blade line (leverParts p0→p3) — part of the grip
+        // solid: draped fingertips close onto the LEVER, not bare air
+        g.userData.leverA = hp.clone().add(new Vector3(0, 0.018, -0.06));
+        g.userData.leverB = hp.clone().add(new Vector3(0.007, -0.102, -0.046));
+        g.userData.leverRad = 0.0056;
+        // horn RESTORED (hammer grip, session 13): real sphere-ish nose the
+        // thumb web presses against — center of the visible capsule, real
+        // radius, so the grip solid keeps fingers OFF it instead of clipping.
+        g.userData.hornC = hp.clone().add(new Vector3(0, 0.034, -0.05));
+        g.userData.hornRad = 0.0135;
+        // REAL bar tube the fingers drape over/through: the bend + drop
+        // (points 3..7 of dropBarPoints). Without it in the grip solid the
+        // wrap solver ignores it and the fingers pass STRAIGHT THROUGH the
+        // visible bar (owner: "рука проходит сквозь руль"). Round barR.
+        g.userData.dropPts = [3, 4, 5, 6, 7].map((i) => (ptsR[i] as Vector3).clone());
+        g.userData.barR = barR;
+      }
       rubber.push(...hoodParts(hp, side, spec.flareDeg));
       alloy.push(...leverParts(hp, side, spec.flareDeg));
       if (spec.handsOn === 'tops') {
@@ -811,18 +848,22 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
   const mk = (
     parts: Part[],
     mat: MeshStandardNodeMaterial | MeshPhysicalNodeMaterial,
+    name = '',
   ): void => {
     if (parts.length === 0) return;
     const mesh = new Mesh(merged(parts), mat);
     mesh.frustumCulled = false;
+    mesh.name = name;
     g.add(mesh);
   };
   mk(carbon, mats.carbon);
   mk(alloy, mats.alloy);
   mk(rubber, mats.rubber);
-  mk(glove, mats.glove);
-  mk(skin, mats.skin);
-  mk(bracelet, mats.bracelet);
+  // procedural hands RETIRED (owner, 2026-07-04: import > synthesis) —
+  // named so buildCockpit can hide them under the RiderBody import
+  mk(glove, mats.glove, 'hands-glove');
+  mk(skin, mats.skin, 'hands-skin');
+  mk(bracelet, mats.bracelet, 'hands-bracelet');
   mk(frame, spec.frame);
   if (spec.tape) mk(tape, spec.tape);
   return g;
@@ -1017,6 +1058,31 @@ export function buildCockpit(): CockpitBuild {
   steer.add(compBody);
   comp.screen.frustumCulled = false;
   steer.add(comp.screen);
+
+  // ---- imported low-poly rider (M1.5.3 pivot): hide the retired
+  // procedural hands, attach the posed Adventurer to the ROOT (the body
+  // must not yaw with the steer group)
+  for (const mode of [road, gravel, mtb]) {
+    for (const nm of ['hands-glove', 'hands-skin', 'hands-bracelet']) {
+      const m = mode.getObjectByName(nm);
+      if (m) m.visible = false;
+    }
+  }
+  // grip spec from the REAL road hood line (steer-space → root-space) —
+  // rider IK targets and probe-grip measure the same capsule
+  const hoodR = (road.userData.hoodR as Vector3).clone().add(steer.position);
+  attachRider(root, {
+    hoodR,
+    hoodDir: (road.userData.hoodDir as Vector3).clone(),
+    hoodRad: road.userData.hoodRad as number,
+    leverA: (road.userData.leverA as Vector3).clone().add(steer.position),
+    leverB: (road.userData.leverB as Vector3).clone().add(steer.position),
+    leverRad: road.userData.leverRad as number,
+    hornC: (road.userData.hornC as Vector3).clone().add(steer.position),
+    hornRad: road.userData.hornRad as number,
+    dropPts: (road.userData.dropPts as Vector3[]).map((p) => p.clone().add(steer.position)),
+    barR: road.userData.barR as number,
+  });
 
   return {
     root,

@@ -24,7 +24,7 @@
 import type { WorldSeed } from '../core/Seed';
 import { runWorkerJobs } from '../core/Threads';
 import type { MacroParams } from '../world/MacroMap';
-import { WORLD_SIZE } from '../world/WorldConst';
+import { LAKE_LEVEL, WORLD_SIZE } from '../world/WorldConst';
 import { computeRoadGridBand, type RoadGridJob } from './RoadGridWorker';
 import { CLASSIFY, SurfaceId } from './SurfaceMatrix';
 
@@ -122,6 +122,10 @@ export interface RoadTerrain {
   heights: Float32Array;
   simRes: number;
   waterY: Float32Array;
+  /** hydrology moisture 0..1 at sim res (FlowRivers) — wetland/mud signal */
+  moisture: Float32Array;
+  /** carved river/pond depth (m) at sim res (FlowRivers) — silt-bed signal */
+  riverDepth: Float32Array;
 }
 
 // router constants
@@ -434,6 +438,60 @@ export class RoadNetwork {
       }
     }
 
+    // MUD/WETLAND avoidance (owner 2026-07-06, дословно: «тоненькие
+    // малюсенькие дорожки среди грязи»). A flat wetland reads as the CHEAPEST
+    // terrain for the A* (grade≈0 ⇒ mult≈1), so roads were magnetically drawn
+    // INTO the bogs and rendered as thin dirt ribbons winding across the mud.
+    // A previous attempt penalized water PROXIMITY (ground < 2.5 m over the
+    // local water table) — it missed the actual defect because the mud on the
+    // repro flats is MOISTURE-driven (Biome.Wetland), not water-adjacent.
+    // This mask replicates the classifier's wetland-mud predicate
+    // (BiomeSnow.ts isWetland ∧ SurfaceClassify mud override): moisture above
+    // MUD_MOISTURE on near-flat ground below the wetland altitude ceiling.
+    // Costs: crossing a bog is as expensive as a deep-water ford (+MUD_PEN),
+    // the dilated margin ring gets half — routes stay on dry valley sides and
+    // only cross a marsh where topology leaves no alternative.
+    const gmud = new Float32Array(N * N);
+    const MUD_PEN = 34;
+    {
+      const mAt = (x: number, z: number): number =>
+        bilerp(terr.moisture, terr.simRes, x, z);
+      const rdAt = (x: number, z: number): number =>
+        bilerp(terr.riverDepth, terr.simRes, x, z);
+      const core = new Uint8Array(N * N);
+      for (let z = 0; z < N; z++) {
+        for (let x = 0; x < N; x++) {
+          const i = z * N + x;
+          const flat = (gs[i] as number) < CLASSIFY.MUD_MAX_SLOPE + 0.1;
+          if (!flat) continue;
+          // (a) wetland-biome mud: BiomeSnow isWetland ∧ classify override
+          const wetland =
+            (gh[i] as number) < LAKE_LEVEL + 75 &&
+            mAt(cw(x), cw(z)) > CLASSIFY.MUD_MOISTURE - 0.05;
+          // (b) exposed pond-silt beds (classify pondK ⇒ Mud, ANY altitude):
+          // smoothstep(1.1, 2.6, riverDepth) on near-flat ground — the repro
+          // flats at ~250 m are THIS mud, not wetland (found iteration 1)
+          const silt = rdAt(cw(x), cw(z)) > 1.0;
+          if (wetland || silt) {
+            core[i] = 1;
+          }
+        }
+      }
+      for (let z = 0; z < N; z++) {
+        for (let x = 0; x < N; x++) {
+          let m = 0;
+          for (let dz = -1; dz <= 1 && m < 2; dz++) {
+            for (let dx = -1; dx <= 1 && m < 2; dx++) {
+              const xx = Math.min(Math.max(x + dx, 0), N - 1);
+              const zz = Math.min(Math.max(z + dz, 0), N - 1);
+              if (core[zz * N + xx]) m = dx === 0 && dz === 0 ? 2 : Math.max(m, 1);
+            }
+          }
+          gmud[z * N + x] = m === 2 ? MUD_PEN : m === 1 ? MUD_PEN * 0.5 : 0;
+        }
+      }
+    }
+
     const toCell = (x: number, z: number): Cell => ({
       x: Math.min(Math.max(Math.round((x / WORLD_SIZE + 0.5) * N - 0.5), 4), N - 5),
       z: Math.min(Math.max(Math.round((z / WORLD_SIZE + 0.5) * N - 0.5), 4), N - 5),
@@ -487,8 +545,12 @@ export class RoadNetwork {
         const z = (i / N) | 0;
         return Math.hypot(x - to.x, z - to.z) * cellM;
       };
+      // guard sized for penalty-heavy searches: the mud/side-hill cost fields
+      // make h() a deep underestimate, so A* legitimately expands most of the
+      // 512² grid (with lazy-deletion re-pushes) before proving a detour —
+      // 2M was exhausted mid-search and reported healthy legs "unroutable"
       let guard = 0;
-      while (heap.size > 0 && guard++ < 2_000_000) {
+      while (heap.size > 0 && guard++ < 12_000_000) {
         const cur = heap.pop();
         if (cur === ti) break;
         const cx = cur % N;
@@ -515,11 +577,15 @@ export class RoadNetwork {
           // max — see Climbfinder/AASHTO fact sheet in docs/ROADMAP notes)
           const gk = grade / spec.maxGrade;
           let mult = 1 + 14 * gk * gk;
-          // side-hill construction cost (cut/fill volume rises with cross slope)
-          mult += 1.2 * Math.max(0, (gs[ni] as number) - grade);
+          // side-hill construction cost (cut/fill volume rises with cross
+          // slope); quadratic tail = cliff faces are near-prohibitive (owner
+          // repro: a dirt thread traversing bare rock walls read as "палка")
+          const side = Math.max(0, (gs[ni] as number) - grade);
+          mult += 1.2 * side + 10 * side * side;
           // fords are possible but expensive → rare, short, perpendicular-ish
           if (nd > CLASSIFY.WATER_MIN_DEPTH_M) mult += 25;
           else if (nd > 0.005) mult += 6; // shoreline margin — don't hug banks
+          mult += gmud[ni] as number; // boggy wetland mud — stay on dry ground
           // running alongside an existing road duplicates the corridor —
           // expensive; crossing it (a few cells) stays affordable
           if (netMask[ni]) mult += 10;
@@ -531,7 +597,14 @@ export class RoadNetwork {
           }
         }
       }
-      if (came[ti] < 0 && ti !== si) return null;
+      if (came[ti] < 0 && ti !== si) {
+        if (guard >= 12_000_000) {
+          console.warn(
+            `[roads] A* guard exhausted (${guard} pops) — leg reported unroutable while the search was still open`,
+          );
+        }
+        return null;
+      }
       const cells: Cell[] = [];
       for (let i = ti; i >= 0; i = came[i] as number) {
         cells.push({ x: i % N, z: (i / N) | 0 });
@@ -542,9 +615,9 @@ export class RoadNetwork {
     };
 
     /**
-     * Track C2 retry ladder for ASPHALT legs only (asphalt's maxGrade=0.12
-     * is the lowest of all classes, so it's the leg most likely to dead-end
-     * on a genuinely hard flank). Rungs, in order — first success wins:
+     * Track C2 retry ladder (born for asphalt, now the fallback for EVERY
+     * class — a mud-aware anchor can land any leg in a grade-enclosed
+     * pocket). Rungs, in order — first success wins:
      *   1. same endpoints, hard-block factor relaxed 2.2× → gradeMul
      *      ASPHALT_RETRY_GRADE_MUL (MAX_CUT_FILL only bounds the vertical
      *      profile in buildRoute, not this A* search, so relaxing it would
@@ -645,6 +718,197 @@ export class RoadNetwork {
       return p;
     };
 
+    // ---- alignment shaping (owner 2026-07-06: «минимум 20 м от поворота до
+    // поворота ВСЕГДА; на шоссе лучше участки 100–500 м без поворотов»). The
+    // A* walks an 8-connected 8 m lattice — its raw polyline is a staircase
+    // of 8 m micro-turns that Chaikin only ROUNDS, never removes. Fix at the
+    // source: Douglas-Peucker straightens the lattice noise into real
+    // tangents (eps per class), then a turn-spacing pass guarantees the
+    // minimum straight run between direction changes; Chaikin afterwards
+    // rounds only the surviving, honest corners.
+    /**
+     * chord validity: a straightened segment may not bridge deep water or
+     * demand impossible earthworks. The A* wiggled around those obstacles on
+     * purpose — DP/turn-spacing must not chord across them (iteration-1
+     * lesson: a straightened serpentine bend entered a tarn and CUT the
+     * route; a valley chord dived under the water table).
+     */
+    const chordSafe = (A: number[], B: number[], maxGrade: number): boolean => {
+      const ax = A[0] as number;
+      const az = A[1] as number;
+      const bx = B[0] as number;
+      const bz = B[1] as number;
+      const len = Math.hypot(bx - ax, bz - az);
+      const steps = Math.max(2, Math.ceil(len / 6));
+      // FULL-RES heights: the smoothed router grid underestimates gullies
+      // and spurs by metres — chords vetted on it still dove the profile
+      // ~10 m under the real terrain (iteration-3 lesson)
+      const hA = hAt(ax, az);
+      const hB = hAt(bx, bz);
+      // net grade: the A* zigzags EXIST to hold the class grade — a chord
+      // that replaces them must be ridable itself, or the vertical profile
+      // dives under the terrain and triggers false lake-CUTs (iter 2)
+      if (Math.abs(hB - hA) / Math.max(len, 1) > maxGrade) return false;
+      let hPrev = hA;
+      const stepLen = len / steps;
+      for (let k = 1; k <= steps; k++) {
+        const t = k / steps;
+        const px = ax + (bx - ax) * t;
+        const pz = az + (bz - az) * t;
+        const c = toCell(px, pz);
+        const i = c.z * N + c.x;
+        if ((gd[i] as number) > CLASSIFY.FORD_MAX_DEPTH_M) return false;
+        const hHere = hAt(px, pz);
+        if (Math.abs(hHere - (hA + (hB - hA) * t)) > MAX_CUT_FILL) return false;
+        // sampled grade along the chord: reject sustained over-grade runs
+        // the profile clamp could only absorb with deep cuts (2× tolerance
+        // for full-res micro-noise at 6 m steps)
+        if (Math.abs(hHere - hPrev) / Math.max(stepLen, 1) > maxGrade * 2) return false;
+        hPrev = hHere;
+      }
+      return true;
+    };
+
+    const simplifyDP = (pts: number[][], eps: number, maxGrade: number): number[][] => {
+      if (pts.length <= 2) return pts;
+      const keep = new Uint8Array(pts.length);
+      keep[0] = 1;
+      keep[pts.length - 1] = 1;
+      const stack: [number, number][] = [[0, pts.length - 1]];
+      while (stack.length > 0) {
+        const [a, b] = stack.pop() as [number, number];
+        if (b - a < 2) continue;
+        const A = pts[a] as number[];
+        const B = pts[b] as number[];
+        const abx = (B[0] as number) - (A[0] as number);
+        const abz = (B[1] as number) - (A[1] as number);
+        const len2 = abx * abx + abz * abz || 1;
+        let mi = -1;
+        let md = -1;
+        for (let i = a + 1; i < b; i++) {
+          const P = pts[i] as number[];
+          const t = Math.min(
+            Math.max((((P[0] as number) - (A[0] as number)) * abx + ((P[1] as number) - (A[1] as number)) * abz) / len2, 0),
+            1,
+          );
+          const d = Math.hypot(
+            (P[0] as number) - (A[0] as number) - abx * t,
+            (P[1] as number) - (A[1] as number) - abz * t,
+          );
+          if (d > md) {
+            md = d;
+            mi = i;
+          }
+        }
+        // keep the worst deviator when it exceeds eps — OR when dropping the
+        // whole span would chord across water/over-grade/unbuildable ground
+        if (mi >= 0 && (md > eps || !chordSafe(A, B, maxGrade))) {
+          keep[mi] = 1;
+          stack.push([a, mi], [mi, b]);
+        }
+      }
+      return pts.filter((_, i) => keep[i] === 1);
+    };
+
+    /** unsigned direction change at interior vertex i (rad) */
+    const turnAt = (pts: number[][], i: number): number => {
+      const a = pts[i - 1] as number[];
+      const b = pts[i] as number[];
+      const c = pts[i + 1] as number[];
+      const d1x = (b[0] as number) - (a[0] as number);
+      const d1z = (b[1] as number) - (a[1] as number);
+      const d2x = (c[0] as number) - (b[0] as number);
+      const d2z = (c[1] as number) - (b[1] as number);
+      const dot = d1x * d2x + d1z * d2z;
+      const l = Math.hypot(d1x, d1z) * Math.hypot(d2x, d2z) || 1;
+      return Math.acos(Math.min(Math.max(dot / l, -1), 1));
+    };
+
+    const TURN_MIN_RAD = 0.14; // < ~8° between tangents = not a turn
+    const enforceTurnSpacing = (pts: number[][], minGap: number, maxGrade: number): number[][] => {
+      /** removal is only legal when the resulting chord is buildable */
+      const removable = (p: number[][], i: number): boolean =>
+        chordSafe(p[i - 1] as number[], p[i + 1] as number[], maxGrade);
+      const p = pts.slice();
+      for (let guard = 0; guard < 8000 && p.length > 2; guard++) {
+        // 1) drop pseudo-turns (residual lattice noise below the threshold)
+        let weakest = -1;
+        let weakestA = TURN_MIN_RAD;
+        for (let i = 1; i < p.length - 1; i++) {
+          const a = turnAt(p, i);
+          if (a < weakestA && removable(p, i)) {
+            weakestA = a;
+            weakest = i;
+          }
+        }
+        if (weakest >= 0) {
+          p.splice(weakest, 1);
+          continue;
+        }
+        // 2) closest under-spaced pair of consecutive turns → drop the
+        //    weaker of the two (hairpin apexes survive; jitter dies);
+        //    obstacle-pinned vertices are exempt — the wiggle is honest
+        let progress = false;
+        for (let i = 1; i < p.length - 2; i++) {
+          const a = p[i] as number[];
+          const b = p[i + 1] as number[];
+          if (Math.hypot((b[0] as number) - (a[0] as number), (b[1] as number) - (a[1] as number)) >= minGap) continue;
+          const weakFirst = turnAt(p, i) < turnAt(p, i + 1);
+          const order = weakFirst ? [i, i + 1] : [i + 1, i];
+          for (const v of order) {
+            if (removable(p, v)) {
+              p.splice(v, 1);
+              progress = true;
+              break;
+            }
+          }
+          // obstacle-locked pair: merge both bends into ONE point when the
+          // merged chords are buildable — an S-jitter becomes a single
+          // sweep. Try several positions along the pair; near water the
+          // midpoint is often blocked while an off-center point is fine.
+          if (!progress) {
+            for (const t of [0.5, 0.35, 0.65, 0.2, 0.8]) {
+              const mid = [
+                (a[0] as number) * (1 - t) + (b[0] as number) * t,
+                (a[1] as number) * (1 - t) + (b[1] as number) * t,
+              ];
+              if (
+                chordSafe(p[i - 1] as number[], mid, maxGrade) &&
+                chordSafe(mid, p[i + 2] as number[], maxGrade)
+              ) {
+                p.splice(i, 2, mid);
+                progress = true;
+                break;
+              }
+            }
+          }
+          if (progress) break;
+        }
+        if (!progress) break;
+      }
+      return p;
+    };
+
+    /** per-class shaping: eps = how much lattice noise to straighten (m),
+     *  gap = minimum spacing between turn VERTICES (m). Chaikin rounds each
+     *  bend into ±25% of the adjacent segments, so the CLEAR straight
+     *  between two finished arcs is ≈ gap/2 — sized so that clear run meets
+     *  the owner floor of 20 m everywhere (asphalt: 100–500 m straights). */
+    const shapeOf = (id: SurfaceId): { eps: number; gap: number } => {
+      switch (id) {
+        case SurfaceId.Asphalt:
+          return { eps: 14, gap: 130 };
+        case SurfaceId.GravelFine:
+          return { eps: 10, gap: 56 };
+        case SurfaceId.GravelCoarse:
+          return { eps: 9, gap: 54 };
+        case SurfaceId.DirtRoad:
+          return { eps: 7, gap: 50 };
+        default:
+          return { eps: 4, gap: 44 };
+      }
+    };
+
     const resample = (pts: number[][], step: number): number[][] => {
       const out: number[][] = [pts[0] as number[]];
       let carry = 0;
@@ -669,15 +933,23 @@ export class RoadNetwork {
 
     const buildRoute = (name: string, spec: RoadClassSpec, cells: Cell[]): RoadRoute => {
       const rawPoly = cells.map((c) => [cw(c.x), cw(c.z)]);
-      let poly = chaikin(rawPoly, 3);
+      // straighten lattice noise, enforce the turn-spacing floor, THEN round:
+      // Chaikin on the shaped tangents produces sweeping engineered curves
+      // instead of rounding every 8 m stair-step into a wiggle
+      const shape = shapeOf(spec.surfaceId);
+      let poly = simplifyDP(rawPoly, shape.eps, spec.maxGrade);
+      poly = enforceTurnSpacing(poly, shape.gap, spec.maxGrade);
+      poly = chaikin(poly, 3);
       poly = resample(poly, RESAMPLE_M);
       // snap-back: smoothing legally cuts corners, but a cut across a river
       // meander or a tarn bay lands the road in deep water the A* cells
       // never touched — project such points back onto the raw route (real
       // roads break their sweep at a ford, they don't bridge the bend)
-      for (const p of poly) {
+      const snapped = new Set<number>();
+      for (const [pi, p] of poly.entries()) {
         const depth = wAtMin(p[0] as number, p[1] as number) - hAt(p[0] as number, p[1] as number);
         if (depth <= CLASSIFY.FORD_MAX_DEPTH_M) continue;
+        snapped.add(pi);
         let bx = p[0] as number;
         let bz = p[1] as number;
         let bd = Infinity;
@@ -702,6 +974,32 @@ export class RoadNetwork {
         }
         p[0] = bx;
         p[1] = bz;
+      }
+      // relax the snap-back kinks: projection makes a sharp S within ~2
+      // samples — the under-20 m "double turn" defect. Laplacian-relax the
+      // moved points (+1 neighbor each side), accepting a step only while
+      // it stays out of deep water (same gate the snap-back enforces).
+      if (snapped.size > 0) {
+        const zone = new Set<number>();
+        for (const k of snapped) {
+          zone.add(k);
+          if (k > 0) zone.add(k - 1);
+          if (k < poly.length - 1) zone.add(k + 1);
+        }
+        for (let it = 0; it < 4; it++) {
+          for (const k of zone) {
+            if (k <= 0 || k >= poly.length - 1) continue;
+            const a = poly[k - 1] as number[];
+            const b = poly[k] as number[];
+            const c = poly[k + 1] as number[];
+            const rx = (b[0] as number) * 0.5 + ((a[0] as number) + (c[0] as number)) * 0.25;
+            const rz = (b[1] as number) * 0.5 + ((a[1] as number) + (c[1] as number)) * 0.25;
+            if (wAtMin(rx, rz) - hAt(rx, rz) <= CLASSIFY.FORD_MAX_DEPTH_M) {
+              b[0] = rx;
+              b[1] = rz;
+            }
+          }
+        }
       }
 
       const n = poly.length;
@@ -829,9 +1127,17 @@ export class RoadNetwork {
         // consecutive samples = a routing artifact (a smoothed bend cutting
         // a tarn), not a crossing — the road honestly ENDS there. River
         // trench touches stay tagged fords; physics punishes bad ones.
+        // REAL water only (wAtMin above the terrain): dry texels hold a
+        // bed−2 sentinel, and a deep profile cut under DRY ground once read
+        // as "3 m under a lake" — false CUTs truncated healthy routes and
+        // collapsed the network to 19 km (found 2026-07-06).
         const lakeAt = (k: number): boolean => {
           const q = poly[k] as number[];
-          return wAtMin(q[0] as number, q[1] as number) - (ys[k] as number) > 3;
+          const wm = wAtMin(q[0] as number, q[1] as number);
+          return (
+            wm - (ys[k] as number) > 3 &&
+            wm > hAt(q[0] as number, q[1] as number) + 0.05
+          );
         };
         if (lakeAt(i) && i + 1 < n && lakeAt(i + 1)) {
           const q = poly[i] as number[];
@@ -871,7 +1177,12 @@ export class RoadNetwork {
           const a = (k / 16) * Math.PI * 2;
           const c = toCell(p[0] + Math.cos(a) * r, p[1] + Math.sin(a) * r);
           const i = c.z * N + c.x;
-          const score = (gd[i] as number) > 0.02 ? Infinity : r * 0.01 + (gs[i] as number);
+          // flat bog margins used to WIN this score (gs≈0) and anchored whole
+          // routes inside the mud — exclude them like open water
+          const score =
+            (gd[i] as number) > 0.02 || (gmud[i] as number) > 0
+              ? Infinity
+              : r * 0.01 + (gs[i] as number);
           if (score < bestScore) {
             bestScore = score;
             best = [cw(c.x), cw(c.z)];
@@ -888,9 +1199,11 @@ export class RoadNetwork {
     const spineLow = dryPoi(v[3] as [number, number]);
     const lakeN = dryPoi([mp.lakeC[0] + mp.lakeR * 0.9, mp.lakeC[1] - mp.lakeR * 0.75]);
     const exitSW: [number, number] = [-1980, 1780];
-    const hillA = jit([-820, -760], 90);
-    const hillB = jit([-1480, -160], 90);
-    const hillC = jit([-360, 1450], 90);
+    // hill anchors go through dryPoi too: a raw jitter point on a trench lip
+    // or a bog is a dead target every plan through it inherits
+    const hillA = dryPoi(jit([-820, -760], 90));
+    const hillB = dryPoi(jit([-1480, -160], 90));
+    const hillC = dryPoi(jit([-360, 1450], 90));
     const karstE = jit([mp.karstC[0] + 380, mp.karstC[1] + 300], 60);
     const spec = (id: SurfaceId): RoadClassSpec =>
       ROAD_CLASSES.find((c) => c.surfaceId === id) as RoadClassSpec;
@@ -927,8 +1240,13 @@ export class RoadNetwork {
       }
     }
     const ridgeTgt: [number, number] = [cw(ridgeCell.x), cw(ridgeCell.z)];
+    // a serpentine that gains no real height is a pointless squiggle on a
+    // flat — only build the showcase climb when the flank actually rises
+    const ridgeStartCell = toCell(ridgeStart[0], ridgeStart[1]);
+    const ridgeClimb = ridgeTop - (gh[ridgeStartCell.z * N + ridgeStartCell.x] as number);
+    const SERPENTINE_MIN_CLIMB = 60;
     console.log(
-      `[roads] serpentine: start (${ridgeStart[0].toFixed(0)},${ridgeStart[1].toFixed(0)}) → top (${ridgeTgt[0].toFixed(0)},${ridgeTgt[1].toFixed(0)}) h=${ridgeTop.toFixed(0)}`,
+      `[roads] serpentine: start (${ridgeStart[0].toFixed(0)},${ridgeStart[1].toFixed(0)}) → top (${ridgeTgt[0].toFixed(0)},${ridgeTgt[1].toFixed(0)}) h=${ridgeTop.toFixed(0)} climb=${ridgeClimb.toFixed(0)}`,
     );
 
     const plan: { name: string; cls: RoadClassSpec; via: [number, number][] }[] = [
@@ -954,11 +1272,15 @@ export class RoadNetwork {
         cls: spec(SurfaceId.GravelCoarse),
         via: [hillA, hillC, lakeN],
       },
-      {
-        name: 'ridge-dirt',
-        cls: spec(SurfaceId.DirtRoad),
-        via: [ridgeStart, ridgeTgt],
-      },
+      ...(ridgeClimb >= SERPENTINE_MIN_CLIMB
+        ? [
+            {
+              name: 'ridge-dirt',
+              cls: spec(SurfaceId.DirtRoad),
+              via: [ridgeStart, ridgeTgt] as [number, number][],
+            },
+          ]
+        : []),
       {
         name: 'karst-singletrack',
         cls: spec(SurfaceId.Singletrack),
@@ -977,13 +1299,25 @@ export class RoadNetwork {
       // contiguous successful legs become their own route part
       let cells: Cell[] = [];
       let part = 0;
+      // length floor in METERS (owner: no micro-routes) — split leftovers and
+      // link stubs shorter than a real riding leg are dropped, not built
+      const minLenM =
+        cls.surfaceId === SurfaceId.Asphalt ||
+        cls.surfaceId === SurfaceId.GravelFine ||
+        cls.surfaceId === SurfaceId.GravelCoarse
+          ? 150
+          : 80;
       const flush = (): void => {
         if (cells.length > 3) {
           const r = buildRoute(part === 0 ? name : `${name}-${part}`, cls, cells);
-          if (r.pts.length > 3) {
+          if (r.pts.length > 3 && r.length >= minLenM) {
             routes.push(r);
             markNetwork(r);
             part++;
+          } else if (r.pts.length > 0) {
+            console.warn(
+              `[roads] drop stub ${r.name}: ${r.length.toFixed(0)} m < ${minLenM} m floor`,
+            );
           }
         }
         cells = [];
@@ -997,7 +1331,11 @@ export class RoadNetwork {
         const fromC = toCell(...(via[i] as [number, number]));
         const toC = toCell(...(via[i + 1] as [number, number]));
         let leg = route(fromC, toC, cls);
-        if (!leg && isAsphalt) leg = asphaltRetry(fromC, toC, cls);
+        // retry ladder for EVERY class (was asphalt-only): mud-aware dryPoi
+        // can shift an anchor into a grade-enclosed pocket; the relaxed
+        // hard-block + jittered targets escape it (upper-valley leg died
+        // this way — found on the 2026-07-06 repro seed)
+        if (!leg) leg = asphaltRetry(fromC, toC, cls);
         if (!leg) {
           const from = (via[i] as number[]).map((val) => val.toFixed(0)).join(',');
           const to = (via[i + 1] as number[]).map((val) => val.toFixed(0)).join(',');
@@ -1033,17 +1371,31 @@ export class RoadNetwork {
     };
     for (const p of plan) runPlan(p.name, p.cls, p.via);
 
-    // top up to the ≥30 km floor with extra hill loops (deterministic order)
+    // top up to the ≥30 km floor with extra hill loops (deterministic order).
+    // Targets carry a MIN SPAN from their anchor (no 100 m link stubs) and
+    // must not land in open water or a bog (a mud target forces the entire
+    // tail of the route into the marsh no matter what the A* costs say).
     const extraAnchors: [number, number][] = [hillA, hillB, hillC, spineMid, spineLow, lakeN];
+    const LINK_MIN_SPAN = 600;
     let extra = 0;
-    while (routes.reduce((a, r) => a + r.length, 0) < TARGET_KM * 1000 && extra < 8) {
+    // cap 12 (was 8): anchors on hydrology islands legitimately fail their
+    // link, and the km floor still has to be met by the surviving ones
+    while (routes.reduce((a, r) => a + r.length, 0) < TARGET_KM * 1000 && extra < 12) {
       const a = extraAnchors[extra % extraAnchors.length] as [number, number];
-      const b = jit(
-        [rng.range(-1500, 800), rng.range(-1100, 1500)],
-        60,
-      );
-      const cls = spec(extra % 2 === 0 ? SurfaceId.GravelCoarse : SurfaceId.DirtRoad);
-      runPlan(`link-${extra}`, cls, [a, b]);
+      let b: [number, number] | null = null;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const cand = jit([rng.range(-1500, 800), rng.range(-1100, 1500)], 60);
+        if (Math.hypot(cand[0] - a[0], cand[1] - a[1]) < LINK_MIN_SPAN) continue;
+        const c = toCell(cand[0], cand[1]);
+        const ci = c.z * N + c.x;
+        if ((gd[ci] as number) > 0.02 || (gmud[ci] as number) > 0) continue;
+        b = cand;
+        break;
+      }
+      if (b) {
+        const cls = spec(extra % 2 === 0 ? SurfaceId.GravelCoarse : SurfaceId.DirtRoad);
+        runPlan(`link-${extra}`, cls, [a, b]);
+      }
       extra++;
     }
 

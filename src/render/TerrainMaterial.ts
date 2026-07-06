@@ -40,6 +40,7 @@ import {
   PERIOD_VAL,
 } from '../gpu/passes/NoiseBake';
 import { sunU } from './VegMaterials';
+import { SURF_COL, palette } from './DebugSurface';
 import { weatherU } from '../sky/Weather';
 import { zoneMasks, type MacroParams } from '../world/MacroMap';
 import { LAKE_LEVEL, WORLD_HALF, WORLD_SIZE } from '../world/WorldConst';
@@ -77,6 +78,10 @@ export interface TerrainShading {
   roughnessNode: NF;
   /** final shading normal in WORLD space (for probe irradiance) */
   worldNormalNode: NV3;
+  /** Shift+W surface-debug color: flat per-class palette + world grid, painted
+   *  from the same class weights as colorNode. Applied by the caller as an
+   *  UNLIT emissive when surfaceDbgU is on. */
+  surfaceDebugNode: NV3;
 }
 
 const uvFromWorld = (p: NV2): NV2 => p.div(WORLD_SIZE).add(0.5);
@@ -263,6 +268,19 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   col = mix(col, snowCol, snowW);
   col = col.mul(macroTint.add(1));
 
+  // ---------- Shift+W surface-debug palette (natural classes) --------------------
+  // Same weights as the composite above, but flat separable colors. Road
+  // classes override this inside the road block below; the grid + return
+  // happen just before the shading result is assembled.
+  let surfDbg: NV3 = palette(SURF_COL.soil);
+  surfDbg = mix(surfDbg, palette(SURF_COL.grass), grassW);
+  surfDbg = mix(surfDbg, palette(SURF_COL.forest), forestW);
+  surfDbg = mix(surfDbg, palette(SURF_COL.scree), screeW);
+  surfDbg = mix(surfDbg, palette(SURF_COL.rock), rockW);
+  surfDbg = mix(surfDbg, palette(SURF_COL.gravelRiver), riverW.mul(0.85).mul(pondK.oneMinus()));
+  surfDbg = mix(surfDbg, palette(SURF_COL.mud), pondK);
+  surfDbg = mix(surfDbg, palette(SURF_COL.snow), snowW);
+
   // feedback 2.8 (splat half): a real grass field is DIRECTIONAL — forward
   // scatter through backlit blades brightens and warms it toward the sun at
   // grazing view angles. Distance-gated: near meadows have actual blades
@@ -374,6 +392,46 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     roadDispK = float(1).sub(core.mul(float(1).sub(rs.dispScale)));
     // asphalt reads smoother than any natural class; gravels/dirt stay matte
     roadRough = mix(float(0.88), float(0.6), is(SurfaceId.Asphalt));
+
+    // surface-debug palette by road-stamp class. surfIdF arrives FRACTIONAL
+    // here (measured ≈13.5–14.6 on defect corridors) — landing on the ±0.5
+    // window boundaries the natural `is()` uses, so every window misses and the
+    // core reads black. Round to the nearest class id and clamp to the valid
+    // range, then match exactly — no core can fall through. Debug-only: the
+    // natural `is()` above is untouched.
+    const sidI = sid.add(0.5).floor().clamp(0, SurfaceId.COUNT - 1);
+    const isDbg = (id: SurfaceId): NF =>
+      sidI.equal(float(id)).select(float(1), float(0));
+    const sidCol = (id: SurfaceId, c: readonly number[]): NV3 => palette(c).mul(isDbg(id));
+    let roadDbg: NV3 = sidCol(SurfaceId.Grass, SURF_COL.grass);
+    roadDbg = roadDbg.add(sidCol(SurfaceId.Forest, SURF_COL.forest));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.Soil, SURF_COL.soil));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.Scree, SURF_COL.scree));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.Rock, SURF_COL.rock));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.GravelRiver, SURF_COL.gravelRiver));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.Mud, SURF_COL.mud));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.Snow, SURF_COL.snow));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.WaterShallow, SURF_COL.water));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.WaterDeep, SURF_COL.waterDeep));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.Asphalt, SURF_COL.asphalt));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.GravelFine, SURF_COL.gravelFine));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.GravelCoarse, SURF_COL.gravelCoarse));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.DirtRoad, SURF_COL.dirtRoad));
+    roadDbg = roadDbg.add(sidCol(SurfaceId.Singletrack, SURF_COL.singletrack));
+    // fallback: a road core whose id matched NO class (broken/NaN surfIdF —
+    // the very corridors that read black) gets the loud anomaly color instead,
+    // so the defect is visible rather than swallowed.
+    const matched = isDbg(SurfaceId.Grass)
+      .add(isDbg(SurfaceId.Forest)).add(isDbg(SurfaceId.Soil))
+      .add(isDbg(SurfaceId.Scree)).add(isDbg(SurfaceId.Rock))
+      .add(isDbg(SurfaceId.GravelRiver)).add(isDbg(SurfaceId.Mud))
+      .add(isDbg(SurfaceId.Snow)).add(isDbg(SurfaceId.WaterShallow))
+      .add(isDbg(SurfaceId.WaterDeep)).add(isDbg(SurfaceId.Asphalt))
+      .add(isDbg(SurfaceId.GravelFine)).add(isDbg(SurfaceId.GravelCoarse))
+      .add(isDbg(SurfaceId.DirtRoad)).add(isDbg(SurfaceId.Singletrack))
+      .clamp(0, 1);
+    roadDbg = mix(palette(SURF_COL.anomaly), roadDbg, matched);
+    surfDbg = mix(surfDbg, roadDbg, core);
   }
 
   // ---------- normal perturbation ---------------------------------------------------
@@ -455,5 +513,6 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     normalNode: transformNormalToView(nrm),
     roughnessNode: rough,
     worldNormalNode: nrm,
+    surfaceDebugNode: surfDbg,
   };
 }
