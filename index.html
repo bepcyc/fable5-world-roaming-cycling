@@ -4,7 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LAAS</title>
+    <!-- relative href resolves under any base ('/', '/laas/', loopback) -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#06080a" />
     <link rel="preload" as="image" href="/splash/hero.webp" />
+    <link rel="preload" as="image" href="/splash/hero-night-off.webp" />
+    <link rel="preload" as="image" href="/splash/hero-night.webp" />
     <style>
       html, body {
         margin: 0;
@@ -81,18 +86,56 @@
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
       }
       #splash[hidden] { display: none; }
-      #splash-bg {
+      /* Three stacked layers, all sharing the SAME Ken Burns transform so they
+         stay registered while zooming. Only their OPACITY animates:
+           day (hero) → night-with-lights-OFF (nightfall) → then the bike lights
+           ignite in 3 stages (lights-ignite) over the dark night → hold → the
+           lights switch off → back to day. Loops forever.
+         The lights layer differs from the lights-off layer ONLY in the lamps +
+         their cast light, so fading it in animates JUST the lights. */
+      #splash-bg, #splash-bg-nightoff, #splash-bg-night {
         position: absolute;
         inset: -4%;
-        background: #0b0f0d center/cover no-repeat url('/splash/hero.webp');
+        background: #0b0f0d center/cover no-repeat;
         animation: laas-kenburns 42s ease-in-out infinite alternate;
+      }
+      #splash-bg { background-image: url('/splash/hero.webp'); }
+      #splash-bg-nightoff {
+        background-image: url('/splash/hero-night-off.webp');
+        opacity: 0;
+        animation:
+          laas-kenburns 42s ease-in-out infinite alternate,
+          laas-nightfall 44s ease-in-out infinite;
+      }
+      #splash-bg-night {
+        background-image: url('/splash/hero-night.webp');
+        opacity: 0;
+        animation:
+          laas-kenburns 42s ease-in-out infinite alternate,
+          laas-lights-ignite 44s ease-in-out infinite;
       }
       @keyframes laas-kenburns {
         0%   { transform: scale(1.0) translate(0, 0); }
         100% { transform: scale(1.07) translate(-1.2%, -0.8%); }
       }
+      /* night falls: day → dark starlit night (lights off) → hold → back to day */
+      @keyframes laas-nightfall {
+        0%, 10%   { opacity: 0; }
+        25%, 78%  { opacity: 1; }
+        92%, 100% { opacity: 0; }
+      }
+      /* lights ignite in 3 stages once it's dark (dim → brighter → full beam),
+         with a hold at each stage, then switch off before dawn */
+      @keyframes laas-lights-ignite {
+        0%, 30%   { opacity: 0; }
+        33%, 37%  { opacity: 0.30; }   /* stage 1: faint glow */
+        41%, 45%  { opacity: 0.65; }   /* stage 2: brighter    */
+        49%, 74%  { opacity: 1; }      /* stage 3: full beam    */
+        82%, 100% { opacity: 0; }
+      }
       @media (prefers-reduced-motion: reduce) {
         #splash-bg { animation: none; }
+        #splash-bg-nightoff, #splash-bg-night { animation: none; opacity: 0; }
       }
       #splash-scrim {
         position: absolute;
@@ -282,6 +325,8 @@
     <!-- main menu: pure HTML+CSS so the art+buttons paint before main.ts runs -->
     <div id="splash">
       <div id="splash-bg"></div>
+      <div id="splash-bg-nightoff"></div>
+      <div id="splash-bg-night"></div>
       <div id="splash-scrim"></div>
       <div id="splash-content">
         <div id="splash-title">L A A S</div>
