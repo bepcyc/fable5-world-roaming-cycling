@@ -371,7 +371,9 @@ export class TerrainTiles {
     this.mesh.castShadow = false;
 
     // --- far shell -----------------------------------------------------------------
-    const ring = new RingGeometry(WORLD_HALF * 0.952, FAR_RADIUS, 160, 42);
+    // 64 radial segments ≈ 190 m spacing — resolves the П.6 three-band outer
+    // ranges (42 gave ~290 m and undersampled three separate crest lines)
+    const ring = new RingGeometry(WORLD_HALF * 0.952, FAR_RADIUS, 160, 64);
     ring.rotateX(-Math.PI / 2);
     const farMat = new MeshPhysicalNodeMaterial();
     farMat.specularIntensity = 0.35;

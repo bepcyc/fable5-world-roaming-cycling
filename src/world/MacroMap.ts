@@ -49,7 +49,10 @@ export interface MacroParams {
   tribFloors: number[];
   tribWidth: number;
   /** noise domain offsets (decorrelate fields per seed) */
-  off: Record<'warp' | 'ridge' | 'hills' | 'karst' | 'detail' | 'hard' | 'far', [number, number]>;
+  off: Record<
+    'warp' | 'ridge' | 'hills' | 'karst' | 'detail' | 'hard' | 'far' | 'far2' | 'far3',
+    [number, number]
+  >;
   /**
    * П.8 tilted strata ledge-beds (ref-05): massif-global bedding orientation.
    * dip = unit XZ direction the beds descend toward (strike ⊥ to it, along
@@ -128,7 +131,11 @@ export function makeMacroParams(seed: WorldSeed): MacroParams {
       karst: off(),
       detail: off(),
       hard: off(),
+      // far/far2/far3 drawn LAST in the rngOff stream: adding the two outer
+      // bands (П.6) must not re-roll any earlier offset for a given seed
       far: off(),
+      far2: off(),
+      far3: off(),
     },
   };
 }
@@ -396,23 +403,69 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
 
   // --- far shell: outer ranges beyond the world edge --------------------------
   if (!full) {
+    // П.6 (ref-04): THREE independent ridge bands at increasing radii, each
+    // with its own frequency/phase/gaps, and each farther band ~25% TALLER
+    // than the one before — so the distant crest lines peek over the nearer
+    // ones and new silhouette layers "appear" as the camera climbs.
+    // Chebyshev radius keeps the bands parallel to the (square) world edge.
     const r = max(abs(p.x), abs(p.y));
-    const band = smoothstep(WORLD_HALF + 600, 5200, r).mul(smoothstep(13500, 7600, r));
-    const pf = p.div(2600).add(vec2(o.far[0], o.far[1]));
-    let outer: NF = float(0);
-    let amp = 0.5;
-    let freq = 1;
-    let norm = 0;
-    for (let i = 0; i < 5; i++) {
-      const n = abs(mx_noise_float(pf.mul(freq).add(i * 3.7))).oneMinus();
-      outer = outer.add(n.mul(n).mul(amp));
-      norm += amp;
-      amp *= 0.5;
-      freq *= 2.1;
-    }
-    outer = outer.div(norm);
-    const gaps = smoothstep(0.25, 0.75, mx_noise_float(p.div(3900).add(17.3)).mul(0.5).add(0.5));
-    h = h.add(outer.pow(1.5).mul(1750).mul(band).mul(gaps));
+    /** radial envelope: rise r0→r1, plateau, fall r2→r3 */
+    const env = (r0: number, r1: number, r2: number, r3: number): NF =>
+      smoothstep(r0, r1, r).mul(smoothstep(r3, r2, r));
+    /** one ridged range: fBm ridges × gaps (broken wall) × slow crest swell */
+    const ridgeBand = (
+      band: NF,
+      off: [number, number],
+      scale: number,
+      octaves: number,
+      amp: number,
+      gapPeriod: number,
+      gapPhase: number,
+    ): NF => {
+      const pf = p.div(scale).add(vec2(off[0], off[1]));
+      let outer: NF = float(0);
+      let a = 0.5;
+      let freq = 1;
+      let norm = 0;
+      for (let i = 0; i < octaves; i++) {
+        const n = abs(mx_noise_float(pf.mul(freq).add(i * 3.7))).oneMinus();
+        outer = outer.add(n.mul(n).mul(a));
+        norm += a;
+        a *= 0.5;
+        freq *= 2.1;
+      }
+      outer = outer.div(norm);
+      // gaps: the range breaks into separate massifs, not a continuous wall
+      const gaps = smoothstep(
+        0.25,
+        0.75,
+        mx_noise_float(p.div(gapPeriod).add(gapPhase)).mul(0.5).add(0.5),
+      );
+      // longitudinal variation: slow crest swell along the range (≈0.75–1.15)
+      const swell = mx_noise_float(p.div(gapPeriod * 1.9).add(gapPhase + 57.2))
+        .mul(0.2)
+        .add(0.95);
+      return outer.pow(1.5).mul(amp).mul(band).mul(gaps).mul(swell);
+    };
+    // foothills just past the edge / middle range / horizon wall
+    const bandA = ridgeBand(
+      env(WORLD_HALF + 600, 4400, 5800, 7400),
+      o.far,
+      2200,
+      5,
+      950,
+      3500,
+      17.3,
+    );
+    const bandB = ridgeBand(env(5600, 7600, 9400, 11400), o.far2, 2900, 4, 1550, 4400, 63.1);
+    const bandC = ridgeBand(env(9400, 11200, 12600, 13800), o.far3, 3700, 4, 2320, 5400, 41.7);
+    // rim fade on the EUCLIDEAN radius: the shell ring is circular (outer
+    // radius FAR_RADIUS) while the band envelopes are Chebyshev — on the
+    // diagonals a band would otherwise get sliced off as a cliff at the rim
+    const rim = smoothstep(13900, 12900, p.length());
+    // max(), not sum: in the overlap zones two ranges keep two distinct
+    // silhouettes instead of merging into one additive hump
+    h = h.add(max(bandA, max(bandB, bandC)).mul(rim));
   }
 
   // gentle monotonic tilt toward the valley spine so hill country drains

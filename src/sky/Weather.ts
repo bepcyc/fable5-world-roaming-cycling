@@ -42,6 +42,9 @@ interface Targets {
   fogK: number;
   wxBoost: number;
   aerialK: number;
+  /** aerial haze scale height (km) → Atmosphere.fogU.hf: tall for clear-day
+   *  horizon haze (ridge layering, ref-04), ground-hugging for fog state */
+  aerialHf: number;
   cov: number;
   cdens: number;
   overcast: number;
@@ -52,10 +55,13 @@ interface Targets {
 }
 
 const STATES: Record<WeatherKind, Targets> = {
-  dry: { fogK: 0.4, wxBoost: 0, aerialK: 0.22, cov: 0.62, cdens: 0.85, overcast: 0, wetness: 0, rain: 0, sunDim: 1, envK: 1 },
-  rain: { fogK: 1.0, wxBoost: 0.4, aerialK: 0.52, cov: 1.0, cdens: 1.25, overcast: 1.0, wetness: 0.92, rain: 0.85, sunDim: 0.25, envK: 0.5 },
-  'after-rain': { fogK: 0.75, wxBoost: 0.3, aerialK: 0.34, cov: 0.5, cdens: 0.75, overcast: 0.12, wetness: 1, rain: 0, sunDim: 0.9, envK: 0.85 },
-  fog: { fogK: 2.8, wxBoost: 1, aerialK: 0.9, cov: 0.88, cdens: 0.7, overcast: 0.45, wetness: 0.3, rain: 0, sunDim: 0.55, envK: 0.7 },
+  // dry = «ясный день с горизонтной дымкой» (ref-04): tall haze column
+  // (hf 0.95 km) + moderate density — far ridge bands sink step by step,
+  // foreground stays clean (Atmosphere.aerial's near-gate owns the curve)
+  dry: { fogK: 0.4, wxBoost: 0, aerialK: 0.19, aerialHf: 0.95, cov: 0.62, cdens: 0.85, overcast: 0, wetness: 0, rain: 0, sunDim: 1, envK: 1 },
+  rain: { fogK: 1.0, wxBoost: 0.4, aerialK: 0.52, aerialHf: 0.65, cov: 1.0, cdens: 1.25, overcast: 1.0, wetness: 0.92, rain: 0.85, sunDim: 0.25, envK: 0.5 },
+  'after-rain': { fogK: 0.75, wxBoost: 0.3, aerialK: 0.34, aerialHf: 0.8, cov: 0.5, cdens: 0.75, overcast: 0.12, wetness: 1, rain: 0, sunDim: 0.9, envK: 0.85 },
+  fog: { fogK: 2.8, wxBoost: 1, aerialK: 0.9, aerialHf: 0.38, cov: 0.88, cdens: 0.7, overcast: 0.45, wetness: 0.3, rain: 0, sunDim: 0.55, envK: 0.7 },
 };
 
 export function parseWeather(q: URLSearchParams): WeatherKind {
@@ -163,6 +169,7 @@ export class WeatherState {
       this.froxels.wxBoost.value = c.wxBoost;
     }
     this.atmosphere.fogU.k.value = c.aerialK;
+    this.atmosphere.fogU.hf.value = c.aerialHf;
     if (this.clouds) {
       this.clouds.coverage.value = c.cov;
       this.clouds.density.value = c.cdens;
