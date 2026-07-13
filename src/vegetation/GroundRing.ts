@@ -69,7 +69,12 @@ import {
   vec3,
 } from 'three/tsl';
 import { canopyAt, cellHash, cellHash2 } from '../gpu/passes/Scatter';
-import { applyDroplets, grassTranslucency, rockMaterial } from '../render/VegMaterials';
+import {
+  applyDroplets,
+  flowerMaterial,
+  grassTranslucency,
+  rockMaterial,
+} from '../render/VegMaterials';
 import { depthPrepassTwin } from '../render/VegPrepass';
 import { gustAt, windContext, windExposure, windU } from '../render/Wind';
 import type { NB, NF, NI, NU, NV2, NV3, NV4 } from '../gpu/TSLTypes';
@@ -85,6 +90,7 @@ import {
   twigGeometry,
 } from './GroundCover';
 import { buildRock } from './RockBuilder';
+import { buildFlower } from './Understory';
 import type { WorldSeed } from '../core/Seed';
 import { runiform } from '../gpu/RenderUniform';
 
@@ -132,6 +138,8 @@ const FAR_CAP = 196608;
 // (indices 9/10) so existing group indices 0–8 never shift.
 const RC_CAP = 16384; // road cobble
 const RP_CAP = 32768; // road pebble (denser — the tread is mostly fine grit)
+// alpine p.3: verge bloom strip pools (groups 11/12) — tiny trefoil/thyme
+const RF_CAP = 12288; // per bloom kind
 
 interface RingBind {
   cells: StorageBufferNode<'uint'>;
@@ -312,7 +320,15 @@ export class GroundRing {
   private reading = false;
   private frame = 0;
   private counters!: ReturnType<StorageBufferNode<'uint'>['toAtomic']>;
-  private caps: number[] = [...GRASS_CAPS, ...DEB_CAPS, FAR_CAP, RC_CAP, RP_CAP];
+  private caps: number[] = [
+    ...GRASS_CAPS,
+    ...DEB_CAPS,
+    FAR_CAP,
+    RC_CAP,
+    RP_CAP,
+    RF_CAP, // 11: roadTrefoil
+    RF_CAP, // 12: roadThyme
+  ];
 
   constructor(
     private hf: Heightfield,
@@ -578,6 +594,34 @@ export class GroundRing {
           .greaterThan(SurfaceId.GravelCoarse - 0.5)
           .and(rs.surfIdF.lessThan(SurfaceId.Singletrack + 0.5));
         const onSoft = rs.halfW.greaterThan(0.01).and(isSoft);
+        // alpine p.3 — verge bloom strip (ref-01/03): tiny golden trefoil /
+        // purple thyme cushions strewn along the soft-track shoulder. Scatter's
+        // 2.4 m understory grid physically cannot reach ref density (~1 bloom
+        // per 10 m of trail); this 0.3 m ring grid can. Flowers roll FIRST so
+        // the stone shoulder (halfW..halfW+0.7) doesn't eat the band.
+        If(
+          onSoft
+            .and(rs.dist.greaterThanEqual(rs.halfW.add(0.35)))
+            .and(rs.dist.lessThan(rs.halfW.add(1.1))),
+          () => {
+            const rf = cellHash(wc, salt ^ 0x77f1);
+            const fgrp = int(-1).toVar();
+            If(rf.lessThan(0.2), () => {
+              fgrp.assign(11); // golden trefoil
+            }).ElseIf(rf.lessThan(0.35), () => {
+              fgrp.assign(12); // purple thyme cushion
+            });
+            If(
+              fgrp
+                .greaterThanEqual(0)
+                .and(inFrustum(vec3(wpos.x, h.add(0.3), wpos.y), 0.8).greaterThan(0.5)),
+              () => {
+                appendRing(fgrp, wc, h);
+                Return();
+              },
+            );
+          },
+        );
         If(onSoft.and(rs.dist.lessThan(rs.halfW.add(0.7))), () => {
           const tread = rs.dist.lessThan(rs.halfW.sub(0.35));
           const innerEdge = rs.dist
@@ -828,6 +872,31 @@ export class GroundRing {
         geo: buildRock('cobble', rng.fork(rs.fork), 1).geometry,
         mat,
         g: rs.g,
+      });
+    }
+
+    // alpine p.3 — verge bloom pools (groups 11/12): tiny golden trefoil and
+    // purple thyme cushions along soft-track shoulders. Colors mirror
+    // VegLibrary's FLOWER_COLOR entries for the same kinds.
+    const roadBloom = [
+      { g: 11, kind: 'trefoil' as const, petal: { r: 0.92, g: 0.66, b: 0.06 } },
+      { g: 12, kind: 'thyme' as const, petal: { r: 0.5, g: 0.17, b: 0.5 } },
+    ];
+    for (const rb of roadBloom) {
+      const mat = flowerMaterial(rb.petal);
+      const bindF: RingBind = {
+        cells,
+        heights,
+        base: offsets[rb.g] ?? 0,
+        cell: DEB_CELL,
+        salt: salt ^ 0x5dd5,
+      };
+      this.debrisTransform(mat, bindF, 1, 0, 34);
+      this.patchGI(mat);
+      draws.push({
+        geo: buildFlower(rb.kind, this.seed.rng(`groundring/bloom/${rb.kind}`)),
+        mat,
+        g: rb.g,
       });
     }
 
@@ -1117,7 +1186,7 @@ export class GroundRing {
         'veg.g1': n(1),
         'veg.g2': n(2),
         'veg.g3': n(8),
-        'veg.debris': n(3) + n(4) + n(5) + n(6) + n(7) + n(9) + n(10),
+        'veg.debris': n(3) + n(4) + n(5) + n(6) + n(7) + n(9) + n(10) + n(11) + n(12),
       };
     } finally {
       this.reading = false;

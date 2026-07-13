@@ -96,6 +96,9 @@ const FLOWER_COLOR: Record<FlowerKind, { r: number; g: number; b: number }> = {
   umbel: { r: 0.75, g: 0.75, b: 0.7 },
   bell: { r: 0.28, g: 0.14, b: 0.5 },
   daisy: { r: 0.85, g: 0.72, b: 0.12 },
+  // alpine verge miniatures (ref-01/03): golden trefoil + purple-magenta thyme
+  trefoil: { r: 0.92, g: 0.66, b: 0.06 },
+  thyme: { r: 0.5, g: 0.17, b: 0.5 },
 };
 
 function bounds(geos: BufferGeometry[]): { height: number; radius: number } {
@@ -324,15 +327,20 @@ export async function buildVegLibrary(
     });
   }
   clsMaxDist[VegClass.Fern] = 140;
-  // flowers
-  const flowerKinds: { cls: number; kind: FlowerKind }[] = [
-    { cls: VegClass.FlowerUmbel, kind: 'umbel' },
-    { cls: VegClass.FlowerBell, kind: 'bell' },
-    { cls: VegClass.FlowerDaisy, kind: 'daisy' },
+  // flowers — 3 pool classes, each class's 4 variant slots MIX the standard
+  // bloom with the alpine verge miniatures (trefoil/thyme). One idF class thus
+  // scatters both the big flower and the small strewn ones, so ref-01/03's
+  // grassy shoulders get golden+purple speckle without a new VegClass. idF
+  // wiring (cls*8 + variant, 4 variants per class) is unchanged.
+  const flowerVariants: { cls: number; kinds: FlowerKind[] }[] = [
+    { cls: VegClass.FlowerUmbel, kinds: ['umbel', 'umbel', 'thyme', 'thyme'] },
+    { cls: VegClass.FlowerBell, kinds: ['bell', 'bell', 'thyme', 'trefoil'] },
+    { cls: VegClass.FlowerDaisy, kinds: ['daisy', 'daisy', 'trefoil', 'trefoil'] },
   ];
-  for (const { cls, kind } of flowerKinds) {
+  for (const { cls, kinds } of flowerVariants) {
     for (let v = 0; v < 4; v++) {
-      const geo = buildFlower(kind, seed.rng(`veg/flower/${kind}/${v}`));
+      const kind = kinds[v] as FlowerKind;
+      const geo = buildFlower(kind, seed.rng(`veg/flower/${kind}/${cls}/${v}`));
       const tris = geo.index ? geo.index.count / 3 : 0;
       const b = bounds([geo]);
       trackCls(cls, b.height, b.radius);

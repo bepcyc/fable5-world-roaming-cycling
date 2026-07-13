@@ -442,6 +442,28 @@ export async function runScatter(
     });
     roadGate(wpos, 1.6);
 
+    // alpine P.4 — proximity to a soft track (gravel-coarse / dirt / single-
+    // track): youngEdge ramps toward 1 near the track → 0 by halfW+6. The
+    // tree roadGate(1.6) above already clears halfW+1.6, so the effective
+    // peak any surviving sample sees is ~0.8 at that margin.
+    // Feeds a mild density boost (the forest edge leans toward the path) and the
+    // sapling share below. roadGate above still bars trunks from the tread and
+    // its 1.6 m clear zone — this only shapes what grows BEYOND it.
+    const youngEdge = float(0).toVar();
+    if (road) {
+      const rs = road.sampleBaked(wpos);
+      const isSoft = surfIs(rs.surfIdF, SurfaceId.GravelCoarse)
+        .or(surfIs(rs.surfIdF, SurfaceId.DirtRoad))
+        .or(surfIs(rs.surfIdF, SurfaceId.Singletrack));
+      const inBand = rs.halfW
+        .greaterThan(0.01)
+        .and(isSoft)
+        .and(rs.dist.greaterThanEqual(rs.halfW.add(0.5)))
+        .and(rs.dist.lessThan(rs.halfW.add(6)));
+      const t = rs.dist.sub(rs.halfW.add(0.5)).div(5.5).clamp(0, 1);
+      youngEdge.assign(inBand.select(float(1).sub(t), float(0)));
+    }
+
     const clump = clumpField(wpos, sT ^ 0x51f3);
     const dens = byBiome(s.bioId, [0, 0.22, 0.8, 0.85, 0.06, 0.26]);
     const clumpFloor = byBiome(s.bioId, [0, 0.15, 0.3, 0.35, 0.04, 0.12]);
@@ -456,7 +478,8 @@ export async function runScatter(
       .mul(treelineFade)
       .mul(snowFade)
       .mul(s.vegDens.mul(0.85).add(0.15))
-      .mul(float(1).sub(s.rockExp.mul(0.65)));
+      .mul(float(1).sub(s.rockExp.mul(0.65)))
+      .mul(youngEdge.mul(0.6).add(1)); // young-growth density lean toward tracks
     If(cellHash(cell, sT ^ 0x1234f).greaterThanEqual(accept), () => {
       Return();
     });
@@ -500,17 +523,46 @@ export async function runScatter(
       });
     });
 
+    // alpine P.4 — young-spruce forest edge. Near a soft-track verge and in
+    // Subalpine a raised share of accepted sites become SAPLINGS: force the
+    // species to spruce and shrink to 0.25–0.5 of the adult scale (reuse of the
+    // SPRUCE pool, no new species). Adults closest to the track are thinned so
+    // the immediate shoulder reads as young growth, not full canopy.
+    const isSub = s.bioId.equal(int(1));
+    const youngP = isSub
+      .select(float(0.5), float(0.12))
+      .add(youngEdge.mul(0.5))
+      .clamp(0, 0.9);
+    const isYoung = cellHash(cell, sT ^ 0x2d71).lessThan(youngP);
+    If(
+      isYoung
+        .not()
+        .and(youngEdge.greaterThan(0.5))
+        .and(cellHash(cell, sT ^ 0x5ae9).lessThan(youngEdge.sub(0.5).mul(0.7))),
+      () => {
+        Return();
+      },
+    );
+    If(isYoung, () => {
+      sp.assign(0);
+    });
+
     // size: power-biased jitter; krummholz shrink toward the treeline;
-    // subalpine biome additionally stunted
+    // subalpine biome additionally stunted; saplings 0.25–0.5 of the adult
     const h2 = cellHash2(cell, sT ^ 0x3b8d);
     const krumm = smoothstep(TREELINE - 170, TREELINE + 10, s.h);
-    const stunt = s.bioId.equal(int(1)).select(float(0.72), float(1));
-    const scale = h2.x
+    const stunt = isSub.select(float(0.72), float(1));
+    const adultScale = h2.x
       .pow(1.6)
       .mul(0.85)
       .add(0.62)
       .mul(float(1).sub(krumm.mul(0.55)))
       .mul(stunt);
+    const scale = isYoung.select(
+      // literal saplings (ref-03: 1–3 m young spruces), not half-size adults
+      adultScale.mul(h2.x.mul(0.08).add(0.06)),
+      adultScale,
+    );
 
     const yaw = h2.y.mul(TAU);
     const leanR = cellHash2(cell, sT ^ 0x6c2f).sub(0.5).mul(0.12);
@@ -556,7 +608,51 @@ export async function runScatter(
     If(s.riverDepth.greaterThan(0.2).or(s.standing.greaterThan(0.3)), () => {
       Return();
     });
-    roadGate(wpos, 0.9);
+
+    // alpine p.3 — soft-track verge flowering (ref-01/03: grassy path
+    // shoulders strewn with tiny yellow/purple blooms). Hard roads keep the
+    // full clear-zone exclusion (roadGate 0.9, as before). On gravel-coarse /
+    // dirt / singletrack the tread is still barred, but the verge band
+    // halfW..halfW+1.2 gets DENSER, flower-dominated understory: accept and
+    // flower weights lifted, woody shrubs suppressed. Pattern mirrors stoneK's
+    // surface-keyed verge band (rs = sampleBaked, surfIs).
+    const vergeFlower = float(1).toVar(); // accept + flower-weight boost in band
+    const vergeWoody = float(1).toVar(); // shrub suppression in band
+    const junBoost = float(1).toVar(); // juniper-bush band just beyond the flowers
+    if (road) {
+      const rs = road.sampleBaked(wpos);
+      const onSurf = rs.halfW.greaterThan(0.01);
+      const isSoft = surfIs(rs.surfIdF, SurfaceId.GravelCoarse)
+        .or(surfIs(rs.surfIdF, SurfaceId.DirtRoad))
+        .or(surfIs(rs.surfIdF, SurfaceId.Singletrack));
+      // hard road (asphalt / fine gravel): full clear-zone exclusion as before
+      If(onSurf.and(isSoft.not()).and(rs.dist.lessThan(rs.halfW.add(0.9))), () => {
+        Return();
+      });
+      const soft = onSurf.and(isSoft);
+      // soft-track tread + a small hard margin: understory never sits flush
+      // with the rideable edge (review: vergeWoody alone left a nonzero
+      // boosted chance of a bush at dist≈halfW)
+      If(soft.and(rs.dist.lessThan(rs.halfW.add(0.2))), () => {
+        Return();
+      });
+      // verge band halfW..halfW+1.2: flowers ×2.6 at the inner edge → ×1 at the
+      // outer edge; woody shrubs pushed off the immediate shoulder
+      const bandT = rs.dist.sub(rs.halfW).div(1.2).clamp(0, 1);
+      const inBand = soft
+        .and(rs.dist.greaterThanEqual(rs.halfW))
+        .and(rs.dist.lessThan(rs.halfW.add(1.2)));
+      vergeFlower.assign(inBand.select(float(2.6).sub(bandT.mul(1.6)), float(1)));
+      vergeWoody.assign(inBand.select(float(0.12), float(1)));
+      // alpine P.4 — juniper/heath bushes sit a touch farther from the edge
+      // than the flowers: boost juniper weight in halfW+1..halfW+4. The overlap
+      // with the woody-suppression band (halfW..halfW+1.2) stays suppressed via
+      // vergeWoody, so bushes effectively begin BEYOND it.
+      const inJun = soft
+        .and(rs.dist.greaterThanEqual(rs.halfW.add(1)))
+        .and(rs.dist.lessThan(rs.halfW.add(4)));
+      junBoost.assign(inJun.select(float(2.4), float(1)));
+    }
 
     // canopy proxy = the TREE clump field (same salt → same parents)
     const canopy = clumpField(wpos, sT ^ 0x51f3);
@@ -570,25 +666,49 @@ export async function runScatter(
       .mul(treelineFade)
       .mul(float(1).sub(s.snow.mul(0.9)))
       .mul(s.vegDens.mul(0.9).add(0.1))
-      .mul(float(1).sub(s.rockExp.mul(0.85)));
+      .mul(float(1).sub(s.rockExp.mul(0.85)))
+      .mul(vergeFlower); // lush verge band on soft tracks (1 elsewhere)
     If(cellHash(cell, sU ^ 0x2477).greaterThanEqual(accept), () => {
       Return();
     });
 
     const m = s.moisture;
     const edge = canopy.mul(float(1).sub(canopy)).mul(4); // 1 at clump rims
-    const w0 = byBiome(s.bioId, [0, 0.05, 0.15, 0.3, 0.04, 0.1]); // hazel
+    // woody shrubs (hazel/pink/juniper) are pushed off the immediate soft-track
+    // shoulder by vergeWoody; flowers (umbel/bell/daisy) are lifted by
+    // vergeFlower there so the verge reads herbaceous + bloomed. Both are 1
+    // away from soft-track verge bands, so off-track behaviour is unchanged.
+    const w0 = byBiome(s.bioId, [0, 0.05, 0.15, 0.3, 0.04, 0.1]) // hazel
+      .mul(vergeWoody);
     const w1 = byBiome(s.bioId, [0, 0, 0.02, 0.12, 0.1, 0.02]) // pink shrub
-      .mul(edge.mul(1.3).add(0.2));
+      .mul(edge.mul(1.3).add(0.2))
+      .mul(vergeWoody);
     const w2 = byBiome(s.bioId, [0, 0.55, 0.3, 0.02, 0.03, 0]) // juniper
-      .mul(float(1.3).sub(m.mul(0.8)));
+      .mul(float(1.3).sub(m.mul(0.8)))
+      .mul(vergeWoody)
+      .mul(junBoost) // bush band beyond the flower verge (soft tracks)
+      .mul(s.bioId.equal(int(1)).select(float(1.8), float(1))); // Subalpine heath
+    // inside the verge band the class mix must read herbaceous+bloomed even
+    // under forest weights: ferns would otherwise win the pick (0.2–0.5 vs
+    // 0.03–0.05 flower weights) and the band shows zero blooms
+    const bandK = vergeFlower.greaterThan(1.01).select(float(1), float(0));
     const w3 = byBiome(s.bioId, [0, 0.1, 0.4, 0.38, 0.03, 0.5]) // fern
       .mul(m.mul(1.1).add(0.3))
-      .mul(canopy.mul(1.1).add(0.35));
+      .mul(canopy.mul(1.1).add(0.35))
+      .mul(float(1).sub(bandK.mul(0.7)));
     const gapK = float(1.25).sub(canopy.mul(0.9));
-    const w4 = byBiome(s.bioId, [0, 0.1, 0.05, 0.06, 0.3, 0.2]).mul(gapK); // umbel
-    const w5 = byBiome(s.bioId, [0, 0.08, 0.04, 0.06, 0.22, 0.1]).mul(gapK); // bell
-    const w6 = byBiome(s.bioId, [0, 0.12, 0.04, 0.06, 0.28, 0.08]).mul(gapK); // daisy
+    const w4 = byBiome(s.bioId, [0, 0.1, 0.05, 0.06, 0.3, 0.2])
+      .mul(gapK)
+      .mul(vergeFlower)
+      .add(bandK.mul(0.3)); // umbel (+ thyme variants)
+    const w5 = byBiome(s.bioId, [0, 0.08, 0.04, 0.06, 0.22, 0.1])
+      .mul(gapK)
+      .mul(vergeFlower)
+      .add(bandK.mul(0.25)); // bell (+ thyme/trefoil variants)
+    const w6 = byBiome(s.bioId, [0, 0.12, 0.04, 0.06, 0.28, 0.08])
+      .mul(gapK)
+      .mul(vergeFlower)
+      .add(bandK.mul(0.3)); // daisy (+ trefoil variants)
 
     const r = cellHash(cell, sU ^ 0x59d3).mul(
       w0.add(w1).add(w2).add(w3).add(w4).add(w5).add(w6),
@@ -622,7 +742,18 @@ export async function runScatter(
     const h2 = cellHash2(cell, sU ^ 0x71c9);
     const scale = h2.x.pow(1.4).mul(0.7).add(0.6);
     const yaw = h2.y.mul(TAU);
-    const variant = cellHash(cell, sU ^ 0x1ee7).mul(4).floor().min(3);
+    // flower kind is verge-gated: the alpine miniatures (trefoil/thyme) live
+    // in variant slots 2/3 and appear ONLY in the soft-track verge band
+    // (vergeFlower>1); everywhere else flowers keep their original kinds
+    // (slots 0/1). Non-flower classes keep the full 0..3 variant space.
+    const vh = cellHash(cell, sU ^ 0x1ee7);
+    const isFlower = cls.greaterThanEqual(int(VegClass.FlowerUmbel));
+    const variant = isFlower.select(
+      vergeFlower
+        .greaterThan(1.01)
+        .select(vh.mul(2).floor().min(1).add(2), vh.mul(2).floor().min(1)),
+      vh.mul(4).floor().min(3),
+    );
     const idF = float(cls).mul(8).add(variant);
 
     append(

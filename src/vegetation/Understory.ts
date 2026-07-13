@@ -270,15 +270,29 @@ export function buildFern(rng: Rng): BufferGeometry {
 // Flowers
 // ---------------------------------------------------------------------------
 
-export type FlowerKind = 'umbel' | 'bell' | 'daisy';
+export type FlowerKind = 'umbel' | 'bell' | 'daisy' | 'trefoil' | 'thyme';
 
 /**
  * Small flowering plant: thin stem + leaves + REAL petal geometry.
  * vdata.x: 0 = stem/leaf (green), 1 = petal, 0.5 = flower center.
+ *
+ * Alpine verge miniatures (ref-01/03: grassy path shoulders strewn with tiny
+ * yellow/purple blooms) reuse the same floret-dome primitive as `umbel`:
+ *  - 'trefoil' — low stem carrying 2–4 small golden heads (bird's-foot type)
+ *  - 'thyme'   — very low cushion speckled with tiny floret domes
+ * Their palette is set in VegLibrary (FLOWER_COLOR); geometry is deliberately
+ * cheap (small floret quads, R1-only, culled ≤90 m).
  */
 export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
   const g = new MeshGrower();
-  const H = kind === 'umbel' ? 0.55 + rng.float() * 0.3 : 0.28 + rng.float() * 0.2;
+  const H =
+    kind === 'umbel'
+      ? 0.55 + rng.float() * 0.3
+      : kind === 'thyme'
+        ? 0.05 + rng.float() * 0.05 // ground-hugging cushion
+        : kind === 'trefoil'
+          ? 0.12 + rng.float() * 0.08 // low herb stem
+          : 0.28 + rng.float() * 0.2;
   const sway = (rng.float() - 0.5) * 0.25;
   // stem: 2-segment thin strip pair (cross)
   const top = new Vector3(sway * H, H, sway * H * 0.6);
@@ -374,6 +388,32 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
     for (let i = 0; i < bells; i++) {
       const t = 0.6 + (i / bells) * 0.4;
       head(top.x * t + 0.02 * i, H * t, top.z * t, 0.05 + rng.float() * 0.02);
+    }
+  } else if (kind === 'trefoil') {
+    // 2–4 small golden heads clustered atop the low stem
+    const heads = 2 + rng.int(3);
+    for (let i = 0; i < heads; i++) {
+      const az = rng.float() * Math.PI * 2;
+      const rr = 0.015 + rng.float() * 0.025;
+      head(
+        top.x + Math.cos(az) * rr,
+        H + 0.01 + rng.float() * 0.03,
+        top.z + Math.sin(az) * rr,
+        0.03 + rng.float() * 0.015,
+      );
+    }
+  } else if (kind === 'thyme') {
+    // low cushion: several tiny floret domes spread just above the ground
+    const pads = 3 + rng.int(4);
+    for (let i = 0; i < pads; i++) {
+      const az = rng.float() * Math.PI * 2;
+      const rr = 0.02 + rng.float() * 0.06;
+      head(
+        Math.cos(az) * rr,
+        0.02 + rng.float() * 0.045,
+        Math.sin(az) * rr,
+        0.035 + rng.float() * 0.02,
+      );
     }
   } else {
     head(top.x, H + 0.02, top.z, kind === 'umbel' ? 0.09 + rng.float() * 0.04 : 0.045 + rng.float() * 0.02);
