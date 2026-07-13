@@ -469,15 +469,34 @@ export async function buildVegLibrary(
     { cls: VegClass.StoneS, preset: 'cobble', d1: 1, d2: null, moss: 0.06, maxDist: 90 },
   ];
   for (const sc of stoneClasses) {
+    // alpine p.2 — the two larger stone classes reserve variant 1 for the
+    // angular light-gray limestone block wearing lichen (ref-02: reads
+    // distinctly from the water-rounded cobbles beside it). The scatter
+    // kernel's verge-band species mix draws ~40% of shoulder stones here.
+    const canLimestone = sc.cls === VegClass.StoneL || sc.cls === VegClass.StoneM;
     for (let v = 0; v < 4; v++) {
-      // StoneL variants are context-keyed by the scatter kernel: 0/1 spawn
-      // on dry scree (pale faceted talus matching the cliff that shed it),
-      // 2/3 in streambeds (dark water-rounded, mossy) — scree stops reading
-      // as smooth dark blobs
-      const isTalus = sc.cls === VegClass.StoneL && v < 2;
-      const preset = sc.cls === VegClass.StoneL ? (isTalus ? 'talus' : 'boulder') : sc.preset;
-      const moss = sc.cls === VegClass.StoneL ? (isTalus ? 0.06 : 0.3) : sc.moss;
-      const tone = isTalus ? { r: 0.35, g: 0.34, b: 0.31 } : undefined;
+      // StoneL variants are context-keyed by the scatter kernel: 0 spawns on
+      // dry scree (pale faceted talus matching the cliff that shed it), 1 is
+      // the lichen limestone block, 2/3 in streambeds (dark water-rounded,
+      // mossy) — scree stops reading as smooth dark blobs
+      const isLimestone = canLimestone && v === 1;
+      const isTalus = sc.cls === VegClass.StoneL && v === 0;
+      const preset = isLimestone
+        ? 'limestone'
+        : sc.cls === VegClass.StoneL
+          ? (isTalus ? 'talus' : 'boulder')
+          : sc.preset;
+      const moss = isLimestone
+        ? 0.05
+        : sc.cls === VegClass.StoneL
+          ? (isTalus ? 0.06 : 0.3)
+          : sc.moss;
+      const tone = isLimestone
+        ? { r: 0.4, g: 0.4, b: 0.37 }
+        : isTalus
+          ? { r: 0.35, g: 0.34, b: 0.31 }
+          : undefined;
+      const lichen = isLimestone ? 0.55 : 0;
       const hi = buildRock(preset, seed.rng(`veg/stone${sc.cls}/${v}`), sc.d1);
       const lo =
         sc.d2 !== null
@@ -492,7 +511,7 @@ export async function buildVegLibrary(
           {
             geo: hi.geometry,
             tris: hi.stats.tris,
-            make: () => rockMaterial({ moss, tone }),
+            make: () => rockMaterial({ moss, tone, lichen }),
             castShadow: sc.cls !== VegClass.StoneS,
           },
         ],
@@ -501,7 +520,7 @@ export async function buildVegLibrary(
               {
                 geo: lo.geometry,
                 tris: lo.stats.tris,
-                make: () => rockMaterial({ moss, tone }),
+                make: () => rockMaterial({ moss, tone, lichen }),
                 castShadow: sc.cls === VegClass.StoneL,
               },
             ]

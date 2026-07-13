@@ -209,6 +209,9 @@ export function rockMaterial(opts?: {
   /** base albedo of the lit rock — talus must match the pale cliff that
    *  shed it; the default dark tone is for mossy forest boulders */
   tone?: { r: number; g: number; b: number };
+  /** pale gray-green lichen crust coverage (0..1) — limestone blocks wear it
+   *  heavily (alpine p.2); keyed to worldPos not upness so it climbs faces */
+  lichen?: number;
 }): MeshStandardNodeMaterial {
   const mat = new MeshPhysicalNodeMaterial();
   mat.specularIntensity = 0.4;
@@ -242,15 +245,33 @@ export function rockMaterial(opts?: {
     .mul(smoothstep(0.45, 0.8, steep))
     .mul(0.55);
   albedo = mix(albedo, albedo.mul(vec3(0.5, 0.46, 0.4)), streak) as unknown as NV3;
+  // pale gray-green lichen crust (opt-in): broad crustose colonies keyed to
+  // worldPos — NOT upness — so the lichen also climbs vertical faces the way
+  // it does on shaded alpine limestone (ref-02). Cheap: two octaves of
+  // value-noise, a large blotch broken by a finer mottle for ragged edges.
+  const lichenAmt = opts?.lichen ?? 0;
+  let lichenM: NF = float(0) as unknown as NF;
+  if (lichenAmt > 0) {
+    const blot = valueNoise3(wp.mul(1.6)).mul(0.7).add(valueNoise3(wp.mul(5.3)).mul(0.3));
+    lichenM = smoothstep(0.5, 0.72, blot).mul(lichenAmt).clamp(0, 1) as unknown as NF;
+    // two-tone: greener colony core, grayer rim
+    const lichenCol = mix(
+      vec3(0.52, 0.55, 0.47),
+      vec3(0.43, 0.5, 0.37),
+      smoothstep(0.6, 0.86, blot),
+    ) as unknown as NV3;
+    albedo = mix(albedo, lichenCol, lichenM) as unknown as NV3;
+  }
   const mossAmt = opts?.moss ?? 0.25;
   if (mossAmt > 0) {
     const mossN = smoothstep(0.45, 0.75, fbm3(wp.mul(1.7), 3).mul(0.5).add(0.5));
     const moss = smoothstep(0.45, 0.85, upness)
       .mul(mossN).mul(d.w).mul(mossAmt * 2).clamp(0, 1);
     albedo = mix(albedo, vec3(0.045, 0.085, 0.03), moss) as unknown as NV3;
-    mat.roughnessNode = mix(float(0.93), float(1), moss).sub(lich.mul(0.06));
+    mat.roughnessNode = mix(float(0.93), float(1), moss)
+      .sub(lich.mul(0.06)).add(lichenM.mul(0.05));
   } else {
-    mat.roughnessNode = float(0.93).sub(lich.mul(0.06));
+    mat.roughnessNode = float(0.93).sub(lich.mul(0.06)).add(lichenM.mul(0.05));
   }
   mat.colorNode = albedo.mul(d.w.mul(0.35).add(0.65));
   mat.aoNode = d.w;

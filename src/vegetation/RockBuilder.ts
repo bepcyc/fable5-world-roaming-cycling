@@ -74,6 +74,17 @@ export const ROCK_PRESETS = {
     macro: 0.2, strata: 0.05, strataFreq: 4.2, strataTilt: 0.4,
     ridged: 0.14, cuts: 7, cutBite: 0.36, micro: 0.02,
   },
+  // angular light-gray limestone block (alpine wishlist p.2, ref-02): blockier
+  // and flatter-faced than 'talus' — low macro warp keeps a boxy silhouette,
+  // fewer/deeper cuts (5 @ .44) carve broad flat facets, and a fine tilted
+  // strata (like 'cliffFace' but smaller amplitude) hints at the bedding
+  // planes. Little ridging so the faces read as clean fracture, not crag; no
+  // strong squash — a shed block sits roughly equant.
+  limestone: {
+    radius: 0.9, squash: [1, 0.86, 0.94] as [number, number, number],
+    macro: 0.14, strata: 0.06, strataFreq: 5.6, strataTilt: 0.12,
+    ridged: 0.06, cuts: 5, cutBite: 0.44, micro: 0.016,
+  },
 } as const;
 
 export type RockPreset = keyof typeof ROCK_PRESETS;

@@ -976,6 +976,26 @@ export async function runScatter(
       },
     );
 
+    // alpine p.2 — verge-band species mix (ref-02: angular lichen limestone
+    // blocks lie among water-rounded cobbles right at the path shoulder).
+    // For the two larger stone classes force the variant regardless of the
+    // terrain-driven paleCtx: ~40% limestone (pool slot 1), ~60% dark rounded
+    // (slots 2/3). VegLibrary reserves variant 1 of StoneL/StoneM for the
+    // lichen limestone block, so this steers geometry+material together.
+    If(
+      vergeSoft
+        .greaterThan(0.5)
+        .and(cls.equal(int(VegClass.StoneL)).or(cls.equal(int(VegClass.StoneM)))),
+      () => {
+        const vm = cellHash(cell, sS ^ 0x2b17);
+        variant.assign(
+          vm.lessThan(0.4).select(
+            float(1),
+            vm.lessThan(0.7).select(float(2), float(3)),
+          ),
+        );
+      },
+    );
     const yaw = cellHash(cell, sS ^ 0x3d3d).mul(TAU);
     // extent-aware road exclusion for BRANCHES (owner repro 2026-07-06:
     // sticks lying across the road). Same rule as the extras kernel's Log
