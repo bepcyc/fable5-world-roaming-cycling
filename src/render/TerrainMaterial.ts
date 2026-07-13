@@ -181,14 +181,28 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   // ---------- class palettes ----------------------------------------------------
   // rock: subtle strata banding; warm rust in the alpine zone, pale gray in
   // karst. Low contrast + heavy phase warp so it reads as geology, not zebra.
-  const strataPhase = h
+  // П.8: bands follow the SAME massif-global tilted bedding axis as the
+  // geometric ledge-beds in MacroMap (phase constant along the bed planes:
+  // h + dip·tanθ, centered on the massif) so the paint lands on the slabs —
+  // horizontal contour rings would cut across the protruding diagonal beds.
+  const hTilt = h.add(
+    wxz
+      .sub(vec2(inp.mp.alpC[0], inp.mp.alpC[1]))
+      .dot(vec2(inp.mp.strataDip[0], inp.mp.strataDip[1]))
+      .mul(Math.tan(inp.mp.strataTilt)),
+  );
+  const strataPhase = hTilt
     .mul(0.028)
     .add(valS(74, 0.11, 0.83).mul(3.6))
     .add(valS(540, 0.43, 0.29).mul(2.4))
     .add(valS(27, 0.91, 0.07).mul(1.3)); // fine jitter fragments the bands
+  // steep rock faces of the alpine massif read as exposed bedding (ref-05):
+  // widen the contrast there; elsewhere it stays compressed — long smooth
+  // walls turn 'layer cake' fast
+  const strataBoost = zm.tAlp.mul(smoothstep(0.55, 0.95, slope));
   const strata = band(strataPhase, valS(610, 0.67, 0.41).mul(1.7).add(31.7))
-    .mul(0.36)
-    .add(0.3); // compress contrast — long smooth walls turn 'layer cake' fast
+    .mul(strataBoost.mul(0.52).add(0.36))
+    .add(float(0.3).sub(strataBoost.mul(0.24)));
   // reference peaks are DARK: gray-blue mass with rust faces catching light —
   // pale palettes washed the whole massif into cream at golden hour
   const alpRock = mix(vec3(0.16, 0.135, 0.125), vec3(0.38, 0.26, 0.18), strata);
@@ -198,7 +212,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   rockCol = mix(rockCol, alpRock, zm.tAlp.mul(0.85));
   // iron-oxide bands: dark rust layers at noise-chosen elevations (refs show
   // strong hue layering on alpine faces)
-  const ironPhase = band(h.mul(0.011), valS(800, 0.07, 0.93).mul(1.3).add(57.3));
+  const ironPhase = band(hTilt.mul(0.011), valS(800, 0.07, 0.93).mul(1.3).add(57.3));
   const ironBand = smoothstep(0.45, 0.62, ironPhase).mul(smoothstep(0.85, 0.62, ironPhase));
   rockCol = mix(rockCol, vec3(0.3, 0.18, 0.12), ironBand.mul(zm.tAlp.mul(0.6).add(0.12)));
   // lichen/weathering: dark macro splotches on long-exposed faces

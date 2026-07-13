@@ -50,6 +50,17 @@ export interface MacroParams {
   tribWidth: number;
   /** noise domain offsets (decorrelate fields per seed) */
   off: Record<'warp' | 'ridge' | 'hills' | 'karst' | 'detail' | 'hard' | 'far', [number, number]>;
+  /**
+   * П.8 tilted strata ledge-beds (ref-05): massif-global bedding orientation.
+   * dip = unit XZ direction the beds descend toward (strike ⊥ to it, along
+   * the NE–SW ridgelines); tilt = dip angle from horizontal (rad); period =
+   * bed thickness measured along the bedding-plane normal (m). Shared by the
+   * height synthesis (geometric ledges) and TerrainMaterial (color banding)
+   * so the paint lands on the slabs.
+   */
+  strataDip: [number, number];
+  strataTilt: number;
+  strataPeriod: number;
 }
 
 function jit(rng: Rng, base: [number, number], amount: number): [number, number] {
@@ -62,6 +73,7 @@ export function makeMacroParams(seed: WorldSeed): MacroParams {
   const rngValley = seed.rng('macro-valley');
   const rngTrib = seed.rng('macro-trib');
   const rngOff = seed.rng('macro-offsets');
+  const rngStrata = seed.rng('macro-strata');
   const lakeC = jit(rngAnchor, [-1380, 1290], 130);
   const off = (): [number, number] => [rngOff.range(-500, 500), rngOff.range(-500, 500)];
   // the spline continues THROUGH the lake to the map edge: the lake needs an
@@ -100,6 +112,15 @@ export function makeMacroParams(seed: WorldSeed): MacroParams {
     trib,
     tribFloors: [318, 286, 246, 213],
     tribWidth: 150,
+    // beds strike along the NE–SW ridgelines (domain dir (1,1)/√2), so the
+    // dip azimuth is the perpendicular (1,−1)/√2 ± jitter; 12–20° from
+    // horizontal, 30–48 m thick beds
+    strataDip: (() => {
+      const az = -Math.PI / 4 + rngStrata.range(-0.3, 0.3);
+      return [Math.cos(az), Math.sin(az)] as [number, number];
+    })(),
+    strataTilt: 0.21 + rngStrata.range(0, 0.14),
+    strataPeriod: 58 + rngStrata.range(-10, 14),
     off: {
       warp: off(),
       ridge: off(),
@@ -279,28 +300,70 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
 
   // --- alpine ridges (anisotropic, serrated) ---------------------------------
   // rotate domain 45° and squash so ridgelines align NE–SW like a real range
-  const pr = vec2(
-    p.x.add(p.y).mul(0.7071),
-    p.y.sub(p.x).mul(0.7071 * 1.65),
-  )
-    .div(2100)
-    .add(vec2(o.ridge[0], o.ridge[1]).div(1000));
-  const ridgeOct = full ? 7 : 5;
-  let ridge: NF = float(0);
-  {
+  const ridgeAt = (pw: NV2, oct: number): NF => {
+    const pr = vec2(
+      pw.x.add(pw.y).mul(0.7071),
+      pw.y.sub(pw.x).mul(0.7071 * 1.65),
+    )
+      .div(2100)
+      .add(vec2(o.ridge[0], o.ridge[1]).div(1000));
+    let r: NF = float(0);
     let amp = 0.5;
     let freq = 1;
     let norm = 0;
-    for (let i = 0; i < ridgeOct; i++) {
+    for (let i = 0; i < oct; i++) {
       const n = abs(mx_noise_float(pr.mul(freq).add(i * 7.31))).oneMinus();
-      ridge = ridge.add(n.mul(n).mul(amp));
+      r = r.add(n.mul(n).mul(amp));
       norm += amp;
       amp *= 0.52;
       freq *= 2.13;
     }
-    ridge = ridge.div(norm);
-  }
+    return r.div(norm);
+  };
+  const ridgeOct = full ? 7 : 5;
+  const ridge = ridgeAt(p, ridgeOct);
   const mountains = tAlp.mul(ridge.pow(1.5).mul(1380).add(tAlp.mul(470)));
+
+  // --- П.8 tilted strata ledge-beds (ref-05) ----------------------------------
+  // The reference massif is NOT a triangular saw: diagonal bedding planes
+  // protrude through the green cover as stacked slabs with grassy shelves
+  // between them. Step the steep alpine flanks along a massif-global TILTED
+  // bedding axis (true plane family: h·cosθ + dip·sinθ), warped so the bands
+  // fragment instead of wrapping the massif as clean contour rings. Runs
+  // BEFORE erosion (amplitude at the top of the ≤6 m budget — erosion softens
+  // the treads) and feeds hardness below so slab crests resist washing.
+  const dipDir = vec2(mp.strataDip[0], mp.strataDip[1]);
+  const dipOff = p.sub(vec2(mp.alpC[0], mp.alpC[1])).dot(dipDir);
+  // slope proxy of the ridge mass (coarse octaves, finite differences):
+  // ledges live on steep faces only — valley floors, roads-to-be and the
+  // lake basin sit where this gate is ~0, so the world barely moves there
+  const slopeOct = full ? 4 : 3;
+  const eL = 26;
+  const mAt = (r: NF): NF => r.pow(1.5).mul(1380);
+  const m0 = mAt(ridgeAt(p, slopeOct));
+  const mX = mAt(ridgeAt(p.add(vec2(eL, 0)), slopeOct));
+  const mZ = mAt(ridgeAt(p.add(vec2(0, eL)), slopeOct));
+  const slopeProxy = vec2(mX.sub(m0), mZ.sub(m0)).length().div(eL).mul(tAlp);
+  const ledgeGate = smoothstep(0.5, 0.85, slopeProxy).mul(smoothstep(0.22, 0.5, tAlp));
+  const sWarp = mx_noise_float(p.div(170).add(vec2(o.hard[0] + 7.7, o.hard[1] - 3.3))).mul(0.55);
+  const sPhase = base
+    .add(mountains)
+    .mul(Math.cos(mp.strataTilt))
+    .add(dipOff.mul(Math.sin(mp.strataTilt)))
+    .div(mp.strataPeriod)
+    .add(sWarp);
+  const bandI = sPhase.floor();
+  const bandF = sPhase.fract();
+  // per-band amplitude (layer-cake irregularity — mirrors RockBuilder bandAmp)
+  const bandAmp = mx_noise_float(
+    vec2(bandI.mul(0.618).add(o.ridge[1]), bandI.mul(0.343).add(o.ridge[0])),
+  )
+    .mul(0.45)
+    .add(0.95); // ≈0.5..1.4
+  // ledge profile: quick rise, slow fall (protruding slab edge → back shelf),
+  // recentered so the massif keeps its mean height. Range ≈ [−0.42, +0.43].
+  const ledgeProf = min(bandF.mul(4.2), 1).sub(bandF.mul(0.62)).sub(0.42);
+  const ledge = ledgeProf.mul(6.0).mul(bandAmp).mul(ledgeGate);
 
   // --- karst towers (full detail only — far shell sees plateau mass) ---------
   let towers: NF = float(0);
@@ -329,7 +392,7 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
   const detailN = full
     ? mx_fractal_noise_float(p.div(62).add(vec2(o.detail[0], o.detail[1])), 4, 2.05, 0.5, 1).mul(7)
     : float(0);
-  let h: NF = base.add(mountains).add(towers).add(detailN);
+  let h: NF = base.add(mountains).add(towers).add(detailN).add(ledge);
 
   // --- far shell: outer ranges beyond the world edge --------------------------
   if (!full) {
@@ -389,6 +452,9 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
       .add(strata.mul(0.36))
       .add(tKarst.mul(0.28))
       .add(tAlp.mul(0.18))
+      // П.8: slab crests are the resistant beds — harder so erosion carves
+      // the shelves between them instead of washing the steps flat
+      .add(ledgeGate.mul(ledgeProf.add(0.42)).mul(0.28))
       .sub(tLake.mul(0.2)),
     0.08,
     0.97,
