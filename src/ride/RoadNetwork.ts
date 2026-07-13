@@ -70,7 +70,10 @@ export const ROAD_CLASSES: readonly RoadClassSpec[] = [
     maxGrade: 0.14,
     bankMax: 0.03,
     crownSlope: 0.02,
-    dispScale: 0.5,
+    // alpine p.1 (ref-01): micro-displacement of the surfaced tread competes
+    // with the 3–8 cm road-pebble geometry now scattered on it — halved so
+    // the loose grit reads, not the polygonal camber wobble
+    dispScale: 0.25,
   },
   {
     surfaceId: SurfaceId.DirtRoad,
@@ -79,7 +82,7 @@ export const ROAD_CLASSES: readonly RoadClassSpec[] = [
     maxGrade: 0.16,
     bankMax: 0.02,
     crownSlope: 0.015,
-    dispScale: 0.4,
+    dispScale: 0.2, // alpine p.1: yield the tread to the scattered grit (see gravel-coarse)
   },
   {
     surfaceId: SurfaceId.Singletrack,
@@ -88,7 +91,7 @@ export const ROAD_CLASSES: readonly RoadClassSpec[] = [
     maxGrade: 0.2, // IMBA: >18–20% sustained = hike-a-bike; ramps only
     bankMax: 0.03,
     crownSlope: 0,
-    dispScale: 0.7,
+    dispScale: 0.35, // alpine p.1: yield the tread to the scattered grit (see gravel-coarse)
   },
 ];
 

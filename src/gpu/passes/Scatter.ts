@@ -45,6 +45,7 @@ import {
 import type { WorldSeed } from '../../core/Seed';
 import type { Heightfield } from '../../world/Heightfield';
 import { LAKE_LEVEL, TREELINE, WORLD_SIZE } from '../../world/WorldConst';
+import { SurfaceId } from '../../ride/SurfaceMatrix';
 import { fbm3 } from '../noise/NoiseTSL';
 import type { F, NB, NF, NI, NU, NV2, NV4 } from '../TSLTypes';
 
@@ -149,6 +150,11 @@ export function cellHash2(cell: NV2, salt: number): NV2 {
 
 export function cellHash(cell: NV2, salt: number): NF {
   return pcg2d(cell, salt).x;
+}
+
+/** soft-track surface test in TSL: |surfIdF − id| < 0.5 (ids baked as f32) */
+function surfIs(surfIdF: NF, id: number): NB {
+  return surfIdF.greaterThan(id - 0.5).and(surfIdF.lessThan(id + 0.5)) as NB;
 }
 
 // ---------------------------------------------------------------------------
@@ -812,7 +818,38 @@ export async function runScatter(
     If(s.standing.greaterThan(0.5), () => {
       Return();
     });
-    roadGate(wpos, 0.4);
+    // alpine wishlist p.1 — surface-keyed stones. Asphalt / fine gravel keep
+    // the full clear-zone exclusion (early Return, as before); gravel-coarse /
+    // dirt / singletrack instead carry SPARSE embedded cobbles on the tread
+    // and a denser band at the verge (ref-01/02: dry gravel path with
+    // occasional fist-melon stones, thicker toward the shoulder). StoneL is
+    // still barred from the tread everywhere (post-class Return below).
+    const treadSoft = float(0).toVar(); // on a soft-track surfaced width
+    const vergeSoft = float(0).toVar(); // in its 0.6 m verge band
+    if (road) {
+      const rs = road.sampleBaked(wpos);
+      const onSurf = rs.halfW.greaterThan(0.01);
+      const isSoft = surfIs(rs.surfIdF, SurfaceId.GravelCoarse)
+        .or(surfIs(rs.surfIdF, SurfaceId.DirtRoad))
+        .or(surfIs(rs.surfIdF, SurfaceId.Singletrack));
+      // hard road (asphalt / fine gravel): full clear-zone exclusion as before
+      If(
+        onSurf.and(isSoft.not()).and(rs.dist.lessThan(rs.halfW.add(0.4))),
+        () => {
+          Return();
+        },
+      );
+      const soft = onSurf.and(isSoft);
+      treadSoft.assign(
+        soft.and(rs.dist.lessThan(rs.halfW)).select(float(1), float(0)),
+      );
+      vergeSoft.assign(
+        soft
+          .and(rs.dist.greaterThanEqual(rs.halfW))
+          .and(rs.dist.lessThan(rs.halfW.add(0.6)))
+          .select(float(1), float(0)),
+      );
+    }
 
     const canopy = clumpField(wpos, sT ^ 0x51f3);
     const streamK = smoothstep(0.05, 0.3, s.riverDepth);
@@ -846,6 +883,22 @@ export async function runScatter(
       .mul(patch)
       .mul(repose)
       .mul(float(1).sub(s.snow.mul(0.85)));
+    // soft-track override: on the tread swap the terrain-driven density for a
+    // FLAT sparse probability (~5%, textured by patch) so it reads as discrete
+    // окатыши, not an even scree speckle; at the verge lift it so cobbles
+    // gather at the shoulder. Off soft tracks stoneBase is untouched.
+    const stoneKeyed = treadSoft
+      .greaterThan(0.5)
+      .select(
+        // one candidate per 2.1 m cell — near-1 keeps a fist-melon cobble
+        // every couple metres of tread (ref-01's embedded окатыши); patch
+        // would starve it (0.055×patch ≈ 3% ⇒ one per ~130 m², invisible)
+        float(0.95),
+        vergeSoft
+          .greaterThan(0.5)
+          .select(stoneBase.max(float(0.95).mul(repose)), stoneBase),
+      )
+      .toVar();
     // branches need ground that holds them — steep bare slopes grew
     // floating white sticks (user-visible artifact). Tightened 0.45–0.75 →
     // 0.28–0.5: a rigid multi-metre stick centered on a 0.5+ incline still
@@ -854,7 +907,7 @@ export async function runScatter(
     const branchW = canopy.mul(0.6).mul(
       byBiome(s.bioId, [0, 0.2, 1, 1, 0.3, 0.7]),
     ).mul(branchFlat);
-    const accept = stoneBase.add(branchW).min(1);
+    const accept = stoneKeyed.add(branchW).min(1);
     If(cellHash(cell, sS ^ 0x71f1).greaterThanEqual(accept), () => {
       Return();
     });
@@ -863,13 +916,13 @@ export async function runScatter(
     // Stones embed deeper on slopes (a perched sphere on an incline reads
     // as a stuck-on blob; a bedded one reads as an outcrop).
     const bed = s.slope.mul(0.9).add(1);
-    const r = cellHash(cell, sS ^ 0x2e2e).mul(stoneBase.add(branchW));
+    const r = cellHash(cell, sS ^ 0x2e2e).mul(stoneKeyed.add(branchW));
     const h2 = cellHash2(cell, sS ^ 0x6b6b);
     const cls = int(VegClass.Branch).toVar();
     const scale = float(1).toVar();
     const sink = float(0.05).toVar();
     const variant = cellHash(cell, sS ^ 0x5c5c).mul(4).floor().min(3).toVar();
-    If(r.lessThan(stoneBase), () => {
+    If(r.lessThan(stoneKeyed), () => {
       // streambeds skew LARGE: scene1 beds are built from rounded boulders
       const sr = h2.x.sub(streamK.mul(0.16));
       If(sr.lessThan(0.13), () => {
@@ -901,6 +954,27 @@ export async function runScatter(
       scale.assign(h2.y.mul(0.8).add(0.6));
       sink.assign(0.04);
     });
+
+    // boulders never sit ON a track tread — downgrade to a melon-size
+    // embedded cobble instead of wasting the accept (ref-01/02: the tread's
+    // big stones are fist-melon, well bedded)
+    If(cls.equal(int(VegClass.StoneL)).and(treadSoft.greaterThan(0.5)), () => {
+      cls.assign(int(VegClass.StoneM));
+      scale.assign(h2.y.mul(0.3).add(0.25)); // 0.25–0.55 m
+      // shallow bed on the tread: center-origin mesh, so scale×0.12×bed leaves
+      // ~35–45% of the stone proud (ref-01 gravel), not sunk like scree talus
+      sink.assign(scale.mul(0.12).mul(bed));
+    });
+    // alpine p.1: any tread cobble/pebble beds SHALLOW — the scree-depth sinks
+    // (0.26/0.22) would drown the crumb under the flattened road surface
+    If(
+      treadSoft
+        .greaterThan(0.5)
+        .and(cls.equal(int(VegClass.StoneM)).or(cls.equal(int(VegClass.StoneS)))),
+      () => {
+        sink.assign(scale.mul(0.12).mul(bed));
+      },
+    );
 
     const yaw = cellHash(cell, sS ^ 0x3d3d).mul(TAU);
     // extent-aware road exclusion for BRANCHES (owner repro 2026-07-06:

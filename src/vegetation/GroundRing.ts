@@ -76,6 +76,7 @@ import type { NB, NF, NI, NU, NV2, NV3, NV4 } from '../gpu/TSLTypes';
 import type { Heightfield } from '../world/Heightfield';
 import type { ProbeGI } from '../gpu/passes/ProbeGI';
 import { WORLD_SIZE } from '../world/WorldConst';
+import { SurfaceId } from '../ride/SurfaceMatrix';
 import {
   barkChipGeometry,
   debrisMaterial,
@@ -123,6 +124,14 @@ const FAR_CELL = 0.7; // ±269 m ring, ~2 slots/m²
 const FAR_R0 = 150;
 const FAR_R = 265;
 const FAR_CAP = 196608;
+
+// alpine p.1 (ref-01): dedicated dry road-stone pools on soft-track surfaces
+// (gravel-coarse / dirt / singletrack). The debris cull routes tread/verge
+// grit here so it renders at gravel size (cobble 7–16 cm, pebble 3–8 cm)
+// instead of upsizing generic streambed debris. Groups appended AFTER FAR
+// (indices 9/10) so existing group indices 0–8 never shift.
+const RC_CAP = 16384; // road cobble
+const RP_CAP = 32768; // road pebble (denser — the tread is mostly fine grit)
 
 interface RingBind {
   cells: StorageBufferNode<'uint'>;
@@ -303,7 +312,7 @@ export class GroundRing {
   private reading = false;
   private frame = 0;
   private counters!: ReturnType<StorageBufferNode<'uint'>['toAtomic']>;
-  private caps: number[] = [...GRASS_CAPS, ...DEB_CAPS, FAR_CAP];
+  private caps: number[] = [...GRASS_CAPS, ...DEB_CAPS, FAR_CAP, RC_CAP, RP_CAP];
 
   constructor(
     private hf: Heightfield,
@@ -554,6 +563,55 @@ export class GroundRing {
       If(submergedBy.greaterThan(0.55), () => {
         Return();
       });
+      // alpine p.1 (ref-01): on soft-track surfaces (gravel-coarse / dirt /
+      // singletrack, ids 12–14) route grit into the dedicated dry road-stone
+      // pools (groups 9/10) instead of the generic streambed debris path.
+      // Classification lives HERE in the cull (never in a vertex positionNode
+      // — a per-vertex storage sampler is forbidden): one sampleBaked/thread,
+      // gated behind the cheaper dist/water Returns above. Zones by lateral
+      // distance to the centerline: tread (<halfW−0.35) sparse, innerEdge
+      // (halfW−0.35..halfW) denser, shoulder (halfW..halfW+0.7) densest —
+      // cobbles gather at the bank. Beyond the shoulder the generic path runs.
+      if (road) {
+        const rs = road.sampleBaked(wpos);
+        const isSoft = rs.surfIdF
+          .greaterThan(SurfaceId.GravelCoarse - 0.5)
+          .and(rs.surfIdF.lessThan(SurfaceId.Singletrack + 0.5));
+        const onSoft = rs.halfW.greaterThan(0.01).and(isSoft);
+        If(onSoft.and(rs.dist.lessThan(rs.halfW.add(0.7))), () => {
+          const tread = rs.dist.lessThan(rs.halfW.sub(0.35));
+          const innerEdge = rs.dist
+            .greaterThanEqual(rs.halfW.sub(0.35))
+            .and(rs.dist.lessThan(rs.halfW));
+          // p per 0.3 m cell; cobbles rare, pebbles the bulk of the crumb
+          const pCobble = tread.select(
+            float(0.09),
+            innerEdge.select(float(0.14), float(0.22)),
+          );
+          const pPebble = tread.select(
+            float(0.95),
+            innerEdge.select(float(1.0), float(1.0)),
+          );
+          // cobble roll first (distinct salt), else pebble roll; else nothing
+          const grp = int(-1).toVar();
+          If(cellHash(wc, salt ^ 0x9c0b).lessThan(pCobble), () => {
+            grp.assign(9);
+          }).Else(() => {
+            If(cellHash(wc, salt ^ 0x3e77).lessThan(pPebble), () => {
+              grp.assign(10);
+            });
+          });
+          If(
+            grp
+              .greaterThanEqual(0)
+              .and(inFrustum(vec3(wpos.x, h.add(0.3), wpos.y), 0.8).greaterThan(0.5)),
+            () => {
+              appendRing(grp, wc, h);
+            },
+          );
+          Return();
+        });
+      }
       const canopy = canopyAt(canopyTex, wpos);
       const streamK = smoothstep(0.32, 0.7, fl.y).max(smoothstep(0.02, 0.2, fl.z));
       // bank margin: too shallow for the bed override, too wet for grass —
@@ -570,7 +628,12 @@ export class GroundRing {
         .add(bio.w.mul(0.3))
         .add(coreK.mul(2.6))
         .mul(0.5);
-      const wPebble = bio.w.mul(0.9).add(streamK).add(marginK.mul(1.4)).add(0.15).mul(0.6);
+      const wPebble = bio.w
+        .mul(0.9)
+        .add(streamK)
+        .add(marginK.mul(1.4))
+        .add(0.15)
+        .mul(0.6);
       const wTwig = canopy.mul(1.8).add(0.12).mul(float(1).sub(streamK)).mul(dry);
       const wChip = canopy.mul(0.8).mul(float(1).sub(streamK)).mul(dry);
       const wLitter = canopy.mul(3.0).add(0.08).mul(float(1).sub(streamK.mul(0.8))).mul(dry);
@@ -734,9 +797,38 @@ export class GroundRing {
         cell: DEB_CELL,
         salt: salt ^ 0x5dd5,
       };
-      this.debrisTransform(mat, bindD, debrisScale[t] ?? 1);
+      // dressing debris sinks half-buried (0.22), fades out by DEB_R
+      this.debrisTransform(mat, bindD, debrisScale[t] ?? 1, 0.22, DEB_R - 6);
       this.patchGI(mat);
       draws.push({ geo: debrisGeos[t] as BufferGeometry, mat, g: 3 + t });
+    }
+
+    // alpine p.1 (ref-01): dry road-cobble / road-pebble pools (groups 9/10).
+    // Appended by the debris cull on soft-track surfaces; same DEB_CELL grid
+    // and salt (^0x5dd5) so fetchRing re-derives the identical world position.
+    // scaleK sizes the ≈0.32 m base cobble mesh to 7–16 cm / 3–8 cm; sinkK
+    // barely beds them (tops read as loose grit); fadeR trims each pool to its
+    // useful range (pebbles sub-pixel sooner than cobbles). moss:0 = dry stone.
+    const roadStone = [
+      { g: 9, fork: 'roadCobble', scaleK: 0.45, sinkK: 0.08, fadeR: 60 },
+      { g: 10, fork: 'roadPebble', scaleK: 0.2, sinkK: 0.04, fadeR: 38 },
+    ] as const;
+    for (const rs of roadStone) {
+      const mat = rockMaterial({ moss: 0 });
+      const bindR: RingBind = {
+        cells,
+        heights,
+        base: offsets[rs.g] ?? 0,
+        cell: DEB_CELL,
+        salt: salt ^ 0x5dd5,
+      };
+      this.debrisTransform(mat, bindR, rs.scaleK, rs.sinkK, rs.fadeR, true);
+      this.patchGI(mat);
+      draws.push({
+        geo: buildRock('cobble', rng.fork(rs.fork), 1).geometry,
+        mat,
+        g: rs.g,
+      });
     }
 
     const D = draws.length;
@@ -935,11 +1027,23 @@ export class GroundRing {
     return mat;
   }
 
-  /** cobbles/pebbles/twigs/chips/litter placement (yaw + scale + sink) */
+  /**
+   * cobbles/pebbles/twigs/chips/litter placement (yaw + scale + sink).
+   * sinkK = fraction of the scaled mesh dropped below the surface (the
+   * geometry is CENTER-origin, so 0.22 already buries roughly half; road
+   * stones use a near-zero sinkK so their tops read as proud loose grit).
+   * fadeR = distance where bandFade dissolves this pool (pools reach farther
+   * than others cull to nothing, so it is parameterized per pool).
+   * NO road sampler here: classification is done once in the cull kernel;
+   * a per-vertex storage read in positionNode is forbidden.
+   */
   private debrisTransform(
     mat: MeshStandardNodeMaterial,
     bind: RingBind,
     scaleK: number,
+    sinkK: number,
+    fadeR: number,
+    aniso = false,
   ): void {
     const { wc, y, wpos } = fetchRing(bind);
     const h2 = cellHash2(wc, bind.salt ^ 0x7777);
@@ -947,10 +1051,21 @@ export class GroundRing {
     const yawA = h2.y.mul(6.2831853);
     const c = yawA.cos();
     const s = yawA.sin();
-    const ls = positionLocal.mul(scl);
+    // road pools share ONE cobble mesh — per-instance anisotropic squash
+    // (oval footprint + flattened height) breaks the identical-hemisphere
+    // read; ref-01 gravel is ovals and flats, never uniform domes
+    const h3 = cellHash2(wc, bind.salt ^ 0x2b4d);
+    const sclV = aniso
+      ? vec3(
+          scl.mul(h3.x.mul(0.8).add(0.7)),
+          scl.mul(h3.y.mul(0.45).add(0.5)),
+          scl.mul(h3.x.mul(-0.5).add(1.15)),
+        )
+      : vec3(scl, scl, scl);
+    const ls = positionLocal.mul(sclV);
     const rx = ls.x.mul(c).add(ls.z.mul(s));
     const rz = ls.z.mul(c).sub(ls.x.mul(s));
-    const sink = scl.mul(0.22);
+    const sink = scl.mul(sinkK);
     mat.positionNode = Fn(() => {
       const n = vec3(
         normalLocal.x.mul(c).add(normalLocal.z.mul(s)),
@@ -961,7 +1076,7 @@ export class GroundRing {
       return vec3(rx.add(wpos.x), ls.y.add(y).sub(sink), rz.add(wpos.y));
     })();
     const dist = wpos.sub(vec2(cameraPosition.x, cameraPosition.z)).length();
-    bandFade(mat, dist, null, DEB_R - 6, 5);
+    bandFade(mat, dist, null, fadeR, 5);
   }
 
   update(renderer: Renderer, camera: PerspectiveCamera): void {
@@ -1002,7 +1117,7 @@ export class GroundRing {
         'veg.g1': n(1),
         'veg.g2': n(2),
         'veg.g3': n(8),
-        'veg.debris': n(3) + n(4) + n(5) + n(6) + n(7),
+        'veg.debris': n(3) + n(4) + n(5) + n(6) + n(7) + n(9) + n(10),
       };
     } finally {
       this.reading = false;
