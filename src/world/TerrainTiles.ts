@@ -209,6 +209,8 @@ export class TerrainTiles {
       mp: hf.mp,
       far: false,
       road: hf.roadField,
+      // P.5 scenic contour bands — near tiles only (decorative material tint)
+      scenic: hf.scenicField,
     });
     mat.colorNode = shading.colorNode;
     mat.normalNode = shading.normalNode;

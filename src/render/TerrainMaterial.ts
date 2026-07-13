@@ -33,6 +33,7 @@ import {
 import type { NF, NV2, NV3, NV4 } from '../gpu/TSLTypes';
 import { hash12 } from '../gpu/noise/NoiseTSL';
 import type { RoadSampleBaked } from '../gpu/passes/RoadField';
+import type { ScenicSampleBaked } from '../gpu/passes/ScenicField';
 import { SurfaceId } from '../ride/SurfaceMatrix';
 import {
   PERIOD_FBM,
@@ -70,6 +71,12 @@ export interface TerrainShadingInputs {
    * the same sampler drives carve/stamp/veg exclusion (RoadField.ts header).
    */
   road?: { sampleBaked(p: NV2): RoadSampleBaked } | null;
+  /**
+   * P.5 scenic contour bands (ScenicField.sampleBaked) — near tiles only.
+   * Decorative: a faint worn-path tint on green flanks that fades IN with
+   * camera distance (the mid/far composition of ref-04); never physical.
+   */
+  scenic?: { sampleBaked(p: NV2): ScenicSampleBaked } | null;
 }
 
 export interface TerrainShading {
@@ -434,11 +441,47 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     surfDbg = mix(surfDbg, roadDbg, core);
   }
 
+  const camDist = wp.sub(cameraPosition).length();
+
+  // ---------- P.5 scenic contour bands (ref-04) -----------------------------------
+  // Decorative macro-isoline paths blended from the baked ScenicField —
+  // pure mid/far COMPOSITION of green flanks lined with near-level trails.
+  // Not rideable, not carved, not stamped: material tint only. Fades IN
+  // with camera distance so up close the band vanishes (a material-only
+  // stripe under the wheels would read as painted terrain), and only lives
+  // on green slopes (grassW gate); real roads keep their own paint.
+  if (inp.scenic && !inp.far) {
+    const sc = inp.scenic.sampleBaked(wxz);
+    const lat = sc.lat; // signed: positive = uphill side (ScenicContours orients)
+    const halfW = float(2.1); // ≈4.2 m visible tread band
+    const farIn = smoothstep(100, 180, camDist);
+    // breakup along the line: world-anchored macro noise drops ~15–25% of
+    // the band so it reads as a worn path, not a plotted curve
+    const brk = float(1).sub(smoothstep(0.4, 0.8, val(11.7, 0.83, 0.37)).mul(0.24));
+    const green = smoothstep(0.2, 0.5, grassW).mul(snowW.oneMinus());
+    const bandK = smoothstep(halfW.add(0.8), halfW.sub(0.6), sc.dist)
+      .mul(farIn)
+      .mul(brk)
+      .mul(green)
+      .mul(roadCore.oneMinus());
+    // worn-path tint: blend toward bare soil (18–32% per the advisor spec)
+    col = mix(col, soil, bandK.mul(0.28));
+    // dark downhill edge (5–10%): the shadowed bench-cut lip that makes the
+    // line read as a path on the flank instead of a flat decal
+    const below = lat.negate(); // > 0 on the downhill side
+    const lowK = smoothstep(halfW.mul(0.2), halfW.mul(0.8), below)
+      .mul(smoothstep(halfW.add(1.6), halfW.add(0.3), below))
+      .mul(farIn)
+      .mul(brk)
+      .mul(green)
+      .mul(roadCore.oneMinus());
+    col = col.mul(float(1).sub(lowK.mul(0.08)));
+  }
+
   // ---------- normal perturbation ---------------------------------------------------
   // far-detail synthesis (Pillar D): serrated normal-domain detail keeps
   // mid/far ridges craggy where geometric density has LOD'd out. Applied by
   // DISTANCE on both near tiles and the far shell.
-  const camDist = wp.sub(cameraPosition).length();
   const farK = inp.far ? float(1) : smoothstep(900, 2600, camDist);
   // pre-baked ridged gradient at 310 m features; ×44 ≈ the old ±22 m
   // finite-difference amplitude (×2: baked noise is [0,1], mx was [-1,1])

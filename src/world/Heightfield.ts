@@ -44,6 +44,7 @@ import {
 } from '../gpu/passes/HeightSynthesis';
 import { resolveThreads } from '../core/Threads';
 import { RoadField } from '../gpu/passes/RoadField';
+import { ScenicField } from '../gpu/passes/ScenicField';
 import { RoadNetwork } from '../ride/RoadNetwork';
 import { makeMacroParams, type MacroParams } from './MacroMap';
 import { WORLD_SIZE, qualityConfig, type QualityConfig } from './WorldConst';
@@ -95,6 +96,8 @@ export class Heightfield {
   roads: RoadNetwork | null = null;
   /** M1.2 GPU road field (carve/bake/stamp + the shared baked sampler) */
   roadField: RoadField | null = null;
+  /** P.5 scenic contour bands (decorative distance field — material only) */
+  scenicField: ScenicField | null = null;
 
   /** r32float height texture (nearest-sample / textureLoad only) */
   readonly heightTex: StorageTexture;
@@ -219,6 +222,14 @@ export class Heightfield {
     hf.roadField = new RoadField(hf.roads);
     await hf.roadField.carve(renderer, hf.height, hf.res);
     await hf.roadField.bake(renderer);
+
+    // P.5 v2 scenic contour bands (ref-04): decorative signed-distance field
+    // for the terrain material only — no carve, no stamp, no physics, so it
+    // deliberately sits OUTSIDE the carve→derive→classify chain
+    if (hf.roads.scenic.length > 0) {
+      hf.scenicField = new ScenicField(hf.roads.scenic);
+      await hf.scenicField.bake(renderer);
+    }
 
     // post-carve water reconcile (owner 2026-07-06: «прокапывание ямки
     // СНАЧАЛА, потом кладите гель»): waterY freezes BEFORE the road carve

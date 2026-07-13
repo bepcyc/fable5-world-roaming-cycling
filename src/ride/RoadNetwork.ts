@@ -24,8 +24,9 @@
 import type { WorldSeed } from '../core/Seed';
 import { runWorkerJobs } from '../core/Threads';
 import type { MacroParams } from '../world/MacroMap';
-import { LAKE_LEVEL, WORLD_SIZE } from '../world/WorldConst';
+import { LAKE_LEVEL, TREELINE, WORLD_SIZE } from '../world/WorldConst';
 import { computeRoadGridBand, type RoadGridJob } from './RoadGridWorker';
+import { traceScenicContours, type ScenicPolyline } from './ScenicContours';
 import { CLASSIFY, SurfaceId } from './SurfaceMatrix';
 
 /** engineering spec per road class (SI; grades rise/run) */
@@ -223,14 +224,22 @@ export class RoadNetwork {
    * silently split (see runPlan's flush()).
    */
   readonly counters: { asphaltGaps: number; asphaltCuts: number };
+  /**
+   * P.5 v2 scenic contour polylines (ScenicContours) — DECORATIVE only.
+   * Baked by ScenicField into a signed-distance band the terrain material
+   * tints at mid/far camera distances; no carve, no stamp, no physics.
+   */
+  readonly scenic: ScenicPolyline[];
 
   private constructor(
     routes: RoadRoute[],
     counters: { asphaltGaps: number; asphaltCuts: number } = { asphaltGaps: 0, asphaltCuts: 0 },
+    scenic: ScenicPolyline[] = [],
   ) {
     this.routes = routes;
     this.totalLength = routes.reduce((a, r) => a + r.length, 0);
     this.counters = counters;
+    this.scenic = scenic;
   }
 
   /** flattened segment view (probes / GPU upload) */
@@ -1402,6 +1411,240 @@ export class RoadNetwork {
       extra++;
     }
 
-    return new RoadNetwork(routes, { asphaltGaps, asphaltCuts });
+    // ---- P.5 contour traverses (ref-04): green flanks are lined with
+    // near-level paths riding the height isolines — several per slope at
+    // distinct elevations. No A* here: the path is traced directly by
+    // stepping PERPENDICULAR to the height gradient with light direction
+    // smoothing and a small per-slope ±2–4% drift, aborting on water, rock
+    // (slope > 0.75), mud, the treeline or the world edge. The traced cells
+    // then go through buildRoute like every other class, so the profile
+    // (smoothed + grade-clamped + terrain-pulled ys) and the carve/bake/
+    // stamp pipeline — and with them the conformance law — apply unchanged.
+    // Runs AFTER the km top-up so contours ADD to the network instead of
+    // eating the link-road budget.
+    {
+      const single = spec(SurfaceId.Singletrack);
+      const gAt = (x: number, z: number): number => bilerp(gh, N, x, z);
+      const mAt = (x: number, z: number): number => bilerp(terr.moisture, terr.simRes, x, z);
+      const SLOPE_MIN = 0.16; // gentler ground has no reason for a bench
+      const SLOPE_MAX = 0.72; // steeper reads as scree/rock, not meadow
+      const ROCK_SLOPE = 0.75; // trace hard-stop (cliff band)
+      const CONTOUR_MAX_ROUTES = 6;
+      const CONTOUR_LEN_CAP_M = 4800; // m, total across all slopes
+      const inWorld = (x: number, z: number): boolean =>
+        Math.abs(x) < WORLD_SIZE / 2 - 60 && Math.abs(z) < WORLD_SIZE / 2 - 60;
+
+      /** buildable green-hillside cell (anchor scoring predicate) */
+      const okCell = (cx: number, cz: number): boolean => {
+        if (cx < 4 || cz < 4 || cx >= N - 4 || cz >= N - 4) return false;
+        const i = cz * N + cx;
+        const s = gs[i] as number;
+        const h = gh[i] as number;
+        return (
+          s >= SLOPE_MIN &&
+          s <= SLOPE_MAX &&
+          h > LAKE_LEVEL + 15 &&
+          h < TREELINE - 20 &&
+          (gd[i] as number) <= 0.02 &&
+          (gmud[i] as number) === 0
+        );
+      };
+      /** trace-time gate: looser slope band (crossing a local flat/steep
+       *  ripple mid-traverse is honest), hard stops per the ref brief.
+       *  netMask: never trace ALONG an existing corridor — a genuine
+       *  crossing survives because the step is 12-20 m and only the
+       *  on-network cell breaks. */
+      const traceOkAt = (x: number, z: number): boolean => {
+        if (!inWorld(x, z)) return false;
+        const c = toCell(x, z);
+        const i = c.z * N + c.x;
+        return (
+          (gd[i] as number) <= 0.02 &&
+          (gmud[i] as number) === 0 &&
+          (gs[i] as number) <= ROCK_SLOPE &&
+          (gh[i] as number) < TREELINE - 5 &&
+          (gh[i] as number) > LAKE_LEVEL + 8 &&
+          netMask[i] !== 1
+        );
+      };
+
+      // anchor scan: coarse lattice; score = qualifying fraction of a ±96 m
+      // neighbourhood (a broad flank, not a lone bump) gated on moisture —
+      // the ref slopes are GREEN meadow, not dry scree
+      const cand: { x: number; z: number; score: number }[] = [];
+      for (let cz = 16; cz < N - 16; cz += 4) {
+        for (let cx = 16; cx < N - 16; cx += 4) {
+          if (!okCell(cx, cz) || netMask[cz * N + cx]) continue;
+          if (mAt(cw(cx), cw(cz)) < 0.12) continue;
+          let ok = 0;
+          let tot = 0;
+          for (let dz = -12; dz <= 12; dz += 4) {
+            for (let dx = -12; dx <= 12; dx += 4) {
+              tot++;
+              if (okCell(cx + dx, cz + dz)) ok++;
+            }
+          }
+          const score = ok / tot;
+          if (score >= 0.42) cand.push({ x: cx, z: cz, score });
+        }
+      }
+      // deterministic order: best coverage first, grid order breaks ties
+      cand.sort((a, b) => b.score - a.score || a.z - b.z || a.x - b.x);
+      const anchors: { x: number; z: number }[] = [];
+      const SEP_CELLS = 700 / cellM; // distinct slopes, not one flank twice
+      for (const c of cand) {
+        if (anchors.length >= 3) break;
+        if (anchors.some((a) => Math.hypot(a.x - c.x, a.z - c.z) < SEP_CELLS)) continue;
+        anchors.push(c);
+      }
+
+      /** smoothed-field gradient (16 m central differences — the same field
+       *  the router grades on, so the isoline is stable, not micro-noise) */
+      const gradAt = (x: number, z: number): [number, number] => [
+        (gAt(x + 8, z) - gAt(x - 8, z)) / 16,
+        (gAt(x, z + 8) - gAt(x, z - 8)) / 16,
+      ];
+
+      /** one direction of a traverse: step ⟂ to the gradient, blend 60/40
+       *  with the previous heading, pull back onto the (drifting) isoline */
+      const traceHalf = (
+        sx: number,
+        sz: number,
+        dirSign: 1 | -1,
+        drift: number,
+        stepM: number,
+        maxLen: number,
+      ): number[][] => {
+        const out: number[][] = [];
+        let x = sx;
+        let z = sz;
+        let targetH = gAt(sx, sz);
+        let px = 0;
+        let pz = 0;
+        let len = 0;
+        while (len < maxLen) {
+          const [gx, gz] = gradAt(x, z);
+          const gl = Math.hypot(gx, gz);
+          if (gl < 0.045 || gl > ROCK_SLOPE) break; // flank faded / cliff band
+          const ux = gx / gl; // uphill unit
+          const uz = gz / gl;
+          let ex = -uz; // isoline direction (⟂ gradient)
+          let ez = ux;
+          if (out.length === 0) {
+            ex *= dirSign;
+            ez *= dirSign;
+          } else if (ex * px + ez * pz < 0) {
+            ex = -ex;
+            ez = -ez;
+          }
+          let dx = px !== 0 || pz !== 0 ? px * 0.6 + ex * 0.4 : ex;
+          let dz = px !== 0 || pz !== 0 ? pz * 0.6 + ez * 0.4 : ez;
+          const dl = Math.hypot(dx, dz) || 1;
+          dx /= dl;
+          dz /= dl;
+          // step, then correct along the gradient onto the drifting isoline
+          targetH += drift * stepM;
+          let nx = x + dx * stepM;
+          let nz = z + dz * stepM;
+          const corr = Math.min(Math.max((targetH - gAt(nx, nz)) / gl, -6), 6);
+          nx += ux * corr;
+          nz += uz * corr;
+          if (!traceOkAt(nx, nz)) break;
+          len += Math.hypot(nx - x, nz - z);
+          const hl = Math.hypot(nx - x, nz - z) || 1;
+          px = (nx - x) / hl;
+          pz = (nz - z) / hl;
+          x = nx;
+          z = nz;
+          out.push([x, z]);
+        }
+        return out;
+      };
+
+      /** walk the gradient from the anchor to the level's target height */
+      const seekHeight = (sx: number, sz: number, hTgt: number): [number, number] | null => {
+        let x = sx;
+        let z = sz;
+        for (let it = 0; it < 40; it++) {
+          const h = gAt(x, z);
+          if (Math.abs(h - hTgt) < 2) return traceOkAt(x, z) ? [x, z] : null;
+          const [gx, gz] = gradAt(x, z);
+          const gl = Math.hypot(gx, gz);
+          if (gl < 0.08) return null; // ran off the flank before the level
+          const climb = Math.min(Math.max((hTgt - h) / gl, -14), 14);
+          x += (gx / gl) * climb;
+          z += (gz / gl) * climb;
+          if (!inWorld(x, z)) return null;
+        }
+        return null;
+      };
+
+      let contourLen = 0;
+      let contourCount = 0;
+      for (const [si, a] of anchors.entries()) {
+        if (contourCount >= CONTOUR_MAX_ROUTES || contourLen >= CONTOUR_LEN_CAP_M) break;
+        const ax = cw(a.x);
+        const az = cw(a.z);
+        const h0 = gh[a.z * N + a.x] as number;
+        const nLevels = 2 + rng.int(2); // 2–3 elevation bands per slope
+        // one drift sign per SLOPE: parallel levels drift together, so the
+        // ≥ 48 m vertical spacing (⇒ ≥ 80 m horizontal at slope 0.6) holds
+        // along the whole traverse — no converging/JOIN_R-touching pairs
+        const vStep = rng.range(48, 78);
+        const drift = (rng.range(0, 1) < 0.5 ? -1 : 1) * rng.range(0.02, 0.04);
+        const stepM = rng.range(12, 20);
+        for (let li = 0; li < nLevels; li++) {
+          if (contourCount >= CONTOUR_MAX_ROUTES || contourLen >= CONTOUR_LEN_CAP_M) break;
+          const hTgt = h0 + (li - (nLevels - 1) / 2) * vStep;
+          const start = seekHeight(ax, az, hTgt);
+          if (!start) continue;
+          const targetLen = rng.range(300, 900);
+          const back = traceHalf(start[0], start[1], -1, -drift, stepM, targetLen / 2);
+          const fwd = traceHalf(start[0], start[1], 1, drift, stepM, targetLen / 2);
+          const pts = [...back.reverse(), [start[0], start[1]], ...fwd];
+          // world points → router cells (dedupe consecutive) for buildRoute
+          const ccells: Cell[] = [];
+          for (const p of pts) {
+            const c = toCell(p[0] as number, p[1] as number);
+            const prev = ccells[ccells.length - 1];
+            if (!prev || prev.x !== c.x || prev.z !== c.z) ccells.push(c);
+          }
+          if (ccells.length < 5) continue;
+          const r = buildRoute(`contour-${si}-${li}`, single, ccells);
+          // stubs (trace hit water/rock early) are dropped, not built
+          if (r.pts.length > 3 && r.length >= 140) {
+            routes.push(r);
+            markNetwork(r);
+            contourLen += r.length;
+            contourCount++;
+          }
+        }
+      }
+      console.log(
+        `[roads] contour traverses: ${contourCount} route(s), ${(contourLen / 1000).toFixed(2)} km ` +
+          `over ${anchors.length} slope(s) [${anchors.map((a) => `(${cw(a.x).toFixed(0)},${cw(a.z).toFixed(0)})`).join(' ')}]`,
+      );
+    }
+
+    // ---- P.5 v2 scenic macro-isolines (advisor 2026-07-13, ref-04): long
+    // DECORATIVE contour bands extracted from a further-smoothed planning
+    // field — marching squares over the FULL grid, obstacle criteria
+    // evaluated along the polyline with run-length tolerances, then a
+    // best-line + neighbouring-levels family per flank (3–6 lines). Purely
+    // visual: ScenicField bakes them for the terrain material; no carve, no
+    // stamp, no physics. Runs LAST so netMask covers the whole network
+    // (parallel-to-road overlap is penalized in the window score).
+    const scenic = traceScenicContours({ n: N, gh, gs, gd, gmud, netMask });
+    if (scenic.length > 0) {
+      const km = scenic.reduce((a, s) => a + s.length, 0) / 1000;
+      console.log(
+        `[roads] scenic contours: ${scenic.length} band(s), ${km.toFixed(2)} km, ` +
+          `levels [${scenic.map((s) => s.level.toFixed(0)).join(' ')}] m`,
+      );
+    } else {
+      console.log('[roads] scenic contours: none qualified');
+    }
+
+    return new RoadNetwork(routes, { asphaltGaps, asphaltCuts }, scenic);
   }
 }
