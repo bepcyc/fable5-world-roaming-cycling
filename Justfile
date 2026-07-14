@@ -157,28 +157,36 @@ linux-binary: deps
     echo "── linux-binary built ──"
     ls -la dist-electron/*.AppImage dist-electron/linux-unpacked/laas 2>/dev/null || true
 
-# Android APK via TWA (Bubblewrap) — the app runs in the user's Chrome, the ONLY
-# wrapper keeping BOTH WebGPU and Web Bluetooth (Chrome ≥121 on Android 12+,
-# Adreno/Qualcomm = default-on WebGPU). The PWA must be served over HTTPS.
-# HOST = the https origin serving the `/laas/` production build.
-#   just android-apk HOST=https://your-domain.example
-# Bubblewrap auto-installs a JDK + Android SDK into ~/.bubblewrap on first run.
-# After building, publish  HOST/.well-known/assetlinks.json  (bubblewrap prints
-# it) or the TWA falls back to a Custom Tab with a visible URL bar.
-android-apk HOST='': build
+# Offline Android APK (variant B): a thin native shell bundles the whole dist/
+# inside the APK, serves it from a 127.0.0.1:47862 loopback (secure context =>
+# WebGPU + Web Bluetooth with NO flags/TLS), and opens it in a Chrome Custom Tab
+# pinned to com.android.chrome. WebGPU/BLE come from the installed Chrome; no
+# hosting, no HTTPS, fully offline. See HANDOFF_APK.md §0.5/§2/§6.
+# JAVA_HOME is FORCED to java-21 (env JAVA_HOME = Java 8 landmine → gradle dies).
+# Uses `vite build` directly (not the typecheck-gated `build`), mirroring
+# linux-binary; run `just typecheck` separately. Output:
+#   android/app/build/outputs/apk/debug/app-debug.apk
+android-apk:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ -z "{{HOST}}" ]; then
-      echo "android-apk needs a hosted HTTPS origin serving the /laas/ build."
-      echo "  1) deploy dist/ to  https://<origin>/laas/"
-      echo "  2) just android-apk HOST=https://<origin>"
-      echo "TWA requires HTTPS: WebGPU + Web Bluetooth are secure-context-only."
-      exit 2
-    fi
-    MANIFEST="{{HOST}}/laas/manifest.webmanifest"
-    echo "TWA manifest → $MANIFEST"
-    mkdir -p android && cd android
-    [ -f twa-manifest.json ] || npx -y @bubblewrap/cli init --manifest="$MANIFEST"
-    npx -y @bubblewrap/cli build
+    export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+    export ANDROID_HOME="$HOME/Android/Sdk"
+    export PATH="$JAVA_HOME/bin:$PATH"
+    # 1) web build with root-absolute base ('/') for the loopback origin
+    ANDROID_APK=1 npx vite build
+    # 2) SDK location (belt-and-suspenders alongside ANDROID_HOME env)
+    echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+    # 3) bundle dist/ into assets/www
+    mkdir -p android/app/src/main/assets
+    rm -rf android/app/src/main/assets/www
+    cp -r dist android/app/src/main/assets/www
+    # 4) launcher icon (optional polish)
+    mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+    cp public/icons/icon-maskable-512.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png 2>/dev/null || true
+    # 5) ensure a self-contained gradle wrapper exists
+    cd android
+    [ -x ./gradlew ] || ~/.cache/laas-gradle/gradle-8.7/bin/gradle wrapper --gradle-version 8.7
+    # 6) build (debug signing = installs immediately; release keystore later)
+    ./gradlew assembleDebug
     echo "── android-apk built ──"
-    ls -la app-release-signed.apk ./*.apk 2>/dev/null || true
+    ls -la app/build/outputs/apk/debug/app-debug.apk 2>/dev/null || true

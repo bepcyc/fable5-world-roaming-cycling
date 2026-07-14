@@ -1,7 +1,7 @@
 {
   "name": "LAAS — Roaming Cycling",
   "short_name": "LAAS",
-  "start_url": "/laas/?nogate=1&preset=low&dpr=1",
+  "start_url": "/laas/?nogate=1&preset=min&dpr=0.6",
   "scope": "/laas/",
   "display": "fullscreen",
   "orientation": "landscape",

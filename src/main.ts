@@ -13,6 +13,7 @@ import { Engine } from './core/Engine';
 import { FlyCamera } from './core/FlyCamera';
 import { GameMenu } from './core/GameMenu';
 import { initHooks } from './core/Hooks';
+import { initImmersiveMobile } from './core/ImmersiveMobile';
 import { parseCamString, parseParams } from './core/Params';
 import { WorldSeed } from './core/Seed';
 import { Hud } from './debug/HUD';
@@ -41,6 +42,9 @@ async function boot(): Promise<void> {
   // environment gate BEFORE any loading: mobile / non-Chromium / missing
   // WebGPU each get a clear notice instead of a broken boot (?nogate=1 skips)
   if (!browserGate()) return;
+  // mobile only: arm first-tap fullscreen + landscape lock before heavy work,
+  // so the very first touch anywhere goes immersive (no-op on desktop/Electron)
+  initImmersiveMobile();
   const params = parseParams();
   // reverse debug channel (?debug=1): phone → desktop telemetry sink
   initTelemetry(params.debug);

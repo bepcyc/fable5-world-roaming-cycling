@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, maximum-scale=1" />
     <title>LAAS</title>
     <!-- relative href resolves under any base ('/', '/laas/', loopback) -->
     <link rel="manifest" href="manifest.webmanifest" />
@@ -149,7 +149,13 @@
         left: 0;
         right: 0;
         bottom: 0;
-        padding: 6vh 5vw;
+        /* full-bleed viewport-fit=cover means the notch/cutout can overlap the
+           edges — pad the UI out from under it (never smaller than the base) */
+        padding:
+          max(6vh, env(safe-area-inset-top))
+          max(5vw, env(safe-area-inset-right))
+          max(6vh, env(safe-area-inset-bottom))
+          max(5vw, env(safe-area-inset-left));
         display: flex;
         flex-direction: column;
         align-items: flex-start;
@@ -209,7 +215,11 @@
         inset: 0;
         display: none;
         align-items: flex-end;
-        padding: 6vh 5vw;
+        padding:
+          max(6vh, env(safe-area-inset-top))
+          max(5vw, env(safe-area-inset-right))
+          max(6vh, env(safe-area-inset-bottom))
+          max(5vw, env(safe-area-inset-left));
       }
       #msettings.on { display: flex; }
       .msettings-card {
@@ -312,9 +322,63 @@
         color: var(--menu-text-bright);
         margin-bottom: 6px;
       }
+
+      /* portrait-lock fallback: pure CSS so it ALWAYS covers the screen in
+         portrait even when screen.orientation.lock() is unsupported/denied.
+         Gated to `pointer: coarse` (touch devices) so a DESKTOP browser in a
+         portrait-shaped window / on a portrait monitor is NOT blocked by it. */
+      #rotate { display: none; }
+      @media (orientation: portrait) and (pointer: coarse) {
+        #rotate {
+          position: fixed;
+          inset: 0;
+          z-index: 5000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #06080a;
+          color: var(--menu-text);
+          font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        }
+      }
+      .rotate-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 22px;
+        padding: 8vw;
+        text-align: center;
+      }
+      .rotate-inner svg {
+        width: 72px;
+        height: 72px;
+        color: var(--menu-accent);
+        animation: laas-rotate-hint 2.4s ease-in-out infinite;
+      }
+      .rotate-inner .rotate-msg {
+        font-size: 13px;
+        letter-spacing: 0.22em;
+        color: var(--menu-text-bright);
+      }
+      @keyframes laas-rotate-hint {
+        0%, 40%   { transform: rotate(0deg); }
+        70%, 100% { transform: rotate(-90deg); }
+      }
     </style>
   </head>
   <body>
+    <!-- portrait-lock fallback (mobile): pure-CSS @media overlay, always covers
+         the screen in portrait even if JS orientation.lock is denied -->
+    <div id="rotate">
+      <div class="rotate-inner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="7" y="2" width="10" height="20" rx="2" />
+          <path d="M11 19h2" />
+        </svg>
+        <div class="rotate-msg" data-i18n data-de="GERÄT DREHEN" data-ru="ПОВЕРНИТЕ УСТРОЙСТВО">ROTATE YOUR DEVICE</div>
+      </div>
+    </div>
+
     <div id="app"></div>
     <div id="boot">
       <div class="title">L A A S</div>
