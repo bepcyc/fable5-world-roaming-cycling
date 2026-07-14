@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-electron/
+android/
 .DS_Store
 .cache/
 test-results/
@@ -7,5 +9,13 @@ shots/*
 !shots/phase-*
 !shots/phase-*/**
 *.log
+.env
+.env.*
+!.env.example
 .claude/
 .claude/hooks/.pending-shots
+# 3D asset working files (Blender .blend/.glb, 100+ MB of binaries) — kept
+# local, not versioned in plain git (use git-lfs later if needed)
+assets/
+# stray screenshot from a shell redirect typo
+/-background

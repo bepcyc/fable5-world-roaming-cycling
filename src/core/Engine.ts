@@ -7,6 +7,7 @@
 import { ACESFilmicToneMapping, PerspectiveCamera, Scene } from 'three';
 import { TimestampQuery, WebGPURenderer } from 'three/webgpu';
 import { buildRequiredLimits, failLoud } from './Diagnostics';
+import { tele } from './Telemetry';
 import { installMaterialKeyMemo } from '../render/ThreePatches';
 import { installPositionInvariance } from '../render/VegPrepass';
 import { GpuProfiler } from './GpuProfiler';
@@ -107,6 +108,8 @@ export class Engine {
       // 'destroyed' is the intentional teardown on page unload — ignore it.
       void device.lost.then((info) => {
         if (info.reason === 'destroyed') return;
+        // reverse debug channel: get the crash off the phone before it dies
+        tele()?.crash(`${info.reason}: ${info.message || '(no message)'}`);
         failLoud('WebGPU device lost', [
           `${info.reason}: ${info.message || '(no message)'}`,
           '',

@@ -135,3 +135,50 @@ build: deps
 # serve the production bundle
 preview: build
     npm run preview
+
+# ── PACKAGING (joint Claude+Codex decision: ship a full Chromium everywhere) ──
+# WebGPU + TSL compute + Web Bluetooth force a Chromium runtime. Desktop =
+# Electron (bundled Chromium). Android = TWA over the user's Chrome. WebKitGTK
+# (Tauri) / System-WebView (Capacitor) were rejected: no reliable WebGPU, no
+# Web Bluetooth. Full write-up: docs/PACKAGING.md.
+
+# Linux desktop binary (Electron = bundled Chromium). WebGPU flags and the
+# "NO --use-angle=vulkan" rule live in electron/main.cjs; the app is served from
+# a 127.0.0.1 loopback origin (secure context) so WebGPU + Web Bluetooth work.
+# Uses `vite build` (not the strict `build`) so packaging is not gated on the
+# typecheck — run `just typecheck` separately. Outputs:
+#   dist-electron/linux-unpacked/LAAS      (runnable binary)
+#   dist-electron/laas-linux-x64.AppImage  (single-file distributable)
+linux-binary: deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ELECTRON=1 npx vite build
+    npx electron-builder --linux --config electron-builder.yml
+    echo "── linux-binary built ──"
+    ls -la dist-electron/*.AppImage dist-electron/linux-unpacked/laas 2>/dev/null || true
+
+# Android APK via TWA (Bubblewrap) — the app runs in the user's Chrome, the ONLY
+# wrapper keeping BOTH WebGPU and Web Bluetooth (Chrome ≥121 on Android 12+,
+# Adreno/Qualcomm = default-on WebGPU). The PWA must be served over HTTPS.
+# HOST = the https origin serving the `/laas/` production build.
+#   just android-apk HOST=https://your-domain.example
+# Bubblewrap auto-installs a JDK + Android SDK into ~/.bubblewrap on first run.
+# After building, publish  HOST/.well-known/assetlinks.json  (bubblewrap prints
+# it) or the TWA falls back to a Custom Tab with a visible URL bar.
+android-apk HOST='': build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{HOST}}" ]; then
+      echo "android-apk needs a hosted HTTPS origin serving the /laas/ build."
+      echo "  1) deploy dist/ to  https://<origin>/laas/"
+      echo "  2) just android-apk HOST=https://<origin>"
+      echo "TWA requires HTTPS: WebGPU + Web Bluetooth are secure-context-only."
+      exit 2
+    fi
+    MANIFEST="{{HOST}}/laas/manifest.webmanifest"
+    echo "TWA manifest → $MANIFEST"
+    mkdir -p android && cd android
+    [ -f twa-manifest.json ] || npx -y @bubblewrap/cli init --manifest="$MANIFEST"
+    npx -y @bubblewrap/cli build
+    echo "── android-apk built ──"
+    ls -la app-release-signed.apk ./*.apk 2>/dev/null || true

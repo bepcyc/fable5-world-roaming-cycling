@@ -1,6 +1,6 @@
 /** URL parameter parsing — every run is fully described by its URL. */
 
-export type QualityPreset = 'low' | 'high' | 'ultra';
+export type QualityPreset = 'min' | 'low' | 'high' | 'ultra';
 
 export interface LaasParams {
   /** world seed — reproduces the entire world */
@@ -28,6 +28,8 @@ export interface LaasParams {
   fixedDt: number;
   /** ?ridedev=1 — keyboard-driven bike power source (dev builds only) */
   rideDev: boolean;
+  /** ?debug=1 — on-screen boot diagnostic overlay (adapter, limits, timed steps) */
+  debug: boolean;
 }
 
 function num(v: string | null, fallback: number): number {
@@ -40,7 +42,7 @@ export function parseParams(search: string = window.location.search): LaasParams
   const q = new URLSearchParams(search);
   const presetRaw = q.get('preset') ?? 'high';
   const preset: QualityPreset =
-    presetRaw === 'low' || presetRaw === 'ultra' ? presetRaw : 'high';
+    presetRaw === 'min' || presetRaw === 'low' || presetRaw === 'ultra' ? presetRaw : 'high';
   const shotN = num(q.get('shot'), 0);
   return {
     seed: Math.floor(num(q.get('seed'), 1)) >>> 0,
@@ -56,6 +58,7 @@ export function parseParams(search: string = window.location.search): LaasParams
     threads: Math.max(0, Math.floor(num(q.get('threads'), 0))),
     fixedDt: Math.min(50, Math.max(2, num(q.get('dt'), 1000 / 120))) / 1000,
     rideDev: q.get('ridedev') === '1',
+    debug: q.get('debug') === '1',
   };
 }
 

@@ -1,0 +1,23 @@
+# electron-builder config for the LAAS desktop (Linux) binary.
+# `just linux-binary` runs `vite build` (ELECTRON=1 → base '/') then this.
+appId: com.bepcyc.laas
+productName: LAAS
+directories:
+  output: dist-electron
+# extraMetadata.main injects the Electron entry without polluting the web
+# app's package.json (which stays a `"type":"module"` Vite project).
+extraMetadata:
+  main: electron/main.cjs
+files:
+  - electron/**
+  - dist/**
+  - package.json
+# GPU-heavy WebGPU app: unpacked `dir` is the guaranteed-buildable artifact
+# (a runnable ./LAAS binary); AppImage is the single-file distributable.
+linux:
+  target:
+    - dir
+    - AppImage
+  category: Game
+  artifactName: laas-linux-${arch}.${ext}
+# no code signing / no publish

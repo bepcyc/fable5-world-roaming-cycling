@@ -1,6 +1,7 @@
 /** LAAS entry point — boot sequence with fail-loud diagnostics. */
 
 import { BootUI } from './core/BootUI';
+import { initTelemetry, tele } from './core/Telemetry';
 import { browserGate } from './core/BrowserGate';
 import {
   describeDiagnostics,
@@ -41,15 +42,29 @@ async function boot(): Promise<void> {
   // WebGPU each get a clear notice instead of a broken boot (?nogate=1 skips)
   if (!browserGate()) return;
   const params = parseParams();
+  // reverse debug channel (?debug=1): phone → desktop telemetry sink
+  initTelemetry(params.debug);
   // splash+menu is static markup in index.html — this only wires behavior
   // onto it, and boot() below keeps running in the background regardless
   // of whether the user has clicked Start yet
   const gameMenu = new GameMenu(hooks, params);
-  const bootUI = new BootUI(hooks);
+  const bootUI = new BootUI(hooks, params);
 
   bootUI.set(0.02, 'probing WebGPU');
   const diag = await probeWebGPU();
   hooks.diag = diag;
+  // send everything known BEFORE the heavy boot (adapter, limits, profile) so a
+  // crash later can be analysed against the device it happened on
+  tele()?.begin({
+    ok: diag.ok,
+    reason: diag.reason,
+    adapter: `${diag.vendor ?? '?'}/${diag.architecture ?? '?'}${diag.description ? ` (${diag.description})` : ''}`,
+    limits: diag.limits,
+    preset: params.preset,
+    dpr: params.dpr,
+    seed: params.seed,
+    T: params.timeOfDay,
+  });
   // DEV repro: `?limitcap=mobile` caps diag.limits to WebGPU's guaranteed
   // floor (≈ a mobile GPU) so the desktop reproduces tablet-only device-loss.
   // buildRequiredLimits() then requests these, and the device enforces them.

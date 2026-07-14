@@ -52,8 +52,12 @@ export interface QualityConfig {
   tileVerts: number; // vertices per tile edge
 }
 
-export function qualityConfig(preset: 'low' | 'high' | 'ultra'): QualityConfig {
+export function qualityConfig(preset: 'min' | 'low' | 'high' | 'ultra'): QualityConfig {
   switch (preset) {
+    case 'min':
+      // weakest — phone floor: quarter-res height, 512 sim, few erosion iters,
+      // sparse tiles. Cuts bake VRAM/time ~4× so a mobile GPU survives world-gen.
+      return { heightRes: 1024, simRes: 512, erosionIters: 150, tileVerts: 33 };
     case 'low':
       return { heightRes: 2048, simRes: 1024, erosionIters: 500, tileVerts: 49 };
     case 'ultra':

@@ -1,0 +1,15 @@
+{
+  "name": "LAAS — Roaming Cycling",
+  "short_name": "LAAS",
+  "start_url": "/laas/?nogate=1&preset=low&dpr=1",
+  "scope": "/laas/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#06080a",
+  "theme_color": "#06080a",
+  "icons": [
+    { "src": "/laas/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/laas/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/laas/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
