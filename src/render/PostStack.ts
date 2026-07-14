@@ -259,7 +259,16 @@ export class PostStack {
       }
       const hazed = atmosphere.aerial(col, dirW, camAltKm, distKm);
       // reversed-z: far plane clears to 0 → sky already carries the atmosphere
-      const scenePart = isSky.select(col, hazed).toVar();
+      // Sky-only brightness lift (owner goal 2026-07-14: match ref-04 clear-sky
+      // color + CCT within ±3%). Measured our clear sky rgb(68,102,134) vs ref
+      // rgb(121,183,244) — right hue/CCT, ~1.79× too dark. Boost sky radiance
+      // (isSky pixels only, terrain untouched) BEFORE AgX; factor >1.79 because
+      // AgX compresses the highlight. Tuned against sky-cct.mjs.
+      // Sky-only brightness lift toward ref-04 clear sky (owner goal: sky color
+      // + CCT ±3%). Per-channel blue-skewed boost; AgX caps how blue it stays,
+      // so the grade saturation below carries the rest. Chroma extrapolation was
+      // tried and broke the zenith (drove R<0 → black), reverted to this.
+      const scenePart = isSky.select(col.mul(vec3(2.0, 2.8, 3.8)), hazed).toVar();
 
       if (clouds && !ablate.has('clouds')) {
         const maxD = isSky.select(float(1e9), dist);

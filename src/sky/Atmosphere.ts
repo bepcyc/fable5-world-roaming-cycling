@@ -50,12 +50,12 @@ import type { NF, NI, NV2, NV3 } from '../gpu/TSLTypes';
 const RG = 6360; // ground radius
 const RT = 6460; // atmosphere top
 const HR = 8.0; // rayleigh scale height
-const HM = 1.2; // mie scale height
-// rayleigh standard; mie boosted ~2.4× over the clean-air baseline — the
-// references are humid scenes with pronounced horizon haze and depth layering
+const HM = 0.9; // clean-air aerosol layer: lower than humid valley haze
+// Standard Rayleigh plus clean-air Mie. The old ~2.4x Mie boost made both the
+// sky horizon and its aerial in-scatter achromatic, reading beige over terrain.
 const BETA_R: [number, number, number] = [5.802e-3, 13.558e-3, 33.1e-3];
-const BETA_M_S = 9.6e-3;
-const BETA_M_E = 1.07e-2;
+const BETA_M_S = 4.0e-3;
+const BETA_M_E = 4.4e-3;
 const BETA_O: [number, number, number] = [0.65e-3, 1.881e-3, 0.085e-3];
 const MIE_G = 0.8;
 // 3x the physical 0.265° radius: games oversize the disc — at true scale
@@ -136,14 +136,14 @@ export class Atmosphere {
   /** sun direction (world, normalized, y up) */
   readonly sunDir = uniform(new Vector3(0.3, 0.6, 0.2).normalize());
   /** boundary-layer haze params (per km) — weather-lerpable (M1.6).
-   *  hf ≈ 0.95 km (clear-day default, ref-04): tall enough that far ridge
+   *  hf ≈ 1.15 km (clear-day default): tall enough that far ridge
    *  crests (0.7–1.8 km alt, bands at 4.5/8/12 km) sit INSIDE the haze and
    *  sink layer by layer; the fog weather state lerps it back down to a
    *  ground-hugging 0.38 (see Weather.ts STATES). */
   readonly fogU = {
-    k: uniform(0.19),
+    k: uniform(0.22),
     h0: uniform(0.16),
-    hf: uniform(0.95),
+    hf: uniform(1.15),
   };
   private renderer: Renderer | null = null;
   private skyCompute: ComputeNode | null = null;
@@ -381,8 +381,8 @@ export class Atmosphere {
 
   /**
    * Aerial perspective for post: altitude-aware analytic atmosphere PLUS a
-   * boundary-layer haze term (humid valley mist — the references' depth
-   * layering is this, not clean-air rayleigh, which is subtle under 15 km).
+   * boundary-layer haze term for a clean blue alpine depth ladder (clean-air
+   * Rayleigh alone is subtle under 15 km, so weather supplies a light veil).
    */
   aerial(color: NV3, viewDir: NV3, camAltKm: NF, distKm: NF): NV3 {
     const fragAlt = camAltKm.add(viewDir.y.mul(distKm)).max(0);
@@ -403,23 +403,35 @@ export class Atmosphere {
       exp(y0.negate()).mul(distKm),
       exp(y0.negate()).sub(exp(y1.negate())).div(dy).mul(distKm),
     );
-    // near-clear gate (ref-04): the haze is a DISTANCE curve, not global fog.
-    // ~0 through the froxel range (≤0.48 km — clean handoff, froxels own the
-    // near volume) and the foreground (<1.5 km keeps T ≳ 0.9), saturating by
-    // ~3.5 km so the far ridge bands (4.5/8/12 km) fade in separated steps:
+    // Near-clear gate: the haze is a DISTANCE curve, not global fog. It stays
+    // ~0 through the froxel range and very light across the foreground, then
+    // saturates around 4 km so the far ridge bands fade in separated steps:
     // each successive silhouette reads notably paler than the one before.
-    const nearGate = smoothstep(0.35, 3.5, distKm);
+    const nearGate = smoothstep(1.8, 8.5, distKm);
     const tauF = integ.mul(this.fogU.k as unknown as NF).mul(nearGate).max(0);
 
-    // aerosol haze is not spectrally flat: fine humid particles still favor
-    // short wavelengths. Mild rayleigh-ward tilt — mix(1, betaR/betaR.g, .25)
-    // — keeps the veil BLUE instead of grey. No palette recolor: the near
-    // field is untouched because nearGate zeroes tauF there.
-    const hazeTint = vec3(0.86, 1.0, 1.36);
+    // Blue-biased extinction replaces distant terrain with the sampled blue
+    // sky sooner in B than R. Combined with reduced neutral Mie, this yields
+    // blue aerial perspective rather than a grey/beige luminance wash.
+    const hazeTint = vec3(0.44, 0.76, 1.62);
 
     const T = vexp3(tauR.add(tauM).add(hazeTint.mul(tauF)).negate());
-    const sky = this.skyColor(viewDir);
-    // per-channel energy exchange: blue extinguishes first → haze reads blue
+    // Terrain rays point below the horizon, where the sky LUT contains its
+    // neutral sun-lit ground fallback. Sample just above the horizon instead
+    // and keep a cold luminous floor, otherwise distant land is replaced by
+    // the same beige/grey that we are trying to remove.
+    const aerialDir = vec3(viewDir.x, viewDir.y.max(0.04), viewDir.z).normalize();
+    // The raw horizon sky the LUT returns is warm-bright (Mie forward-scatter);
+    // using it as the aerial destination washed distant terrain to warm WHITE
+    // (rgb(221,218,214), R>B — "brown haze"). Bias the destination hard toward a
+    // clean COOL sky-blue so aerial perspective reads blue like ref-04, keeping
+    // the haze (owner: brown haze ≠ remove haze — recolor it, don't delete it).
+    const sky = mix(this.skyColor(aerialDir), vec3(0.55, 0.72, 0.95), 0.55)
+      .max(vec3(0.44, 0.64, 0.9));
+    // per-channel energy exchange: blue extinguishes first → haze reads blue.
+    // NO artistic distance wash: the owner wants CLEAR air like ref-04 (crisp
+    // distant peaks, no mid-ground murk lake). Only the physical haze remains,
+    // and it is kept thin via a low Weather.dry aerialK + a later nearGate.
     return color.mul(T).add(sky.mul(vec3(1).sub(T)));
   }
 

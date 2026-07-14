@@ -137,9 +137,15 @@ const FAR_CAP = 196608;
 // instead of upsizing generic streambed debris. Groups appended AFTER FAR
 // (indices 9/10) so existing group indices 0–8 never shift.
 const RC_CAP = 16384; // road cobble
-const RP_CAP = 32768; // road pebble (denser — the tread is mostly fine grit)
+const RP_CAP = 32768; // road pebble (the medium fraction)
 // alpine p.3: verge bloom strip pools (groups 11/12) — tiny trefoil/thyme
-const RF_CAP = 12288; // per bloom kind
+const RF_CAP = 16384; // per bloom kind (raised for colony-clustered blooms)
+// alpine p.1-2 (ref-01): fine road-grit pool (group 13) — the DOMINANT tread
+// fraction. Every soft-track cell that doesn't roll a cobble/pebble becomes
+// grit (5–25 mm), so the tread reads as a solid gravel matrix, never smooth
+// cream. Densest road pool → its own cap; sized from the old ~0.95 pebble
+// accept it replaces as the bulk (now ~0.55 of soft-track cells).
+const GT_CAP = 49152; // road grit
 
 interface RingBind {
   cells: StorageBufferNode<'uint'>;
@@ -328,6 +334,7 @@ export class GroundRing {
     RP_CAP,
     RF_CAP, // 11: roadTrefoil
     RF_CAP, // 12: roadThyme
+    GT_CAP, // 13: roadGrit
   ];
 
   constructor(
@@ -426,6 +433,32 @@ export class GroundRing {
         .select(float(1), smoothstep(rs.halfW.add(inner), rs.halfW.add(outer), rs.dist));
     };
 
+    // alpine p.3/p.4 (ref-03): the SOFT-track verge must read as a CLOSED low
+    // sward, not the sparse ramp roadOpenK gives (which left bare-ground gaps
+    // right at the edge — the pixel complaint). Grass-only override: kill grass
+    // on the tread, ramp to full within ~0.3 m of the edge, then BOOST density
+    // through the verge band so the accept roll saturates (every cell keeps a
+    // blade → ground-show ≈ 0), decaying back to 1 by ~1.6 m. The short-biased
+    // blade-height distribution then reads as dense low turf with the occasional
+    // over-tall stem (ref look). Hard roads / off-road keep roadOpenK behaviour.
+    const roadVergeGrass = (wpos: NV2): NF => {
+      if (!road) return float(1);
+      const rs = road.sampleBaked(wpos);
+      const d = rs.dist;
+      const isSoft = rs.surfIdF
+        .greaterThan(SurfaceId.GravelCoarse - 0.5)
+        .and(rs.surfIdF.lessThan(SurfaceId.Singletrack + 0.5));
+      // hard road / off-road: unchanged wide suppression ramp
+      const hard = smoothstep(rs.halfW.add(-0.35), rs.halfW.add(1.1), d);
+      // soft track: tight rise off the tread × a density hump filling the verge
+      const rise = smoothstep(rs.halfW.sub(0.1), rs.halfW.add(0.3), d);
+      const hump = smoothstep(rs.halfW.add(0.05), rs.halfW.add(0.4), d).mul(
+        float(1).sub(smoothstep(rs.halfW.add(0.9), rs.halfW.add(1.6), d)),
+      );
+      const soft = rise.mul(hump.mul(0.9).add(1));
+      return rs.halfW.lessThan(0.01).select(float(1), isSoft.select(soft, hard));
+    };
+
     const inFrustum = (center: NV3, slack: number): NF => {
       let inside: NF = float(1);
       for (let p = 0; p < 6; p++) {
@@ -510,7 +543,7 @@ export class GroundRing {
       dens = dens
         .mul(float(1).sub(bio.y.mul(0.95)))
         .mul(float(1).sub(smoothstep(0.55, 0.95, ns.w)))
-        .mul(roadOpenK(wpos, -0.35, 1.1));
+        .mul(roadVergeGrass(wpos));
       // coverage-conserving continuous LOD ("cheap nanite for aggregates"):
       // accept thins SMOOTHLY with distance — survivors widen by 1/sqrt(thin)
       // in the vertex stage, so screen coverage stays constant and there are
@@ -604,12 +637,32 @@ export class GroundRing {
             .and(rs.dist.greaterThanEqual(rs.halfW.add(0.35)))
             .and(rs.dist.lessThan(rs.halfW.add(1.1))),
           () => {
+            // alpine p.3 (ref-03): blooms cluster in COLONIES, not an even
+            // per-cell sprinkle. Coarse ~2.7 m clump field (own salt 0x6b1d,
+            // distinct from the stone clump 0xc1e4) gates accept ×0.15 in gaps
+            // → ×3.6 in colony hearts (clump² → mostly gaps, rare dense patches).
+            // A second coarse hash picks the patch's DOMINANT kind so a colony
+            // reads as one bloom with the other lightly mixed in.
+            const cpatch = wc.mul(0.11).floor();
+            const clump = cellHash(cpatch, salt ^ 0x6b1d);
+            const clumpK = mix(float(0.15), float(3.6), clump.mul(clump));
+            const domTre = cellHash(cpatch, salt ^ 0x2f9a).lessThan(0.5);
             const rf = cellHash(wc, salt ^ 0x77f1);
+            const pDom = float(0.24).mul(clumpK); // dominant kind share
+            const pAll = pDom.add(float(0.08).mul(clumpK)); // + minority mix
             const fgrp = int(-1).toVar();
-            If(rf.lessThan(0.2), () => {
-              fgrp.assign(11); // golden trefoil
-            }).ElseIf(rf.lessThan(0.35), () => {
-              fgrp.assign(12); // purple thyme cushion
+            If(rf.lessThan(pDom), () => {
+              If(domTre, () => {
+                fgrp.assign(11); // golden trefoil
+              }).Else(() => {
+                fgrp.assign(12); // purple thyme cushion
+              });
+            }).ElseIf(rf.lessThan(pAll), () => {
+              If(domTre, () => {
+                fgrp.assign(12);
+              }).Else(() => {
+                fgrp.assign(11);
+              });
             });
             If(
               fgrp
@@ -627,28 +680,30 @@ export class GroundRing {
           const innerEdge = rs.dist
             .greaterThanEqual(rs.halfW.sub(0.35))
             .and(rs.dist.lessThan(rs.halfW));
-          // p per 0.3 m cell; cobbles rare, pebbles the bulk of the crumb
-          const pCobble = tread.select(
-            float(0.09),
-            innerEdge.select(float(0.14), float(0.22)),
-          );
-          const pPebble = tread.select(
-            float(0.95),
-            innerEdge.select(float(1.0), float(1.0)),
-          );
-          // cobble roll first (distinct salt), else pebble roll; else nothing
-          const grp = int(-1).toVar();
+          // coarse (~1.5 m) clump field: coarse stone clusters in colonies /
+          // wheel-ruts, fine grit fills the gaps — ref-01 is patchy, not a
+          // uniform bead lattice. SAME field re-derived in debrisTransform so
+          // dense patches also carry BIGGER stones (density+size correlate).
+          const clump = cellHash(wc.mul(0.2).floor(), salt ^ 0xc1e4);
+          const clumpK = mix(float(0.4), float(1.7), clump);
+          // p per 0.3 m cell. cobble rare, pebble the medium fraction; the
+          // REMAINDER falls through to grit (group 13), so every soft-track
+          // cell is filled — the tread never reads as smooth cream.
+          const pCobble = tread
+            .select(float(0.05), innerEdge.select(float(0.09), float(0.16)))
+            .mul(clumpK);
+          const pPebble = tread
+            .select(float(0.26), innerEdge.select(float(0.36), float(0.44)))
+            .mul(clumpK);
+          // cobble roll first (distinct salt), else pebble roll, else grit
+          const grp = int(13).toVar();
           If(cellHash(wc, salt ^ 0x9c0b).lessThan(pCobble), () => {
             grp.assign(9);
-          }).Else(() => {
-            If(cellHash(wc, salt ^ 0x3e77).lessThan(pPebble), () => {
-              grp.assign(10);
-            });
+          }).ElseIf(cellHash(wc, salt ^ 0x3e77).lessThan(pPebble), () => {
+            grp.assign(10);
           });
           If(
-            grp
-              .greaterThanEqual(0)
-              .and(inFrustum(vec3(wpos.x, h.add(0.3), wpos.y), 0.8).greaterThan(0.5)),
+            inFrustum(vec3(wpos.x, h.add(0.3), wpos.y), 0.8).greaterThan(0.5),
             () => {
               appendRing(grp, wc, h);
             },
@@ -853,9 +908,15 @@ export class GroundRing {
     // scaleK sizes the ≈0.32 m base cobble mesh to 7–16 cm / 3–8 cm; sinkK
     // barely beds them (tops read as loose grit); fadeR trims each pool to its
     // useful range (pebbles sub-pixel sooner than cobbles). moss:0 = dry stone.
+    // scaleK sizes the ≈0.32 m base cobble mesh; buryK beds each stone by
+    // half-height so only its crown (~top third) reads proud (embedded gravel,
+    // not domes on cream); detail 0 for grit (20-tri icosphere — it is 5–25 mm
+    // and never needs facets); clump correlates size with the cull's density
+    // clusters. fadeR trims each pool (fine grit → sub-pixel first).
     const roadStone = [
-      { g: 9, fork: 'roadCobble', scaleK: 0.45, sinkK: 0.08, fadeR: 60 },
-      { g: 10, fork: 'roadPebble', scaleK: 0.2, sinkK: 0.04, fadeR: 38 },
+      { g: 9, fork: 'roadCobble', scaleK: 0.45, detail: 1, buryK: 0.64, fadeR: 60 },
+      { g: 10, fork: 'roadPebble', scaleK: 0.2, detail: 1, buryK: 0.66, fadeR: 38 },
+      { g: 13, fork: 'roadGrit', scaleK: 0.075, detail: 0, buryK: 0.6, fadeR: 28 },
     ] as const;
     for (const rs of roadStone) {
       const mat = rockMaterial({ moss: 0 });
@@ -866,10 +927,13 @@ export class GroundRing {
         cell: DEB_CELL,
         salt: salt ^ 0x5dd5,
       };
-      this.debrisTransform(mat, bindR, rs.scaleK, rs.sinkK, rs.fadeR, true);
+      this.debrisTransform(mat, bindR, rs.scaleK, 0, rs.fadeR, true, {
+        clump: true,
+        buryK: rs.buryK,
+      });
       this.patchGI(mat);
       draws.push({
-        geo: buildRock('cobble', rng.fork(rs.fork), 1).geometry,
+        geo: buildRock('cobble', rng.fork(rs.fork), rs.detail).geometry,
         mat,
         g: rs.g,
       });
@@ -1113,10 +1177,31 @@ export class GroundRing {
     sinkK: number,
     fadeR: number,
     aniso = false,
+    opts?: {
+      /** road-stone pools: multiply per-instance size by the SAME coarse
+       *  clump field the cull uses for density, so dense patches also carry
+       *  bigger stones (ref-01 wheel-rut / cobble-cluster reads) */
+      clump?: boolean;
+      /** fraction of the mesh's FULL height buried below the surface (0.5 =
+       *  crown-half proud). Switches sink from the legacy scale-proxy to the
+       *  true world half-height, so the crown fraction is what it says.
+       *  Only valid for the cobble-mesh road pools (known local half-height). */
+      buryK?: number;
+    },
   ): void {
     const { wc, y, wpos } = fetchRing(bind);
     const h2 = cellHash2(wc, bind.salt ^ 0x7777);
-    const scl = h2.x.mul(0.9).add(0.55).mul(scaleK);
+    // road pools widen the size spread (ref-01 gravel is 5 mm → 5 cm in one
+    // frame, never a single bead size); generic debris keeps its tuned range.
+    let scl = (
+      opts?.clump ? h2.x.mul(1.35).add(0.4) : h2.x.mul(0.9).add(0.55)
+    ).mul(scaleK);
+    if (opts?.clump) {
+      // matches debrisK: cellHash(wc*0.2 floored, salt^0xC1E4). bind.salt for
+      // road pools is base^0x5dd5, so undo that to recover the base salt.
+      const clump = cellHash(wc.mul(0.2).floor(), bind.salt ^ 0x5dd5 ^ 0xc1e4);
+      scl = scl.mul(mix(float(0.7), float(1.45), clump)) as unknown as typeof scl;
+    }
     const yawA = h2.y.mul(6.2831853);
     const c = yawA.cos();
     const s = yawA.sin();
@@ -1134,7 +1219,15 @@ export class GroundRing {
     const ls = positionLocal.mul(sclV);
     const rx = ls.x.mul(c).add(ls.z.mul(s));
     const rz = ls.z.mul(c).sub(ls.x.mul(s));
-    const sink = scl.mul(sinkK);
+    // sink: legacy path buries by a scale-proxy (scl·sinkK); the buryK path
+    // buries by the instance's real world half-height so `buryK` is literally
+    // the buried fraction of the mesh height. COBBLE_HALF_Y is the cobble
+    // preset's local half-extent (radius·squashY·~macro), scaled by sclV.y.
+    const COBBLE_HALF_Y = 0.12;
+    const sink =
+      opts?.buryK !== undefined
+        ? sclV.y.mul(COBBLE_HALF_Y).mul(opts.buryK * 2 - 1)
+        : scl.mul(sinkK);
     mat.positionNode = Fn(() => {
       const n = vec3(
         normalLocal.x.mul(c).add(normalLocal.z.mul(s)),
@@ -1186,7 +1279,8 @@ export class GroundRing {
         'veg.g1': n(1),
         'veg.g2': n(2),
         'veg.g3': n(8),
-        'veg.debris': n(3) + n(4) + n(5) + n(6) + n(7) + n(9) + n(10) + n(11) + n(12),
+        'veg.debris':
+          n(3) + n(4) + n(5) + n(6) + n(7) + n(9) + n(10) + n(11) + n(12) + n(13),
       };
     } finally {
       this.reading = false;

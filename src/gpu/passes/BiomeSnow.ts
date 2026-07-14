@@ -110,7 +110,12 @@ export async function runBiomeSnow(
     const couloir = smoothstep(0.015, 0.16, lapCoarse);
 
     // --- snow coverage ---------------------------------------------------------
-    const snowTemp = smoothstep(2.6, -2.2, temp); // cold → 1
+    // Bavarian summer LAW (owner 2026-07-14): peaks are ≤1266 m and there is NO
+    // summer snow below ~2500 m — a white cap on a 1266 m peak reads as an
+    // 8000 m Himalaya, the single biggest "Pakistan" tell. Snow onset pushed to
+    // temp<−8 (≈1584 m at the 0.0125/m lapse) → zero snow anywhere on the
+    // current massif, machinery intact if a future peak were taller/winter.
+    const snowTemp = smoothstep(-8.0, -13.0, temp); // cold → 1
     const slopeHold = smoothstep(2.6, 0.8, slopeCoarse); // landform-scale cliffs shed
     const snow = clamp(
       snowTemp.mul(slopeHold).add(ledge.mul(snowTemp).mul(0.45)).add(couloir.mul(snowTemp).mul(0.9)),
@@ -122,9 +127,17 @@ export async function runBiomeSnow(
       .toVar();
 
     // --- rock exposure -----------------------------------------------------------
-    const rockSlope = smoothstep(0.75, 1.45, slope);
+    // Bavarian cover: the alpine massif is NOT pre-rocked — the old flat
+    // +0.18 tAlp baseline greyed every alpine flank before slope even mattered,
+    // leaving barren scree valley-to-crest. 0.18→0.05: bare rock now comes from
+    // genuinely steep faces (rockSlope) + karst, so moderate alpine flanks stay
+    // green (ref-05). Summit crags are still steep → still rocky.
+    // rock only on genuinely steep faces (owner+codex 2026-07-14): 0.75→1.1
+    // (43.5°→47.7°) so the 40-48° flanks that were painting bare "white scree
+    // scars" now read as steep Bavarian meadow, not Karakoram rock.
+    const rockSlope = smoothstep(1.1, 1.85, slope);
     const rockExposure = clamp(
-      rockSlope.add(zm.tKarst.mul(smoothstep(0.55, 1.0, slope)).mul(0.7)).add(zm.tAlp.mul(0.18)),
+      rockSlope.add(zm.tKarst.mul(smoothstep(0.55, 1.0, slope)).mul(0.7)).add(zm.tAlp.mul(0.05)),
       0,
       1,
     );
@@ -163,8 +176,13 @@ export async function runBiomeSnow(
       .toVar();
 
     // --- vegetation density --------------------------------------------------------
-    const densBase = mix(float(0.85), float(0.25), rockExposure)
-      .mul(smoothstep(-2.5, 1.5, temp))
+    // Bavarian cover (owner 2026-07-14): green meadow/forest climbs almost to
+    // the crest, bare rock only as summit ribs (ref-05). The old temp gate
+    // (−2.5..1.5 → veg dead above ~1144 m) left the whole upper massif barren
+    // grey. Pushed to −7..−3 → veg full to ~1184 m, fading to ~1504 m, so the
+    // 1266 m peaks carry grass with only a thin rock crest at the very top.
+    const densBase = mix(float(0.95), float(0.32), rockExposure)
+      .mul(smoothstep(-7.0, -3.0, temp))
       .mul(smoothstep(0.05, 0.25, moisture.add(0.15)))
       .mul(smoothstep(1.9, 1.1, slope));
     const dens = clamp(densBase.sub(snow.mul(0.7)), 0, 1);

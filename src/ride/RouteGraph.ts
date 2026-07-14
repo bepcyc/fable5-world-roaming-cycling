@@ -15,8 +15,13 @@
 
 import type { RoadClassSpec, RoadNetwork, RoadPoint } from './RoadNetwork';
 
-/** two routes closer than this join at a node (≥ widest apron overlap) */
-const JOIN_R = 9; // m
+/** two routes closer than this join at a node (≥ widest apron overlap).
+ *  Raised 9→15 (2026-07-14 dead-end pass): the RoadNetwork stitcher builds
+ *  connectors onto the 8 m router lattice, so a real junction touch can land
+ *  up to ~1 cell (≈8 m) off the target vertex; 15 m reliably clusters those
+ *  and the genuine sub-15 m near-misses the old 9 m left as false dead-ends,
+ *  without joining roads that only pass in the distance. */
+const JOIN_R = 15; // m
 /** splits closer than this along one route collapse into one node */
 const MIN_SPAN_PTS = 2;
 
@@ -178,7 +183,33 @@ export class RouteGraph {
       nodes.push(node);
       for (const [r, idxs] of perRoute) {
         idxs.sort((a, b) => a - b);
-        addSplit(r, idxs[Math.floor(idxs.length / 2)] as number, node.id);
+        // Usually the median contact represents a route grazing this cluster.
+        // But when the contact reaches an ENDPOINT of the route (a road that
+        // TERMINATES on another, or a stitcher connector meeting its target
+        // near its own tip), split AT that endpoint — the median would land
+        // mid-route and orphan the true endpoint as a phantom degree-1 node
+        // (2026-07-14 dead-end pass). And a SHORT connector whose whole body
+        // falls inside one junction cluster touches it at BOTH ends: split at
+        // each so neither orphans (the connector becomes a self-edge on the
+        // junction instead of leaving a dead-end). Endpoint-touch wins over
+        // the median.
+        const len = (routes[r] as (typeof routes)[number]).pts.length;
+        const lo = idxs[0] as number;
+        const hi = idxs[idxs.length - 1] as number;
+        const nearStart = lo < MIN_SPAN_PTS;
+        const nearEnd = hi > len - 1 - MIN_SPAN_PTS;
+        let added = false;
+        if (nearStart) {
+          addSplit(r, lo, node.id);
+          added = true;
+        }
+        if (nearEnd && hi !== lo) {
+          addSplit(r, hi, node.id);
+          added = true;
+        }
+        // no endpoint touch (or a single index that IS an endpoint) → one
+        // split at the median representative of the graze
+        if (!added) addSplit(r, idxs[Math.floor(idxs.length / 2)] as number, node.id);
       }
     }
 
@@ -224,10 +255,22 @@ export class RouteGraph {
           fromNode = nodes[cut.node] as GraphNode;
           continue;
         }
+        const toNode = nodes[cut.node] as GraphNode;
+        // self-edge (a === b): a short stitcher connector whose whole body sat
+        // inside ONE junction cluster. Its two ends are already merged into
+        // this node, so the two routes it "connected" already share the node —
+        // the loop edge is redundant AND harmful (it inflates node degree, so
+        // a real dead-end could read as connected, and it offers the mover two
+        // turn-menu options that just loop back here). Drop it; the shared
+        // node keeps the routes connected. (advisor review 2026-07-14)
+        if (fromNode.id === toNode.id) {
+          fromIdx = cut.i;
+          fromNode = toNode;
+          continue;
+        }
         const span = R.pts.slice(fromIdx, cut.i + 1);
         const s0 = (span[0] as RoadPoint).s;
         const pts = span.map((p) => ({ ...p, s: p.s - s0 }));
-        const toNode = nodes[cut.node] as GraphNode;
         const edge: GraphEdge = {
           id: edges.length,
           route: R.name,

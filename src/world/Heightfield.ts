@@ -45,6 +45,7 @@ import {
 import { resolveThreads } from '../core/Threads';
 import { RoadField } from '../gpu/passes/RoadField';
 import { ScenicField } from '../gpu/passes/ScenicField';
+import { runTalusRelax } from '../gpu/passes/TalusRelax';
 import { RoadNetwork } from '../ride/RoadNetwork';
 import { makeMacroParams, type MacroParams } from './MacroMap';
 import { WORLD_SIZE, qualityConfig, type QualityConfig } from './WorldConst';
@@ -191,6 +192,25 @@ export class Heightfield {
     progress(0.7, 'terrain: composing eroded field');
     await hf.composeEroded(renderer, synthSim.height, erosion.eroded);
 
+    // universal talus relax, pass 1 (angle of repose): the full-res detail
+    // residual composeEroded just re-added never saw erosion's thermal relax
+    // nor FlowRivers' post-carve relax (both ran at sim res) — near-vertical
+    // gully/promoina banks survive in it. Relax BEFORE the road readback so
+    // the A* router plans on the same terrain the rider will see. The waterY
+    // gate freezes shorelines so the baked water sheet never ends up perched
+    // over a slumped bank (see reconcileWaterAfterCarve history).
+    progress(0.72, 'terrain: talus relax (post-compose)');
+    if (!hf.waterY) throw new Error('waterY missing before talus relax');
+    await runTalusRelax(renderer, hf.height, hf.hardness, {
+      res: hf.res,
+      texel: WORLD_SIZE / hf.res,
+      iters: 44,
+      waterY: { buf: hf.waterY, res: cfg.simRes },
+    });
+    // dry sentinels must follow the relaxed ground down, or they read as
+    // phantom standing water everywhere the relax lowered a bank
+    await hf.refreshDryWaterSentinels(renderer);
+
     // --- M1.2 roads: route on the CPU mirror of the eroded field, then carve
     // the GPU height buffer BEFORE rebuildDerivedMaps so normals/slope/biome/
     // surface all pick the roads up in the existing derive order
@@ -222,6 +242,24 @@ export class Heightfield {
     hf.roadField = new RoadField(hf.roads);
     await hf.roadField.carve(renderer, hf.height, hf.res);
     await hf.roadField.bake(renderer);
+
+    // talus relax, pass 2: the road carve stitches its apron (≤26 m reach)
+    // into still-unrelaxed surroundings — soften the seam and any bank the
+    // cut steepened. The road mask freezes tread+shoulder(+2 m); the re-carve
+    // below re-pins the exact designed profile over the relaxed field
+    // (carve is a pure idempotent re-stamp — probe-roadgates stays clean).
+    progress(0.79, 'terrain: talus relax (post-carve)');
+    await runTalusRelax(renderer, hf.height, hf.hardness, {
+      res: hf.res,
+      texel: WORLD_SIZE / hf.res,
+      iters: 28,
+      waterY: { buf: hf.waterY, res: cfg.simRes },
+      roadField: hf.roadField,
+    });
+    await hf.roadField.carve(renderer, hf.height, hf.res);
+    // sentinels follow the pass-2 relax + re-carve ground (same reason as
+    // after pass 1); runs BEFORE reconcile/waterYFar/cpuWaterY rebuilds
+    await hf.refreshDryWaterSentinels(renderer);
 
     // P.5 v2 scenic contour bands (ref-04): decorative signed-distance field
     // for the terrain material only — no carve, no stamp, no physics, so it
@@ -565,6 +603,50 @@ export class Heightfield {
     digK.setName('waterYDig');
     await renderer.computeAsync(digK);
     return out;
+  }
+
+  /**
+   * Re-derive the DRY-cell sentinels of waterY from the CURRENT full-res
+   * height. buildWaterY freezes dry sentinels at (3×3 sim-bed MIN − 2) —
+   * an invariant of "the sentinel sits BELOW the local ground". The talus
+   * relax (and the road carve) later LOWER dry full-res ground by up to
+   * ~10 m; a stale sentinel then pokes ABOVE the relaxed ground and reads
+   * as PHANTOM standing water (found: 13.5 m "deep ford" in a bone-dry
+   * relaxed gully, seed 7 link-4). Wet cells are untouched — their surface
+   * is real and the relax kernel's shore gate froze their beds.
+   */
+  private async refreshDryWaterSentinels(renderer: Renderer): Promise<void> {
+    const wy = this.waterY;
+    const raw = this.flow?.waterYRaw;
+    if (!wy || !raw) return;
+    const res = this.simRes;
+    const fullRes = this.res;
+    const f = Math.round(fullRes / res); // full texels per sim texel (2)
+    const height = this.height;
+    const kernel = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(res * res), () => {
+        Return();
+      });
+      const x = i.mod(res).toInt();
+      const y = i.div(res).toInt();
+      // min of the CURRENT full-res height over the 3×3 sim neighborhood
+      // (= 3f×3f full texels) — same conservative window buildWaterY used
+      const m = float(1e9).toVar();
+      for (let dy = -f; dy < 2 * f; dy++) {
+        for (let dx = -f; dx < 2 * f; dx++) {
+          const fx = clamp(float(x).mul(f).add(dx), 0, fullRes - 1).toInt();
+          const fy = clamp(float(y).mul(f).add(dy), 0, fullRes - 1).toInt();
+          m.assign(m.min(height.element(fy.mul(fullRes).add(fx))));
+        }
+      }
+      const isWet = raw.element(i).greaterThan(-1e3);
+      If(isWet.not(), () => {
+        wy.element(i).assign(m.sub(2));
+      });
+    })().compute(res * res);
+    kernel.setName('waterYDrySentinelRefresh');
+    await renderer.computeAsync(kernel);
   }
 
   /**

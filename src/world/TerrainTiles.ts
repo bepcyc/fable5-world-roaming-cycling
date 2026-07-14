@@ -235,7 +235,13 @@ export class TerrainTiles {
         .mul(biofilm.mul(0.42).oneMinus());
       wetCol = mix(wetCol, wetCol.mul(vec3(0.72, 0.86, 0.55)), biofilm.mul(0.65));
       mat.colorNode = wetCol.mul(caust.mul(1.7).add(1));
-      mat.roughnessNode = shading.roughnessNode.sub(fringe.mul(0.42)).clamp(0.18, 1);
+      // gloss only where a standing film can exist (near-flat ground): the
+      // ungated fringe re-glazed steep cut banks at the waterline (advisor
+      // audit). Albedo darkening above stays — damp soil, not glass.
+      const filmFlat = smoothstep(0.956, 0.993, shading.worldNormalNode.y);
+      mat.roughnessNode = shading.roughnessNode
+        .sub(fringe.mul(0.42).mul(filmFlat))
+        .clamp(0.18, 1);
       // ?caustlit=1 — paint the lit graph's own caustic chain (triage):
       // r = gated tint×4, g = gate product, b = ungated pattern
       if (new URLSearchParams(window.location.search).get('caustlit') === '1') {

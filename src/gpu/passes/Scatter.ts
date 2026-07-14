@@ -464,6 +464,11 @@ export async function runScatter(
       youngEdge.assign(inBand.select(float(1).sub(t), float(0)));
     }
 
+    // alpine p.7 (ref-03) — young spruces grow in FAMILIES, not an even
+    // scatter. A coarse ~4 m nursery field (own salt) concentrates saplings
+    // into clusters: reused below for the sapling share (youngP) and a mild
+    // edge density lift so nursery cells read denser than the surrounding floor.
+    const famK = cellHash(wpos.mul(0.25).floor(), sT ^ 0x4d2b);
     const clump = clumpField(wpos, sT ^ 0x51f3);
     const dens = byBiome(s.bioId, [0, 0.22, 0.8, 0.85, 0.06, 0.26]);
     const clumpFloor = byBiome(s.bioId, [0, 0.15, 0.3, 0.35, 0.04, 0.12]);
@@ -479,7 +484,9 @@ export async function runScatter(
       .mul(snowFade)
       .mul(s.vegDens.mul(0.85).add(0.15))
       .mul(float(1).sub(s.rockExp.mul(0.65)))
-      .mul(youngEdge.mul(0.6).add(1)); // young-growth density lean toward tracks
+      // young-growth density lean toward tracks; nursery cells (famK→1) get a
+      // stronger lift so families read denser than the open floor between them
+      .mul(youngEdge.mul(famK.mul(0.9).add(0.6)).add(1));
     If(cellHash(cell, sT ^ 0x1234f).greaterThanEqual(accept), () => {
       Return();
     });
@@ -532,7 +539,8 @@ export async function runScatter(
     const youngP = isSub
       .select(float(0.5), float(0.12))
       .add(youngEdge.mul(0.5))
-      .clamp(0, 0.9);
+      .mul(famK.mul(0.7).add(0.55)) // nurseries: more saplings, gaps sparser
+      .clamp(0, 0.95);
     const isYoung = cellHash(cell, sT ^ 0x2d71).lessThan(youngP);
     If(
       isYoung
@@ -558,9 +566,16 @@ export async function runScatter(
       .add(0.62)
       .mul(float(1).sub(krumm.mul(0.55)))
       .mul(stunt);
+    // literal saplings (ref-03), but MIXED ages, not one uniform height: a
+    // bimodal age roll (independent salt) splits seedlings (~0.5–1.2 m) from
+    // knee-to-waist young (~1.8–2.8 m) so the verge reads as many-aged growth.
+    const ageR = cellHash(cell, sT ^ 0x1af3);
     const scale = isYoung.select(
-      // literal saplings (ref-03: 1–3 m young spruces), not half-size adults
-      adultScale.mul(h2.x.mul(0.08).add(0.06)),
+      adultScale.mul(
+        ageR
+          .lessThan(0.5)
+          .select(h2.x.mul(0.03).add(0.03), h2.x.mul(0.05).add(0.09)),
+      ),
       adultScale,
     );
 

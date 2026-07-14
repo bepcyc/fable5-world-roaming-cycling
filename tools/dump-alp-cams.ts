@@ -73,7 +73,13 @@ async function main(): Promise<void> {
   await browser.close();
   if (!data) throw new Error('no roads');
 
-  for (const id of [SurfaceId.Singletrack, SurfaceId.DirtRoad, SurfaceId.GravelCoarse]) {
+  for (const id of [
+    SurfaceId.Singletrack,
+    SurfaceId.DirtRoad,
+    SurfaceId.GravelCoarse,
+    SurfaceId.Asphalt,
+    SurfaceId.GravelFine,
+  ]) {
     for (const r of data.filter((rt) => rt.surfaceId === id)) {
       console.log(`\n${SURFACE_NAMES[id]}  ${r.name}  len=${(r.length / 1000).toFixed(1)}km halfW=${r.halfWidth}`);
       for (const p of r.pts) {

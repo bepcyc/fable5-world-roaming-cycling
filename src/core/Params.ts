@@ -45,7 +45,7 @@ export function parseParams(search: string = window.location.search): LaasParams
   return {
     seed: Math.floor(num(q.get('seed'), 1)) >>> 0,
     scene: q.get('scene') ?? 'world',
-    timeOfDay: Math.min(24, Math.max(0, num(q.get('T'), 11))),
+    timeOfDay: Math.min(24, Math.max(0, num(q.get('T'), 14))),
     preset,
     // full debug panel hidden by default — F3 toggles it (fps chip always on)
     hud: q.get('hud') === '1',

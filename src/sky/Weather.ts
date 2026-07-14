@@ -55,10 +55,10 @@ interface Targets {
 }
 
 const STATES: Record<WeatherKind, Targets> = {
-  // dry = «ясный день с горизонтной дымкой» (ref-04): tall haze column
-  // (hf 0.95 km) + moderate density — far ridge bands sink step by step,
-  // foreground stays clean (Atmosphere.aerial's near-gate owns the curve)
-  dry: { fogK: 0.4, wxBoost: 0, aerialK: 0.19, aerialHf: 0.95, cov: 0.62, cdens: 0.85, overcast: 0, wetness: 0, rain: 0, sunDim: 1, envK: 1 },
+  // dry = clear 14:00 alpine air: a low-density, tall blue horizon veil.
+  // The delayed near gate in Atmosphere keeps the foreground crisp while
+  // distant ridge bands still separate; scattered cumulus leaves open blue.
+  dry: { fogK: 0.25, wxBoost: 0, aerialK: 0.18, aerialHf: 1.15, cov: 0.42, cdens: 0.66, overcast: 0, wetness: 0, rain: 0, sunDim: 1, envK: 1 },
   rain: { fogK: 1.0, wxBoost: 0.4, aerialK: 0.52, aerialHf: 0.65, cov: 1.0, cdens: 1.25, overcast: 1.0, wetness: 0.92, rain: 0.85, sunDim: 0.25, envK: 0.5 },
   'after-rain': { fogK: 0.75, wxBoost: 0.3, aerialK: 0.34, aerialHf: 0.8, cov: 0.5, cdens: 0.75, overcast: 0.12, wetness: 1, rain: 0, sunDim: 0.9, envK: 0.85 },
   fog: { fogK: 2.8, wxBoost: 1, aerialK: 0.9, aerialHf: 0.38, cov: 0.88, cdens: 0.7, overcast: 0.45, wetness: 0.3, rain: 0, sunDim: 0.55, envK: 0.7 },
