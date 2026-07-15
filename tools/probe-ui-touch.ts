@@ -173,40 +173,50 @@ interface State {
   enter?: (page: Page) => Promise<boolean>;
 }
 
+/** The world takes 45-105 s to load and none of that changes the LAYOUT, which
+ *  is what this gate measures. Every panel lives in index.html behind a stable
+ *  id and toggles on a `.on` class, so each state is reachable as soon as the
+ *  DOM is up — wait for the id, not for a stopwatch. `freeze=1` keeps the
+ *  renderer from competing for the GPU while we measure boxes. */
 const STATES: State[] = [
-  { name: 'menu', url: '/?scene=world&seed=1&preset=min' },
   {
-    name: 'ride-hud',
-    url: '/?scene=world&seed=1&preset=min&nosplash=1',
+    name: 'splash',
+    url: '/?scene=world&seed=1&preset=min&freeze=1',
     enter: async (page) => {
-      await page.waitForTimeout(3000);
-      return true;
-    },
-  },
-  {
-    name: 'ble-panel',
-    url: '/?scene=world&seed=1&preset=min&nosplash=1&ride=blefake',
-    enter: async (page) => {
-      await page.waitForTimeout(2500);
-      // the chip opens the manager; on desktop 'B' does too — a finger has
-      // only the chip, which is exactly what we are auditing
-      const chip = page.locator('[class*="ble"], [id*="ble"]').first();
-      if ((await chip.count()) === 0) return false;
-      await chip.click({ timeout: 4000 }).catch(() => {});
-      await page.waitForTimeout(600);
+      await page.waitForSelector('#splash', { state: 'visible', timeout: 45000 });
       return true;
     },
   },
   {
     name: 'settings',
-    url: '/?scene=world&seed=1&preset=min&nosplash=1',
+    url: '/?scene=world&seed=1&preset=min&freeze=1',
     enter: async (page) => {
-      await page.waitForTimeout(2500);
-      const gear = page.locator('[class*="gear"], [class*="settings"], [id*="settings"]').first();
-      if ((await gear.count()) === 0) return false;
-      await gear.click({ timeout: 4000 }).catch(() => {});
-      await page.waitForTimeout(600);
+      await page.waitForSelector('#btn-settings', { state: 'visible', timeout: 45000 });
+      await page.click('#btn-settings');
+      await page.waitForSelector('#msettings.on', { timeout: 8000 });
       return true;
+    },
+  },
+  {
+    name: 'pause',
+    url: '/?scene=world&seed=1&preset=min&freeze=1&nosplash=1',
+    enter: async (page) => {
+      await page.waitForSelector('#pause', { timeout: 45000 });
+      // GameMenu opens this on Escape — a key a phone does not have, which is
+      // itself one of the findings. Force the class so the PANEL can still be
+      // audited; whether a finger can reach it is a separate question the
+      // keyboard-parity check answers.
+      await page.evaluate(() => document.getElementById('pause')?.classList.add('on'));
+      await page.waitForSelector('#pause.on', { timeout: 5000 });
+      return true;
+    },
+  },
+  {
+    name: 'boot',
+    url: '/?scene=world&seed=1&preset=min&freeze=1',
+    enter: async (page) => {
+      const boot = await page.waitForSelector('#boot', { timeout: 20000 }).catch(() => null);
+      return boot !== null;
     },
   },
 ];
@@ -245,15 +255,21 @@ async function auditState(
     } else {
       await page.waitForTimeout(2500);
     }
-    if (shots) {
-      mkdirSync('shots/wip/ui', { recursive: true });
-      await page.screenshot({ path: `shots/wip/ui/${profile.name}-${state.name}.png` });
-    }
+    // Audit BEFORE screenshotting: the audit is the deliverable, and
+    // page.screenshot() waits on font loading, which timed out at 30 s while
+    // the world was still streaming and took the whole state down with it.
     const raw = (await page.evaluate(AUDIT_FN as never, {
       minTap: MIN_TAP_PX,
       inset: FINGER_INSET,
-    })) as { kind: Finding['kind']; label: string; detail: string }[];
+    })) as { kind: Finding['kind']; label: string; detail: string }[] | undefined;
+    if (!Array.isArray(raw)) throw new Error(`audit returned ${typeof raw}, not an array`);
     for (const f of raw) findings.push({ profile: profile.name, state: state.name, ...f });
+    if (shots) {
+      mkdirSync('shots/wip/ui', { recursive: true });
+      await page
+        .screenshot({ path: `shots/wip/ui/${profile.name}-${state.name}.png`, timeout: 60000 })
+        .catch((e) => console.log(`    (кадр не снят: ${String(e).slice(0, 60)})`));
+    }
   } catch (e) {
     findings.push({
       profile: profile.name,

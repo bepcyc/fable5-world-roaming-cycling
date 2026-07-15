@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- matches the splash / web theme background (#06080a) -->
+    <color name="bg">#FF06080A</color>
+</resources>

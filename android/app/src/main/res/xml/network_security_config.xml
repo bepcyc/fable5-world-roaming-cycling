@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Defensive: cleartext is forbidden everywhere EXCEPT the loopback host the
+     asset server binds. Chrome's own loopback policy already permits
+     http://127.0.0.1, so this mainly documents intent; usesCleartextTraffic in
+     the manifest is the belt. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
