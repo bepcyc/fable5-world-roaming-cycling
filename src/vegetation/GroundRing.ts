@@ -95,14 +95,50 @@ import type { WorldSeed } from '../core/Seed';
 import { prepassMode } from '../core/Params';
 import { runiform } from '../gpu/RenderUniform';
 
-const GRASS_GRID = 3072;
-const GRASS_CELL = 0.105; // m → ±161 m ring, ~90 slots/m²
+/**
+ * Grass slot-density divisor. The cull dispatches GRASS_GRID² threads EVERY
+ * frame — at the shipped 3072 that is 9.44 MILLION invocations per frame, and
+ * it was preset-independent, so preset=min paid the exact ultra bill. Measured
+ * on the Adreno 730: vegetation is 53% of ALL GPU work (ablate=veg at a matched
+ * 492 MHz clock: frame 237.2 -> 123.1 ms), and c.grassRingCull is the single
+ * most expensive timed pass on the device (11.11 ms, reproducing to the third
+ * decimal across every run).
+ *
+ * S divides the grid and multiplies the cell, so the RING EXTENT is invariant
+ * (GRID*CELL = 322.6 m at every S — no gap opens against the FAR super-tuft
+ * layer that takes over at 150 m) while threads and blade slots fall as 1/S².
+ * Coverage is conserved the way this file already conserves it for distance
+ * thinning: survivors widen by S (see `widen` in grassMaterial), which is the
+ * same 1/sqrt(density) compensation applied to a constant instead of a curve.
+ *
+ * ?grassscale=N overrides on any preset (sweep knob). Desktop = preset=high = 1
+ * = the shipped geometry, byte for byte.
+ */
+function grassScale(search: string = window.location.search): number {
+  const q = new URLSearchParams(search);
+  const raw = q.get('grassscale');
+  if (raw !== null) {
+    const n = Number(raw);
+    // must divide 3072 into an integer grid; 1..8 covers every useful step
+    if (Number.isFinite(n) && n >= 1 && n <= 8 && 3072 % n === 0) return n;
+  }
+  return (q.get('preset') ?? 'high') === 'min' ? 2 : 1;
+}
+
+const G_SCALE = grassScale();
+const GRASS_GRID = 3072 / G_SCALE;
+const GRASS_CELL = 0.105 * G_SCALE; // ±161 m ring at every scale, ~90/S² slots/m²
 const GRASS_R = 155;
 const G_NEAR = 30;
 const G_MID = 70;
 /** crossfade half-width — cull overlap and material fade MUST share it */
 const G_BAND = 12;
-const GRASS_CAPS = [524288, 1048576, 1835008]; // near/mid/far compact regions
+// near/mid/far compact regions. Scale EXACTLY as the slot count (1/S²) so the
+// expected-appends : capacity ratio — the thing that is proven not to overflow
+// today — is identical at every scale.
+const GRASS_CAPS = [524288, 1048576, 1835008].map((c) =>
+  Math.ceil(c / (G_SCALE * G_SCALE)),
+);
 
 /**
  * Continuous distance thinning, conserved by blade widening (1/√thin in the
@@ -1032,9 +1068,19 @@ export class GroundRing {
     const dist = wpos.sub(vec2(cameraPosition.x, cameraPosition.z)).length();
     // width compensation for the continuous thinning — coverage conserved.
     // far mode: coarse-grid super-tufts have their own fixed footprint
+    // A coarser slot grid (G_SCALE) removes S² blades per m²; each survivor
+    // must cover S² more ground, i.e. widen by S — the same 1/sqrt(density)
+    // law the distance thinning already uses, applied to a constant. The clamp
+    // band scales with it, otherwise the ceiling would eat the compensation at
+    // distance and the meadow would thin out exactly where it is cheapest to
+    // keep. far mode keeps its own fixed super-tuft footprint: its coarse grid
+    // is independent of G_SCALE.
     const widen = far
       ? h2.y.mul(0.8).add(1.6)
-      : float(1).div(grassThin(dist).sqrt()).clamp(1, 4);
+      : float(1)
+          .div(grassThin(dist).sqrt())
+          .mul(G_SCALE)
+          .clamp(G_SCALE, 4 * G_SCALE);
     const bladeH = h2.x
       .pow(1.3)
       .mul(far ? 0.42 : 0.3)
