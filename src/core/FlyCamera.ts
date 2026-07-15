@@ -53,22 +53,26 @@ function setKeyState(keys: Set<string>, code: string, on: boolean): void {
 }
 
 /**
- * `setPointerCapture()` throws a `NotFoundError` (spec-documented: no active
- * pointer with that id — a synthetic dispatch never has one, and a fast
- * enough real tap-release race can hit this too) whenever called on a
- * pointer id the browser no longer considers live. Uncaught, that exception
- * reaches `installGlobalErrorHooks()` (src/core/Diagnostics.ts), which paints
- * a permanent full-screen fatal overlay over the WHOLE game on ANY uncaught
+ * `setPointerCapture()` throws a `NotFoundError` (spec-documented: the
+ * pointer id is not currently active — reliably reproduced by any synthetic
+ * dispatch, and plausible on a real device around a document/activity
+ * transition or a UA quirk; a JS event handler always runs to completion, so
+ * this is NOT a same-thread tap/release race) whenever called on a pointer
+ * id the browser no longer considers live. Uncaught, that exception reaches
+ * `installGlobalErrorHooks()` (src/core/Diagnostics.ts), which paints a
+ * permanent full-screen fatal overlay over the WHOLE game on ANY uncaught
  * error — so an unguarded capture call turns a routine touch edge case into
  * a session-ending crash. Capture is a nice-to-have (keeps drag tracking
  * once the finger leaves the element's bounds); it must never be allowed to
- * abort the caller.
+ * abort the caller. Narrowed to the one documented failure mode (codex
+ * review, scenario 1) — anything else re-throws so a real bug is still loud.
  */
 function safeCapture(el: Element, pointerId: number): void {
   try {
     el.setPointerCapture(pointerId);
-  } catch {
-    /* pointer already released — the rest of the handler still applies */
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'NotFoundError') return;
+    throw e;
   }
 }
 
@@ -158,13 +162,22 @@ export class FlyCamera {
   // jump input buffer: keydown-edge timestamp — a tap shorter than a frame
   // still jumps on the next grounded update (≤150 ms grace)
   private jumpAt = -1;
-  // touch controls (mobile only — see the block above the class)
+  // touch controls (mobile only — see the block above the class). A SEPARATE
+  // set from `keys`: the joystick used to write/delete the same WASD codes
+  // the keyboard uses, so releasing the joystick could erase a real
+  // keyboard/Bluetooth-keyboard key still physically held (codex review,
+  // scenario 1) — keyHeld() merges both at read time instead.
+  private touchKeys = new Set<string>();
   private touchJoyEl: HTMLDivElement | null = null;
   private touchJoyThumb: HTMLDivElement | null = null;
   private touchJoyId: number | null = null;
   private touchJoyCenter = { x: 0, y: 0 };
   private touchLookId: number | null = null;
   private touchLookLast = { x: 0, y: 0 };
+  // bound once inside initTouchControls (closures over `base`/`thumb`); null
+  // on desktop, where resetTouchJoy()/resetTouchLook() are harmless no-ops
+  private touchJoyReset: (() => void) | null = null;
+  private touchLookReset: (() => void) | null = null;
 
   constructor(camera: PerspectiveCamera, dom: HTMLElement) {
     this.camera = camera;
@@ -258,7 +271,11 @@ export class FlyCamera {
       this.keys.add(e.code);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.resetTouchJoy();
+      this.resetTouchLook();
+    });
     dom.addEventListener(
       'wheel',
       (e) => {
@@ -294,6 +311,16 @@ export class FlyCamera {
     // hidden while riding a bike — the bike drives itself, WASD does nothing
     base.style.display = this.modeV === 'ride' ? 'none' : 'flex';
 
+    this.touchJoyReset = () => {
+      this.touchJoyId = null;
+      base.classList.remove('on');
+      thumb.style.transform = 'translate(0,0)';
+      for (const code of TOUCH_WASD) this.touchKeys.delete(code);
+    };
+    this.touchLookReset = () => {
+      this.touchLookId = null;
+    };
+
     base.addEventListener('pointerdown', (e) => {
       if (this.touchJoyId !== null) return;
       e.preventDefault();
@@ -311,13 +338,15 @@ export class FlyCamera {
     });
     const releaseJoy = (e: PointerEvent): void => {
       if (e.pointerId !== this.touchJoyId) return;
-      this.touchJoyId = null;
-      base.classList.remove('on');
-      thumb.style.transform = 'translate(0,0)';
-      for (const code of TOUCH_WASD) this.keys.delete(code);
+      this.resetTouchJoy();
     };
+    // pointerup/pointercancel are the normal lift/interrupt path;
+    // lostpointercapture additionally covers the browser reassigning capture
+    // out from under us — without it a joystick held through one of those
+    // could leave WASD stuck "on" forever (codex review, scenario 1)
     base.addEventListener('pointerup', releaseJoy);
     base.addEventListener('pointercancel', releaseJoy);
+    base.addEventListener('lostpointercapture', releaseJoy);
 
     dom.addEventListener('pointerdown', (e) => {
       if (e.pointerType !== 'touch' || this.touchLookId !== null) return;
@@ -335,16 +364,43 @@ export class FlyCamera {
       this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch));
     });
     const releaseLook = (e: PointerEvent): void => {
-      if (e.pointerId === this.touchLookId) this.touchLookId = null;
+      if (e.pointerId !== this.touchLookId) return;
+      this.resetTouchLook();
     };
     dom.addEventListener('pointerup', releaseLook);
     dom.addEventListener('pointercancel', releaseLook);
+    dom.addEventListener('lostpointercapture', releaseLook);
+
+    // document/activity transitions the pointerup/pointercancel path never
+    // sees on Android: the Custom Tab going to the background (task switch,
+    // an incoming-call overlay, the system back gesture) mid-drag. Without
+    // these a backgrounded tab can resume with a phantom key still held.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.resetTouchJoy();
+        this.resetTouchLook();
+      }
+    });
+    window.addEventListener('pagehide', () => {
+      this.resetTouchJoy();
+      this.resetTouchLook();
+    });
+  }
+
+  /** idempotent — safe to call even when touch controls were never
+   *  initialized (desktop), and from setMode() when hiding the joystick. */
+  private resetTouchJoy(): void {
+    this.touchJoyReset?.();
+  }
+
+  private resetTouchLook(): void {
+    this.touchLookReset?.();
   }
 
   /** joystick drag → clamp to the base radius, position the thumb, and set
    *  the same WASD entries the keyboard sets (digital, 8-way — matches the
-   *  keyboard's own all-or-nothing feel; updateWalk/updateFly never know
-   *  the difference between a finger and a key). */
+   *  keyboard's own all-or-nothing feel; keyHeld() merges keyboard + touch
+   *  at read time, so updateWalk/updateFly never know the difference). */
   private applyJoyVector(clientX: number, clientY: number): void {
     const dx0 = clientX - this.touchJoyCenter.x;
     const dy0 = clientY - this.touchJoyCenter.y;
@@ -353,10 +409,16 @@ export class FlyCamera {
     const dx = mag > 1e-6 ? (dx0 / mag) * clamped : 0;
     const dy = mag > 1e-6 ? (dy0 / mag) * clamped : 0;
     if (this.touchJoyThumb) this.touchJoyThumb.style.transform = `translate(${dx}px, ${dy}px)`;
-    setKeyState(this.keys, 'KeyA', dx < -JOY_DEADZONE);
-    setKeyState(this.keys, 'KeyD', dx > JOY_DEADZONE);
-    setKeyState(this.keys, 'KeyW', dy < -JOY_DEADZONE);
-    setKeyState(this.keys, 'KeyS', dy > JOY_DEADZONE);
+    setKeyState(this.touchKeys, 'KeyA', dx < -JOY_DEADZONE);
+    setKeyState(this.touchKeys, 'KeyD', dx > JOY_DEADZONE);
+    setKeyState(this.touchKeys, 'KeyW', dy < -JOY_DEADZONE);
+    setKeyState(this.touchKeys, 'KeyS', dy > JOY_DEADZONE);
+  }
+
+  /** true if either the keyboard or the touch joystick currently holds
+   *  `code` — the one merge point updateWalk/updateFly read through. */
+  private keyHeld(code: string): boolean {
+    return this.keys.has(code) || this.touchKeys.has(code);
   }
 
   get mode(): CamMode {
@@ -400,6 +462,10 @@ export class FlyCamera {
     }
     this.modeV = mode;
     if (this.touchJoyEl) this.touchJoyEl.style.display = mode === 'ride' ? 'none' : 'flex';
+    // hiding the joystick mid-drag (mounting a bike while holding it) used to
+    // leave WASD stuck "on" forever — nothing left to fire its own pointerup
+    // once the element is display:none (codex review, scenario 1)
+    if (mode === 'ride') this.resetTouchJoy();
     this.applyRotation(0);
     this.camera.updateMatrixWorld();
     // eslint-disable-next-line no-console
@@ -514,10 +580,10 @@ export class FlyCamera {
     FORWARD.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
     RIGHT.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
     MOVE.set(0, 0, 0);
-    if (this.keys.has('KeyW')) MOVE.add(FORWARD);
-    if (this.keys.has('KeyS')) MOVE.sub(FORWARD);
-    if (this.keys.has('KeyD')) MOVE.add(RIGHT);
-    if (this.keys.has('KeyA')) MOVE.sub(RIGHT);
+    if (this.keyHeld('KeyW')) MOVE.add(FORWARD);
+    if (this.keyHeld('KeyS')) MOVE.sub(FORWARD);
+    if (this.keyHeld('KeyD')) MOVE.add(RIGHT);
+    if (this.keyHeld('KeyA')) MOVE.sub(RIGHT);
     if (this.keys.has('KeyE')) MOVE.y += 1;
     if (this.keys.has('KeyQ')) MOVE.y -= 1;
     let target = 0;
@@ -557,10 +623,10 @@ export class FlyCamera {
     FORWARD.set(-sinY, 0, -cosY);
     RIGHT.set(cosY, 0, -sinY);
     MOVE.set(0, 0, 0);
-    if (this.keys.has('KeyW')) MOVE.add(FORWARD);
-    if (this.keys.has('KeyS')) MOVE.sub(FORWARD);
-    if (this.keys.has('KeyD')) MOVE.add(RIGHT);
-    if (this.keys.has('KeyA')) MOVE.sub(RIGHT);
+    if (this.keyHeld('KeyW')) MOVE.add(FORWARD);
+    if (this.keyHeld('KeyS')) MOVE.sub(FORWARD);
+    if (this.keyHeld('KeyD')) MOVE.add(RIGHT);
+    if (this.keyHeld('KeyA')) MOVE.sub(RIGHT);
     const sprinting =
       (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && MOVE.lengthSq() > 0;
     let target = 0;

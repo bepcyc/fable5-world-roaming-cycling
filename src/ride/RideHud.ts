@@ -124,12 +124,15 @@ const STYLE = `
  *  considers the pointer active — an uncaught exception anywhere reaches
  *  installGlobalErrorHooks() (src/core/Diagnostics.ts) and paints a
  *  permanent full-screen fatal overlay over the whole game. Same guard as
- *  src/core/FlyCamera.ts's touch joystick/look controls. */
+ *  src/core/FlyCamera.ts's touch joystick/look controls; narrowed to the one
+ *  documented failure mode (codex review, scenario 1) so a real bug is
+ *  still loud. */
 function safeCapture(el: Element, pointerId: number): void {
   try {
     el.setPointerCapture(pointerId);
-  } catch {
-    /* pointer already released — the button state change above still applies */
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'NotFoundError') return;
+    throw e;
   }
 }
 
@@ -189,6 +192,12 @@ export class RideHud {
   /** touch UI (mobile only): hold-to-pedal + hold-to-brake, the tap
    *  equivalent of the 'dev' keyboard source's W/S — see buildTouchPedal() */
   private pedalWrap: HTMLDivElement | null = null;
+  /** bound inside buildTouchPedal(); called from update() whenever the
+   *  pedal/brake controls transition from shown to hidden (dismount / source
+   *  swap away from 'dev') so a held finger can't latch state forever once
+   *  its buttons go display:none (codex review, scenario 1). */
+  private releasePedalBrake: (() => void) | null = null;
+  private pedalWasOn = false;
   private visible: boolean;
   private last: { x: number; z: number } | null = null;
   private speedMs = 0;
@@ -287,9 +296,13 @@ export class RideHud {
     const pedal = document.createElement('div');
     pedal.className = 'rp-btn';
     pedal.textContent = t('ride.pedalBtn');
+    pedal.setAttribute('role', 'button');
+    pedal.setAttribute('aria-label', t('ride.pedalBtn'));
     const brake = document.createElement('div');
     brake.className = 'rp-btn brake';
     brake.textContent = t('ride.brakeBtn');
+    brake.setAttribute('role', 'button');
+    brake.setAttribute('aria-label', t('ride.brakeBtn'));
     wrap.append(pedal, brake);
     document.body.appendChild(wrap);
     this.pedalWrap = wrap;
@@ -303,8 +316,13 @@ export class RideHud {
       setPedal(true);
       safeCapture(pedal, e.pointerId);
     });
+    // pointerup/pointercancel are the normal release path; lostpointercapture
+    // additionally covers the browser reassigning capture out from under us
+    // — without it a held pedal can latch "active" forever (codex review,
+    // scenario 1, same class of bug as the FlyCamera.ts touch joystick)
     pedal.addEventListener('pointerup', () => setPedal(false));
     pedal.addEventListener('pointercancel', () => setPedal(false));
+    pedal.addEventListener('lostpointercapture', () => setPedal(false));
 
     const setBrake = (on: boolean): void => {
       brake.classList.toggle('active', on);
@@ -317,6 +335,22 @@ export class RideHud {
     });
     brake.addEventListener('pointerup', () => setBrake(false));
     brake.addEventListener('pointercancel', () => setBrake(false));
+    brake.addEventListener('lostpointercapture', () => setBrake(false));
+
+    // document/activity transitions the pointer path never sees on Android
+    // (Custom Tab backgrounded mid-hold — task switch, incoming call, the
+    // system back gesture): without these a backgrounded tab can resume
+    // with a phantom pedal/brake still latched on.
+    const releaseBoth = (): void => {
+      setPedal(false);
+      setBrake(false);
+    };
+    this.releasePedalBrake = releaseBoth;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) releaseBoth();
+    });
+    window.addEventListener('pagehide', releaseBoth);
+    window.addEventListener('blur', releaseBoth);
   }
 
   /** BikeRig attaches after world build (needs the road graph) */
@@ -394,7 +428,12 @@ export class RideHud {
 
     const st = this.rig?.state() ?? null;
     if (this.pedalWrap) {
-      this.pedalWrap.classList.toggle('on', this.source?.kind === 'dev' && (st?.riding ?? false));
+      const showPedal = this.source?.kind === 'dev' && (st?.riding ?? false);
+      // dismount / source swap away from 'dev' while a finger is still down
+      // on the (about to vanish) button — release now, not never
+      if (this.pedalWasOn && !showPedal) this.releasePedalBrake?.();
+      this.pedalWasOn = showPedal;
+      this.pedalWrap.classList.toggle('on', showPedal);
     }
     const sample = this.source?.read() ?? { cadenceRpm: null, heartRateBpm: null, powerW: null };
     // session recording (1 Hz decimation inside; power is real solver input)
