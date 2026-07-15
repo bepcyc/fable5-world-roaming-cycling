@@ -176,12 +176,56 @@ export class RoleMux {
       void this.activeController?.release();
       this.activeController = null;
       this.controlActive = false;
+      // control was LIVE before this reassignment — i.e. the rider is
+      // mid-ride and the trainer under them is being swapped — so
+      // immediately try to acquire the NEW target rather than leaving
+      // control dark until a dismount/remount (adversarial review finding,
+      // 2026-07-15, codex gpt-5.6-sol: BikeRig.mount()'s already-riding
+      // branch never calls activateControl(), so a mid-ride reassignment
+      // used to go silently inactive). No-op if the new target is 'none'
+      // or has no registered controller yet — activateControl() already
+      // handles both. Uses the controlGen bumped just above, so a further
+      // reassignment or disconnect before this resolves still correctly
+      // supersedes it via the existing generation guard.
+      void this.activateControl();
     }
     this.notify();
   }
 
+  /**
+   * The DEFAULT picker for a role: one entry PER PHYSICAL DEVICE, not per
+   * (device, protocol) pair. A multi-protocol device (the owner's real
+   * Tacx: cps+csc+fec) can offer the SAME metric through several channels
+   * (cadence via both cps and csc; power via both cps and fec) — surfacing
+   * every channel as its own row would show "Tacx Smart Bike 12583" twice
+   * in one picker with only a small protocol label distinguishing them,
+   * exactly the "two same-looking Tacx power entries" confusion the
+   * phase-2 design explicitly ruled out of the default row (screenshot-
+   * verified regression, adversarial review 2026-07-15).
+   *
+   * PICK PER DEVICE (a REPLACEMENT choice, not an additive one — a first
+   * attempt at this fix pushed BOTH the default-priority protocol AND the
+   * current-assignment protocol whenever they differed, still showing the
+   * same device twice; caught by codex gpt-5.6-sol's adversarial second
+   * opinion, 2026-07-15, and re-derived by hand before trusting it):
+   *   1. If this role is CURRENTLY assigned to a protocol on this device,
+   *      that protocol is ALWAYS the pick — a deliberate advanced choice
+   *      must never vanish from its own picker while active.
+   *   2. Otherwise prefer a protocol whose channel is actually LIVE over
+   *      one still waiting/stale (codex's second point: a static
+   *      protocol-priority-only pick can hide an already-live CSC cadence
+   *      behind a same-device CPS entry that hasn't produced a sample
+   *      yet) — control has no per-metric liveness concept, so it always
+   *      falls through to priority.
+   *   3. Tie-break by PROTOCOL_PRIORITY (standard GATT before vendor
+   *      tunnels).
+   * Full per-channel disclosure (tapping a device card's chip to choose a
+   * specific channel among several) remains a documented, deliberately-
+   * deferred scope cut — see docs/BLE_ZWIFT_PLAN.md uxSpec — this only
+   * fixes which ONE entry the default list shows per device.
+   */
   candidatesFor(role: Role): RoleCandidate[] {
-    const out: RoleCandidate[] =
+    const raw: RoleCandidate[] =
       role === 'control'
         ? [...this.controllers.values()].map((c) => ({
             deviceId: c.deviceId,
@@ -191,6 +235,33 @@ export class RoleMux {
         : [...this.providers.values()]
             .filter((p) => p.capabilities[role as Metric])
             .map((p) => ({ deviceId: p.deviceId, deviceName: p.deviceName, protocol: p.protocol }));
+
+    const current = this.assignments.get(role);
+    const currentKey = current && current !== 'none' ? deviceProfileKey(current.deviceId, current.protocol) : null;
+
+    const byDevice = new Map<string, RoleCandidate[]>();
+    for (const c of raw) {
+      const arr = byDevice.get(c.deviceId) ?? [];
+      arr.push(c);
+      byDevice.set(c.deviceId, arr);
+    }
+
+    const isLive = (c: RoleCandidate): boolean => {
+      if (role === 'control') return false;
+      return this.providers.get(deviceProfileKey(c.deviceId, c.protocol))?.sample(role as Metric).state === 'live';
+    };
+
+    const out: RoleCandidate[] = [];
+    for (const group of byDevice.values()) {
+      const cur = currentKey ? group.find((c) => deviceProfileKey(c.deviceId, c.protocol) === currentKey) : undefined;
+      const pick =
+        cur ??
+        [...group].sort((a, b) => {
+          const liveDiff = Number(isLive(b)) - Number(isLive(a)); // live first
+          return liveDiff !== 0 ? liveDiff : PROTOCOL_PRIORITY[a.protocol] - PROTOCOL_PRIORITY[b.protocol];
+        })[0];
+      if (pick) out.push(pick);
+    }
     return out.sort((a, b) => PROTOCOL_PRIORITY[a.protocol] - PROTOCOL_PRIORITY[b.protocol]);
   }
 

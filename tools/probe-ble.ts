@@ -394,6 +394,15 @@ function cpmBytes(watts: number, crankRevs: number, crankEventT: number): Uint8A
   return buf;
 }
 
+function cscBytes(crankRevs: number, crankEventT: number): Uint8Array {
+  const buf = new Uint8Array(5);
+  const view = new DataView(buf.buffer);
+  view.setUint8(0, 0x02); // flags: bit1 crank revolution data
+  view.setUint16(1, crankRevs, true);
+  view.setUint16(3, crankEventT, true);
+  return buf;
+}
+
 async function tick(ms = 0): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
@@ -470,6 +479,81 @@ async function architecturePart(): Promise<void> {
     `trainerOwn=${trainerOwnSample?.value} rideSample=${source.read().powerW}`,
   );
   check('control assignment untouched by the power/cadence re-point (still the trainer)', assignedId(registry.roleMux.assignmentFor('control')) === 'dev-trainer-1');
+
+  // === cadence half of the split-role case (codex adversarial second
+  // opinion, 2026-07-15: the original acceptance case re-pointed cadence
+  // to the pedals but only ever asserted on powerW — the pedals' FIRST
+  // crank packet is the RevolutionRate baseline (push() returns null, no
+  // rate yet), so this never actually proved cadence tracked the pedals.
+  // A SECOND crank packet on each device (with a real Δrevs/Δticks) is
+  // required before either produces a genuine rate.) ===
+  pedals.emit(SVC.cyclingPower, CHR.cyclingPowerMeasurement, cpmBytes(250, 23, 4096)); // Δrevs=3, Δticks=2048 (2s) → 1.5 rev/s = 90 rpm
+  trainer.emit(SVC.cyclingPower, CHR.cyclingPowerMeasurement, cpmBytes(999, 14, 3072)); // Δrevs=2, Δticks=1024 (1s) → 2 rev/s = 120 rpm — a DIFFERENT value, so a passing inequality check below can't be a coincidence
+  await tick(20);
+  check(
+    'after re-point, RideSample cadence tracks the PEDALS (90 rpm from a real crank delta, not the estimator baseline)',
+    source.read().cadenceRpm === 90,
+    `cad=${source.read().cadenceRpm}`,
+  );
+  const trainerCadenceSample = registry.roleMux.sampleFor('dev-trainer-1', 'cps', 'cadence');
+  check(
+    "trainer's own crank cadence keeps updating independently (visible, dimmed) but never reaches RideSample",
+    trainerCadenceSample?.state === 'live' && trainerCadenceSample.value === 120 && source.read().cadenceRpm === 90,
+    `trainerCad=${trainerCadenceSample?.value} rideCad=${source.read().cadenceRpm}`,
+  );
+
+  // === picker dedupe regression (adversarial review, 2026-07-15): a first
+  // attempt at RoleMux.candidatesFor() was ADDITIVE — it kept the default
+  // highest-priority protocol AND pushed the current assignment separately
+  // when they differed, so a device currently assigned via its LOWER-
+  // priority protocol (e.g. the Tacx's own fec channel) still showed up
+  // TWICE in one picker. Caught by codex gpt-5.6-sol's adversarial second
+  // opinion and re-derived by hand — this is the regression test for the
+  // actual fix (group-by-device, pick ONE representative). ===
+  registry.roleMux.assign('cadence', { deviceId: 'dev-trainer-1', protocol: 'fec' });
+  const cadenceCandidatesForTrainer = registry.roleMux
+    .candidatesFor('cadence')
+    .filter((c) => c.deviceId === 'dev-trainer-1');
+  check(
+    'picker dedupe: trainer appears exactly ONCE in the cadence picker even when assigned via its lower-priority fec channel',
+    cadenceCandidatesForTrainer.length === 1 && cadenceCandidatesForTrainer[0]?.protocol === 'fec',
+    `n=${cadenceCandidatesForTrainer.length} protocols=${cadenceCandidatesForTrainer.map((c) => c.protocol).join(',')}`,
+  );
+  registry.roleMux.assign('cadence', { deviceId: 'dev-pedals-1', protocol: 'cps' }); // restore for the rest of the suite
+
+  // === live-preference in the dedupe pick (second half of codex's Finding
+  // 5): when NEITHER protocol is the role's current assignment, the
+  // picker must prefer a channel that is ACTUALLY producing data over one
+  // that's merely capable-but-silent, even if the silent one has higher
+  // static protocol priority (cps ranks above csc). A fresh device with
+  // both cps+csc: only csc ever receives a notification, so cps.cadence
+  // stays 'waiting' forever — the picker must still surface csc, not
+  // silently prefer the higher-priority-but-mute cps channel. ===
+  const livePref = stageTacxShaped('LivePrefTest', 'dev-livepref-1');
+  transport.stage(livePref);
+  await registry.addDevice();
+  await tick(60);
+  livePref.emit(SVC.csc, CHR.cscMeasurement, cscBytes(5, 1024));
+  livePref.emit(SVC.csc, CHR.cscMeasurement, cscBytes(7, 2048)); // Δrevs=2, Δticks=1024 (1s) → 2 rev/s = 120 rpm
+  await tick(20);
+  const cpsCadenceState = registry.roleMux.sampleFor('dev-livepref-1', 'cps', 'cadence');
+  const cscCadenceState = registry.roleMux.sampleFor('dev-livepref-1', 'csc', 'cadence');
+  check(
+    'sanity: cps cadence on this device never received a packet (stays waiting)',
+    cpsCadenceState?.state === 'waiting',
+    `state=${cpsCadenceState?.state}`,
+  );
+  check(
+    'sanity: csc cadence on this device is genuinely live',
+    cscCadenceState?.state === 'live' && cscCadenceState.value === 120,
+    `state=${cscCadenceState?.state} v=${cscCadenceState?.value}`,
+  );
+  const livePrefCandidates = registry.roleMux.candidatesFor('cadence').filter((c) => c.deviceId === 'dev-livepref-1');
+  check(
+    'picker prefers the LIVE csc channel over a silent higher-priority cps channel when neither is the current assignment',
+    livePrefCandidates.length === 1 && livePrefCandidates[0]?.protocol === 'csc',
+    `n=${livePrefCandidates.length} protocols=${livePrefCandidates.map((c) => c.protocol).join(',')}`,
+  );
 
   // === control activation gated by mount, not by connect/assignment ===
   check('still no control writes before activation', trainer.writes.length === 0);
@@ -659,6 +743,72 @@ async function architecturePart(): Promise<void> {
     "control-op generation guard: reassigning control mid-activation doesn't let the OLD device's acquire commit",
     !registry.roleMux.isActiveController('dev-reassign-a', 'ftms'),
   );
+
+  // === ghost-provider regression (adversarial review, 2026-07-15, codex
+  // gpt-5.6-sol): forget() DURING an in-flight bind() must invalidate that
+  // bind()'s still-pending probeGatt()/attachProtocol() continuation — the
+  // pre-fix ordering captured bind()'s own generation token BEFORE calling
+  // teardown(), so neither forget() nor a fresh rebind ever actually
+  // invalidated anything, and the async continuation could resurrect a
+  // "ghost" provider into RoleMux for a device the user had just forgotten
+  // and deleted. One `await Promise.resolve()` lands deterministically
+  // inside the discovery window: it lets addDevice()'s first await
+  // (requestAnyDevice) resolve and bind()'s synchronous prefix run (entry
+  // created, stage='discovering'), then yields again exactly when bind()
+  // suspends on probeGatt()'s first internal `await handle.read(...)`. ===
+  const ghost = stagePedalsShaped('GhostPedals', 'dev-ghost-1');
+  transport.stage(ghost);
+  const ghostBind = registry.addDevice(); // NOT awaited — pauses mid-discovery
+  await Promise.resolve(); // one microtask: past entry creation, mid probeGatt()
+  const ghostMidFlight = registry.list().find((d) => d.id === 'dev-ghost-1');
+  check(
+    'sanity: the ghost-provider test actually lands mid-discovery before forget() (not before/after it)',
+    ghostMidFlight !== undefined && ghostMidFlight.stage === 'discovering',
+    `stage=${ghostMidFlight?.stage}`,
+  );
+  registry.forget('dev-ghost-1'); // forget() WHILE bind() is still in flight
+  await ghostBind;
+  await tick(60);
+  check(
+    'forget() during discovery leaves no paired-device entry (no resurrection)',
+    registry.list().find((d) => d.id === 'dev-ghost-1') === undefined,
+  );
+  check(
+    'forget() during discovery leaves no ghost candidate in RoleMux',
+    registry.roleMux.candidatesFor('power').every((c) => c.deviceId !== 'dev-ghost-1'),
+  );
+
+  // === control re-acquire on a LIVE mid-ride reassignment (adversarial
+  // review fix, 2026-07-15): reassigning the control role while it is
+  // ALREADY active must immediately try to acquire the new target — the
+  // pre-fix assign() only released the old controller and went dark,
+  // since BikeRig.mount()'s already-riding branch (swapping bike mode
+  // mid-ride) never calls activateControl() again. ===
+  const ctrlA = stageFtmsTrainer('CtrlSwapA', 'dev-ctrlswap-a');
+  const ctrlB = stageFtmsTrainer('CtrlSwapB', 'dev-ctrlswap-b');
+  transport.stage(ctrlA);
+  transport.stage(ctrlB);
+  await registry.addDevice();
+  await registry.addDevice();
+  await tick(60);
+  registry.roleMux.assign('control', { deviceId: 'dev-ctrlswap-a', protocol: 'ftms' });
+  const actA = registry.roleMux.activateControl();
+  await tick(10);
+  ctrlA.respond(SVC.ftms, CHR.ftmsControlPoint, new Uint8Array([0x80, 0x00, 0x01]));
+  await actA;
+  check('control swap setup: A is genuinely active before the swap', registry.roleMux.isActiveController('dev-ctrlswap-a', 'ftms'));
+  registry.roleMux.assign('control', { deviceId: 'dev-ctrlswap-b', protocol: 'ftms' }); // reassigned WHILE active — simulates mid-ride
+  await tick(10);
+  ctrlB.respond(SVC.ftms, CHR.ftmsControlPoint, new Uint8Array([0x80, 0x00, 0x01]));
+  // acquire() now polls every ACQUIRE_POLL_MS (50ms) rather than checking
+  // once — wait past a full poll step so the loop actually notices the
+  // response before we assert on it.
+  await tick(80);
+  check(
+    'reassigning an ACTIVE control role auto-reacquires the new target (no dismount/remount needed)',
+    registry.roleMux.isActiveController('dev-ctrlswap-b', 'ftms'),
+  );
+  check('the old controller was released, not left active', !registry.roleMux.isActiveController('dev-ctrlswap-a', 'ftms'));
 
   console.log(pass ? 'architecture battery: all checks above passed' : 'architecture battery: SEE FAILURES ABOVE');
 }

@@ -146,11 +146,20 @@ export class DeviceRegistry {
   }
 
   private async bind(handle: BleDeviceHandle): Promise<void> {
+    // teardown() FIRST (bumps generation), THEN capture this bind's own
+    // gen from the just-bumped counter — guarantees THIS attempt is always
+    // the newest, and invalidates a previous still-in-flight bind() for
+    // the same id even if it hadn't reached its own attachProtocol() await
+    // yet (adversarial review finding, 2026-07-15 — codex gpt-5.6-sol: the
+    // pre-fix ordering captured `gen` BEFORE teardown(), so teardown() and
+    // forget() never actually invalidated anything, and forget()-during-
+    // discovery could let a still-resolving GATT probe register ghost
+    // providers into RoleMux for a device the user had just forgotten).
+    this.teardown(handle.id); // dedupe: re-selecting a known device replaces its providers, not duplicates them
     const gen = (this.generation.get(handle.id) ?? 0) + 1;
     this.generation.set(handle.id, gen);
     const stale = (): boolean => this.generation.get(handle.id) !== gen;
 
-    this.teardown(handle.id); // dedupe: re-selecting a known device replaces its providers, not duplicates them
     const entry: PairedDevice = {
       id: handle.id,
       name: handle.name,
@@ -164,6 +173,13 @@ export class DeviceRegistry {
     saveKnownNames(this.knownNames);
     handle.onDisconnect(() => {
       if (stale()) return;
+      // bump generation HERE too — a real link drop mid-discovery must
+      // invalidate THIS bind's own still-in-flight probeGatt()/
+      // attachProtocol() continuation, or it can finish afterward and
+      // overwrite this 'lost' stage back to 'ready' (adversarial review
+      // finding, 2026-07-15 — the pre-fix onDisconnect only flipped
+      // `entry.stage`, which the async continuation below could clobber).
+      this.generation.set(handle.id, gen + 1);
       entry.stage = 'lost';
       // link loss must actually stop projecting this device's telemetry
       // and release control if it was the active controller — NOT just
@@ -273,8 +289,19 @@ export class DeviceRegistry {
 
   /** full teardown (dedupe-on-rebind, forget()): also clears the
    *  capability list, since a fresh bind is about to rebuild it (or the
-   *  device is being forgotten entirely). */
+   *  device is being forgotten entirely). ALSO bumps the generation token
+   *  — forget()/a fresh bind() must invalidate any still-in-flight bind()
+   *  for this id SYNCHRONOUSLY (adversarial review finding, 2026-07-15):
+   *  forget() severs a real BluetoothDevice's GATT link asynchronously
+   *  (the 'gattserverdisconnected' event is browser-scheduled, not
+   *  immediate), so relying on the onDisconnect handler alone left a
+   *  window where a still-resolving probeGatt()/attachProtocol() could
+   *  register a "ghost" provider into RoleMux for a device the user had
+   *  already forgotten and deleted from `this.devices`. bind() itself
+   *  always re-derives its own `gen` from the counter AFTER calling this,
+   *  so this bump never makes a bind() stale to itself. */
   private teardown(id: string): void {
+    this.generation.set(id, (this.generation.get(id) ?? 0) + 1);
     this.unregisterRoleMux(id);
     const entry = this.devices.get(id);
     if (entry) entry.protocols = [];

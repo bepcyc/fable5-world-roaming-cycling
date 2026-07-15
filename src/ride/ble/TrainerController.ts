@@ -62,6 +62,23 @@ const SIM_EPS = 0.001; // grade delta (fraction) that triggers a write
 const SIM_PERIOD_S = 2.0; // keep-alive write cadence when grade is steady
 const MIN_WRITE_GAP_S = 0.25; // never write faster than this (1-4 Hz trainers)
 const DEFAULT_CW = 0.51; // kg/m — 0.5·rho·CdA for a road rider, FTMS Cw field
+/** how long acquire() polls for the Request Control indication before
+ *  giving up. A single fixed 50ms wait (the pre-fix value) is one BLE
+ *  connection interval at best — a real trainer queuing the indication
+ *  behind other traffic can legitimately take longer, and a late-but-real
+ *  grant would then be silently lost: the controller's own `granted` flag
+ *  flips true, but RoleMux already committed `controlActive=false` from
+ *  acquire()'s premature `false` return, so the UI shows control as
+ *  inactive forever with no self-correction (adversarial review finding,
+ *  2026-07-15, codex gpt-5.6-sol). Polling in short steps up to a longer
+ *  cap resolves as soon as the real grant lands instead of only at a
+ *  single fixed instant. This narrows the race, it does not eliminate it
+ *  — an indication arriving after ACQUIRE_TIMEOUT_MS is still lost, same
+ *  as the physical-link-vanishes-mid-write caveat already documented for
+ *  FE-C releases; being honest about that bound here rather than claiming
+ *  a fix this file cannot actually guarantee. */
+const ACQUIRE_POLL_MS = 50;
+const ACQUIRE_TIMEOUT_MS = 800;
 
 type PendingTarget = { kind: 'sim'; gradePercent: number; crr: number } | { kind: 'power'; watts: number };
 
@@ -165,9 +182,14 @@ export class FtmsController extends ThrottledController {
       this.lastAcquireDenied = true;
       return false;
     }
-    // response indication updates `granted` asynchronously; give it one
-    // GATT round-trip's worth of grace before reporting the outcome
-    await new Promise((r) => setTimeout(r, 50));
+    // response indication updates `granted` asynchronously — poll in short
+    // steps up to ACQUIRE_TIMEOUT_MS, resolving the moment a real grant
+    // lands rather than only at one fixed instant (see the constant's doc
+    // comment for why a single fixed wait was a real bug).
+    const deadline = Date.now() + ACQUIRE_TIMEOUT_MS;
+    while (!this.granted && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, ACQUIRE_POLL_MS));
+    }
     if (!this.granted) this.lastAcquireDenied = true;
     return this.granted;
   }
