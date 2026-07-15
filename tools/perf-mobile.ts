@@ -48,18 +48,29 @@
  * GPU numbers ran ~6% low. Compare drawCalls between runs before trusting a
  * delta; if they differ, re-run or raise --warmup.
  *
+ * MACHINE CONTENTION: this box is CPU-walled at this profile, so ANY other heavy
+ * process (a Blender session, a build) lands directly on the metric — and a
+ * RAM-hungry neighbour is worse than a CPU-hungry one, because swapping shreds
+ * frame times. The tool therefore REFUSES to measure a contended box (see the
+ * gate below) instead of emitting a plausible lie. Every row carries `machine`
+ * with the load it was taken under, and `machine.contended` if it was dirty.
+ *
  * Usage:
  *   npx tsx tools/perf-mobile.ts --label baseline
  *   npx tsx tools/perf-mobile.ts --label no-ao --extra "ablate=ao"
  *   npx tsx tools/perf-mobile.ts --label prepass-off --extra "prepass=0"
  *   npx tsx tools/perf-mobile.ts --vsync 1 --label vsync-capped-control
+ *   npx tsx tools/perf-mobile.ts --wait-idle 7200 --label baseline   # park until quiet
+ *   npx tsx tools/perf-mobile.ts --allow-contended --label dirty     # stamped dirty
  *
  * Gotcha (CLAUDE.md): "No REAL WebGPU adapter" == our OWN stray headless
  * Chromes piling up from retries. Fix: pkill -f "chrome.*--headless", pause,
  * then ONE clean run. Do not spam retries.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { execSync, type ExecSyncOptions } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpus } from 'node:os';
 import { dirname } from 'node:path';
 import type { Page } from 'playwright';
 import { launchWebGPUReal, LAAS_ORIGIN } from './launch-gpu';
@@ -67,6 +78,106 @@ import { launchWebGPUReal, LAAS_ORIGIN } from './launch-gpu';
 /** THE fixed measurement spot: "px,py,pz,yaw,pitch". Every run in this campaign
  *  reuses it verbatim — never let it drift or the numbers stop being comparable. */
 export const SPOT_CAM = '-870,182.7,862,1.69,0.1';
+
+/* ---- MACHINE CONTENTION GATE ---------------------------------------------
+ * A benchmark is only worth the machine it ran on. Anything else heavy on this
+ * box (a Blender session, a build, someone else's Chrome) steals CPU and — the
+ * nastier one — RAM: once MemAvailable collapses the box swaps, frame times
+ * jitter, and every delta is quietly poisoned. This profile is CPU-WALLED (see
+ * the header), so foreign CPU load lands straight on the metric.
+ *
+ * Policy: refuse to measure a contended box rather than emit a plausible lie.
+ *   --wait-idle <sec>   park until it goes quiet, then measure
+ *   --allow-contended   measure anyway, but STAMP the row `contended: true` so
+ *                       the number can never later be mistaken for a clean one.
+ * Every row carries `machine`, so a suspicious delta can always be re-checked
+ * against the load it was taken under.
+ */
+interface MachineLoad {
+  load1: number;
+  cores: number;
+  loadPerCore: number;
+  memAvailPct: number;
+  hogs: string[];
+  quiet: boolean;
+}
+
+/** An idle box sits near 0.02–0.10 load/core; 0.35 leaves room for background
+ *  daemons without letting a real workload through. */
+const LOAD_PER_CORE_MAX = 0.35;
+/** Below this, the box is one allocation away from swapping. */
+const MEM_AVAIL_MIN_PCT = 20;
+
+function readMachineLoad(): MachineLoad {
+  const load1 = Number((readFileSync('/proc/loadavg', 'utf8').split(/\s+/)[0] ?? '0'));
+  const cores = Math.max(1, cpus().length);
+  const mi = readFileSync('/proc/meminfo', 'utf8');
+  const kb = (k: string): number => Number(new RegExp(`^${k}:\\s+(\\d+)`, 'm').exec(mi)?.[1] ?? 0);
+  const memAvailPct = (kb('MemAvailable') / Math.max(1, kb('MemTotal'))) * 100;
+  // Foreign hogs only: our own toolchain (the harness's Chrome/node, the agent
+  // driving it) is not contention, it IS the measurement.
+  let hogs: string[] = [];
+  try {
+    const opts: ExecSyncOptions = { encoding: 'utf8', timeout: 5000 };
+    hogs = String(execSync('ps -eo pcpu,pmem,comm --sort=-pcpu --no-headers', opts))
+      .split('\n')
+      .slice(0, 12)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .filter((l) => {
+        const [pcpu, pmem, comm] = l.split(/\s+/);
+        if (/^(chrome|chrome_crashpad|node|npm|npx|ps|claude|tsx)$/.test(comm ?? '')) return false;
+        return Number(pcpu ?? 0) > 20 || Number(pmem ?? 0) > 25;
+      })
+      .map((l) => l.replace(/\s+/g, ' '));
+  } catch {
+    /* no ps — load/mem still gate */
+  }
+  const loadPerCore = load1 / cores;
+  return {
+    load1,
+    cores,
+    loadPerCore,
+    memAvailPct,
+    hogs,
+    quiet: loadPerCore <= LOAD_PER_CORE_MAX && memAvailPct >= MEM_AVAIL_MIN_PCT && hogs.length === 0,
+  };
+}
+
+function describeLoad(m: MachineLoad): string {
+  return (
+    `load ${m.load1.toFixed(2)}/${m.cores}c (${(m.loadPerCore * 100).toFixed(0)}%/core), ` +
+    `mem avail ${m.memAvailPct.toFixed(0)}%` +
+    (m.hogs.length ? `, hogs: [${m.hogs.join(' | ')}]` : '')
+  );
+}
+
+async function gateOnIdle(waitSec: number, allowContended: boolean): Promise<MachineLoad> {
+  let m = readMachineLoad();
+  if (m.quiet) return m;
+  if (allowContended) {
+    console.warn(`[perf-mobile] CONTENDED, but --allow-contended given — ${describeLoad(m)}`);
+    console.warn('[perf-mobile] the row will be stamped contended:true — do NOT compare it to clean runs.');
+    return m;
+  }
+  if (waitSec <= 0) {
+    console.error(`[perf-mobile] REFUSING to measure a contended box — ${describeLoad(m)}`);
+    console.error('[perf-mobile] --wait-idle <sec> to park until quiet, or --allow-contended to accept dirt.');
+    throw new Error('machine contended');
+  }
+  const deadline = Date.now() + waitSec * 1000;
+  console.log(`[perf-mobile] waiting up to ${waitSec}s for an idle box — ${describeLoad(m)}`);
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 15_000));
+    m = readMachineLoad();
+    if (m.quiet) {
+      console.log(`[perf-mobile] box went quiet — ${describeLoad(m)}`);
+      return m;
+    }
+    console.log(`[perf-mobile] still busy — ${describeLoad(m)}`);
+  }
+  throw new Error(`machine still contended after ${waitSec}s — ${describeLoad(m)}`);
+}
 
 interface Args {
   [k: string]: string | boolean;
@@ -186,6 +297,14 @@ async function main(): Promise<void> {
   const vsyncOn = str(args['vsync']) === '1';
   const outPath = str(args['out']) ?? `shots/wip/perf-mobile-${label}.json`;
   const shotPath = str(args['shot']) ?? `shots/wip/perf-mobile-${label}.png`;
+  const waitIdleSec = Number(str(args['wait-idle']) ?? 0);
+  const allowContended = args['allow-contended'] === true || str(args['allow-contended']) === '1';
+
+  // Gate BEFORE booting Chrome: world-gen alone costs ~50 s, so discovering the
+  // box is busy after the boot wastes a minute and tempts you to keep the dirty
+  // number anyway.
+  const machine = await gateOnIdle(waitIdleSec, allowContended);
+  console.log(`[perf-mobile] machine: ${describeLoad(machine)}`);
 
   // The whole point of this harness: an UNCAPPED rAF meter. Without these,
   // rAF pins at the refresh rate and every optimization reads "no change".
@@ -365,6 +484,8 @@ async function main(): Promise<void> {
     label,
     when: new Date().toISOString(),
     adapter: info,
+    // the box this number is worth exactly as much as
+    machine: { ...machine, contended: !machine.quiet },
     chromeArgs: [...recipe.args, ...vsyncArgs],
     url,
     spot: { cam, camActual: camStr, tod },
