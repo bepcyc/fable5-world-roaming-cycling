@@ -379,6 +379,56 @@
         0%, 40%   { transform: rotate(0deg); }
         70%, 100% { transform: rotate(-90deg); }
       }
+
+      /* mobile "tap to start" gate (TapGate.ts): requestFullscreen() only
+         works inside a real user gesture, so a passive phone user watching
+         the load has nothing to tap until Start goes from "LOADING NN%" to
+         ready — leaving the Custom Tab toolbar up for the whole load. This
+         covers the screen the instant TapGate.ts arms it (mobile only, see
+         its header) so the FIRST tap — before any loading is visible — is
+         the one ImmersiveMobile's listener sees. Above #splash (the hero
+         art plays through unobstructed), below #rotate (rotate first, then
+         tap, in portrait). Hidden by default: desktop and every headless
+         probe/screenshot tool never see it. */
+      #tapgate {
+        position: fixed;
+        inset: 0;
+        z-index: 2500;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+      #tapgate.on { display: flex; }
+      .tapgate-prompt {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        padding: 18px 30px;
+        border-radius: 16px;
+        background: var(--menu-panel-bg);
+        border: 1px solid var(--menu-panel-border);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        color: var(--menu-text-bright);
+        font: bold 13px/1.2 ui-monospace, Menlo, monospace;
+        letter-spacing: 0.24em;
+        text-align: center;
+        animation: laas-tapgate-pulse 1.7s ease-in-out infinite;
+      }
+      .tapgate-prompt svg {
+        width: 36px;
+        height: 36px;
+        color: var(--menu-accent);
+      }
+      @keyframes laas-tapgate-pulse {
+        0%, 100% { transform: scale(1); opacity: 0.9; }
+        50%      { transform: scale(1.06); opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .tapgate-prompt { animation: none; }
+      }
     </style>
   </head>
   <body>
@@ -391,6 +441,22 @@
           <path d="M11 19h2" />
         </svg>
         <div class="rotate-msg" data-i18n data-de="GERÄT DREHEN" data-ru="ПОВЕРНИТЕ УСТРОЙСТВО">ROTATE YOUR DEVICE</div>
+      </div>
+    </div>
+
+    <!-- mobile-only "tap to start" gate — TapGate.ts arms it on isMobileDevice()
+         before the world load becomes visible. The tap that dismisses it is
+         the SAME tap ImmersiveMobile.ts's document-level listener uses to
+         enter fullscreen+landscape (capture/target/bubble all fire for one
+         event) — no fullscreen call is duplicated here. -->
+    <div id="tapgate">
+      <div class="tapgate-prompt">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 11.5V6.5a1.5 1.5 0 013 0V11" />
+          <path d="M12 11V5a1.5 1.5 0 013 0v6" />
+          <path d="M15 11.2V7.5a1.5 1.5 0 013 0V14c0 3.9-3.1 7-7 7h-1c-2 0-3.1-.6-4.2-2l-2.6-3.4c-.6-.8-.4-1.9.4-2.4.7-.5 1.6-.4 2.2.3L9 15" />
+        </svg>
+        <span data-i18n data-de="ANTIPPEN ZUM STARTEN" data-ru="НАЖМИТЕ ДЛЯ СТАРТА">TAP TO START</span>
       </div>
     </div>
 

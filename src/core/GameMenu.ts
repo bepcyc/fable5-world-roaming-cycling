@@ -25,7 +25,11 @@ import { hardwareThreads, storeThreads, THREADS_LS_KEY } from './Threads';
 
 type GameState = 'MENU' | 'PLAYING' | 'PAUSED';
 
-function shouldBypass(params: LaasParams): boolean {
+/** Exported for TapGate.ts: the mobile-only tap gate is part of the same
+ *  splash flow and must vanish under every debug/tooling escape hatch this
+ *  already covers (webdriver — every Playwright probe/screenshot tool sets
+ *  it — nosplash=1, non-'world' debug scenes, freeze=1). */
+export function shouldBypass(params: LaasParams): boolean {
   const q = new URLSearchParams(window.location.search);
   if (q.get('nosplash') === '1') return true;
   if ((navigator as unknown as { webdriver?: boolean }).webdriver === true) return true;
