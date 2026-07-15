@@ -37,8 +37,27 @@ export function initTapGate(params: LaasParams): void {
   const gate = document.getElementById('tapgate');
   if (!gate) return;
   gate.classList.add('on');
-  // one-shot: the SAME tap satisfies ImmersiveMobile's document-level
-  // capture listener (fires for any target) — this listener only needs to
-  // dismiss the overlay, never re-shown once the user has tapped once.
-  gate.addEventListener('pointerup', () => gate.classList.remove('on'), { once: true });
+  // The SAME tap satisfies ImmersiveMobile's document-level capture listener
+  // (it fires for any target), so this only has to get the overlay out of the
+  // way. Two bugs the owner hit on real devices, both fixed here:
+  //
+  // 1. `pointerup` alone is NOT reliable on touch. Without `touch-action:none`
+  //    (now set on #tapgate in index.html) the browser first decides whether
+  //    the touch is a scroll gesture; a finger that drifts one pixel yields
+  //    `pointercancel`, never `pointerup`. Result on a Samsung tablet: the gate
+  //    only cleared "on the 50th try" — i.e. whenever a tap happened to be
+  //    perfectly still. So listen for `click` too: it survives the small
+  //    movement a real finger always has.
+  // 2. `{ once: true }` was worse: ANY stray pointerup (one during load is
+  //    enough) spent the listener forever and the gate could then never be
+  //    dismissed by anything — the Pixel symptom, "does not work at all".
+  //    Removal is idempotent, so no `once` is needed; drop both listeners after
+  //    the first one wins.
+  const dismiss = (): void => {
+    gate.classList.remove('on');
+    gate.removeEventListener('pointerup', dismiss);
+    gate.removeEventListener('click', dismiss);
+  };
+  gate.addEventListener('pointerup', dismiss);
+  gate.addEventListener('click', dismiss);
 }

@@ -131,6 +131,15 @@ export function serviceKey(u: ServiceUuid): string {
 }
 const ukey = serviceKey;
 
+/** Full 128-bit form of a service UUID, as `BluetoothRemoteGATTService.uuid`
+ *  always reports it — 16-bit SIG numbers expand through the Bluetooth Base
+ *  UUID. Needed because we key our own maps by `serviceKey` (`0x180d`) but the
+ *  browser hands back `0000180d-0000-1000-8000-00805f9b34fb`. */
+export function canonicalUuid(u: ServiceUuid): string {
+  if (typeof u !== 'number') return u.toLowerCase();
+  return `${u.toString(16).padStart(8, '0')}-0000-1000-8000-00805f9b34fb`;
+}
+
 /** one connected GATT device, service discovery + notify + write abstracted */
 export interface BleDeviceHandle {
   /** BluetoothDevice.id — stable per origin+device, the identity
@@ -184,12 +193,15 @@ interface WBCharacteristic {
   addEventListener(type: 'characteristicvaluechanged', cb: (ev: Event) => void): void;
 }
 interface WBService {
+  uuid: string;
   getCharacteristic(chr: ServiceUuid): Promise<WBCharacteristic>;
 }
 interface WBServer {
   connected: boolean;
   connect(): Promise<WBServer>;
   getPrimaryService(svc: ServiceUuid): Promise<WBService>;
+  /** all authorized services in ONE round trip — see connectAndDiscover */
+  getPrimaryServices?: () => Promise<WBService[]>;
   disconnect(): void;
 }
 interface WBDevice {
@@ -292,12 +304,47 @@ class RealDeviceHandle implements BleDeviceHandle {
   }
 }
 
-async function connectAndDiscover(device: WBDevice): Promise<RealDeviceHandle> {
-  if (!device.gatt) throw new Error('device has no GATT server');
-  const server = await device.gatt.connect();
-  // discover once against the KNOWN_SERVICES registry; anything not in it
-  // is unreachable through Web Bluetooth anyway (see file header)
-  const services = new Map<string, WBService | null>();
+/**
+ * Discover which of KNOWN_SERVICES this peripheral actually exposes.
+ *
+ * ONE getPrimaryServices() call, not one getPrimaryService() per known
+ * service. This is a bug fix, not a tidy-up. The per-service loop asked for
+ * all of KNOWN_SERVICES sequentially and swallowed a NotFoundError for each
+ * absent one — so the cost of connecting scaled with our registry rather than
+ * with the device, and every await landed BEFORE the provider could subscribe.
+ *
+ * A single-purpose peripheral pays that worst: an HR strap has 0x180D and
+ * nothing else, so it ate one rejection per remaining known service before
+ * anyone called startNotifications(). Straps run short supervision timeouts
+ * and drop the link through that window; the next call then finds
+ * `server.connected === false` and Web Bluetooth throws its "GATT Server is
+ * disconnected" DOMException. Devices with richer service sets (the trainer,
+ * the power pedals) kept working, which is exactly why the breakage looked
+ * like "HR specifically is broken". Reported by the owner 2026-07-15.
+ *
+ * getPrimaryServices() returns only services already authorized via
+ * filters/optionalServices — the same scope the loop had — so nothing widens.
+ * It rejects with NotFoundError when the device exposes none of them; that is
+ * a legitimate empty result, not a failure. The loop stays as a fallback for
+ * any implementation lacking the plural form (our own FakeTransport never gets
+ * here — it implements BleDeviceHandle directly).
+ */
+async function discoverServices(server: WBServer): Promise<Map<string, WBService | null>> {
+  const services = new Map<string, WBService | null>(KNOWN_SERVICES.map((s) => [ukey(s.uuid), null]));
+  if (typeof server.getPrimaryServices === 'function') {
+    let found: WBService[] = [];
+    try {
+      found = await server.getPrimaryServices();
+    } catch {
+      found = []; // NotFoundError = device has none of ours
+    }
+    const byCanonical = new Map(KNOWN_SERVICES.map((s) => [canonicalUuid(s.uuid), ukey(s.uuid)]));
+    for (const svc of found) {
+      const key = byCanonical.get(svc.uuid.toLowerCase());
+      if (key) services.set(key, svc);
+    }
+    return services;
+  }
   for (const s of KNOWN_SERVICES) {
     try {
       services.set(ukey(s.uuid), await server.getPrimaryService(s.uuid));
@@ -305,7 +352,13 @@ async function connectAndDiscover(device: WBDevice): Promise<RealDeviceHandle> {
       services.set(ukey(s.uuid), null);
     }
   }
-  return new RealDeviceHandle(device, server, services);
+  return services;
+}
+
+async function connectAndDiscover(device: WBDevice): Promise<RealDeviceHandle> {
+  if (!device.gatt) throw new Error('device has no GATT server');
+  const server = await device.gatt.connect();
+  return new RealDeviceHandle(device, server, await discoverServices(server));
 }
 
 /** ONE filter entry PER service = OR across entries. A single entry

@@ -395,6 +395,12 @@
         inset: 0;
         z-index: 2500;
         display: none;
+        /* Without this the browser spends the touch deciding whether it is a
+           scroll gesture, and a finger that drifts a pixel produces
+           pointercancel instead of pointerup — the gate then only cleared on a
+           perfectly still tap ("works on the 50th try" on the tablet). */
+        touch-action: none;
+        -webkit-tap-highlight-color: transparent;
         align-items: center;
         justify-content: center;
         cursor: pointer;
