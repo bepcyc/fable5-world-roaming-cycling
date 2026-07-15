@@ -265,3 +265,86 @@ vendors implement 0x2ADA/Training Status — treat optional.
    powerW=null → coasts (P6 behavior falls out of the existing seam).
 6. Wahoo WCPS / Tacx FE-C fallbacks: OUT of M1.4 (no hardware to verify
    against); UUIDs + op codes recorded above for the hardware session.
+
+## 10. Zwift-grade rebuild (2026-07-15) — measured ground truth + design
+
+M1.4 above shipped device-slot-first (trainer/power/csc/hr, each its own
+filtered chooser) and was graded 2/5 by the owner: it filtered on FTMS only
+for the "trainer" slot, so a real trainer with no FTMS was invisible, and
+it didn't support splitting roles across devices (e.g. power-meter pedals
+for Power+Cadence while a separate trainer is Controllable only). This
+section records what changed and why, based on REAL hardware scanned on
+this machine's Realtek BT 5.4 dongle (`bluetoothctl`, not simulated).
+
+### 10.1 Measured ground truth
+
+**Tacx Smart Bike 12583** (`XX:XX:XX:XX:XX:XX`) — advertised: `0x1818`
+Cycling Power, `0x1816` CSC, `0x180a` Device Info,
+`6e40fec1-b5a3-f393-e0a9-e50e24dcca9e` (Tacx/Garmin "FE-C over BLE").
+**No `0x1826` FTMS anywhere** — advertisement or full connected GATT
+discovery. Connected GATT tree additionally reveals CP Vector `0x2a64` and
+CP Control Point `0x2a66` (present but calibration-only — cannot drive
+resistance), a Nordic DFU service `0xfe59`, and an unidentified vendor
+service `cf800001-00db-15a1-0e3f-ffa5794c3719` (undocumented anywhere we
+could find; deliberately never authorized — see §10.3).
+
+**HRMPro+:506196** (`XX:XX:XX:XX:XX:XX`) — `0x180d` Heart Rate AND `0x1814`
+Running Speed and Cadence together, plus a Garmin vendor service and
+Battery Service (post-connect only, not advertised). RSC's "Instantaneous
+Cadence" is steps/min from an accelerometer gait algorithm — categorically
+unrelated to crank RPM, and must never be offered as a cycling cadence
+source just because a field is named "cadence."
+
+### 10.2 Root cause (proven, not guessed)
+
+`Transport.ts`'s old `KIND_PROFILE.trainer.filterServices = [SVC.ftms]`
+only matches devices that ADVERTISE FTMS — this Tacx never does, so no
+amount of UI polish could make it appear. Second, independent bug in the
+same call: `filters: [{ services: prof.filterServices }]` is Web
+Bluetooth's own **AND-within-one-entry** semantics — a single filter entry
+listing several services requires the device to advertise ALL of them.
+OR-alternatives need SEPARATE entries. `Transport.buildAnyDeviceFilters()`
+now builds exactly one entry per acceptable service (`docs/BLE_ZWIFT_PLAN.md`
+carries the full owner brief + codex research this rebuild is based on;
+`tools/probe-ble.ts`'s "filters[]-OR-not-AND regression" test asserts this
+shape directly).
+
+### 10.3 Rebuilt architecture (device-first, capability-derived)
+
+Four independent dimensions per (device, protocol, metric) — capability
+(can this protocol on this device ever produce this metric — from
+Feature-characteristic bits, optimistic when absent/unreadable), GATT
+subscription outcome, live stream state (waiting/live/stale/disconnected,
+elapsed-time aged, never packet-count aged), and role assignment (RoleMux).
+`Capabilities.ts` derives capability sets purely from a `GattProbe`
+snapshot; `DeviceRegistry.ts` gathers that snapshot once per connect (only
+from services actually authorized via `optionalServices` — Web Bluetooth
+throws `SecurityError` on anything else, which is exactly why the Nordic
+DFU and unidentified vendor services on the real Tacx are never touched:
+we have no reason to authorize services we never intend to read).
+
+`RoleMux.ts` holds five roles (power/cadence/speed/heartRate/control).
+Telemetry roles auto-fill on first capable connection but are NEVER
+re-assigned automatically afterward — an explicit "— none —" pick is
+sticky and persisted. Control is deliberately split into ASSIGNMENT (which
+device is the designated controller, can auto-fill) and ACTIVATION
+(actually acquiring the GATT control point and sending resistance writes)
+— activation is tied to `BikeRig.mount()`/`dismount()`, not to
+connect/assignment time, fixing a real bug in the pre-rebuild code that
+called `requestControl()` unconditionally on trainer connect.
+
+Tacx FE-C (`6e40fec1-...`) is a capability PROVIDER behind the same
+`TelemetryProvider`/`TrainerController` interfaces every other protocol
+uses — `TacxFecProvider`/`TacxFecController`, see `FecFrame.ts` for the
+13-byte tunnel codec (pages 16/25 telemetry, 48/49/51 control, additive
+checksum `sum(frame[1..11]) & 0xFF`). No device-name or model branch
+anywhere: FE-C is offered purely because the device's authorized GATT tree
+contains that service, exactly like every other protocol.
+
+The owner's acceptance case (power-meter pedals → Power+Cadence, smart
+trainer → Controllable only, trainer's own power channel deliberately
+unused) is proven end-to-end in `tools/probe-ble.ts`'s "architecture"
+tier — plain Node, `FakeTransport`, no browser or Bluetooth stack needed,
+since none of `DeviceRegistry`/`RoleMux`/the providers touch
+`document`/`window`/`navigator` (only the real `WebBluetoothTransport`
+class does, and the tests never instantiate it).

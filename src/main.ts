@@ -35,7 +35,7 @@ import {
   type SensorSource,
 } from './ride/Sensors';
 import { BleSensorSource } from './ride/ble/BleSensorSource';
-import { BleConnectUi } from './ride/ble/ConnectUi';
+import { DeviceManagerUi } from './ride/ble/DeviceManagerUi';
 import { FakeTransport, WebBluetoothTransport } from './ride/ble/Transport';
 
 async function boot(): Promise<void> {
@@ -168,10 +168,13 @@ async function boot(): Promise<void> {
   const rideQ = q0.get('ride');
   let bleSource: BleSensorSource | null = null;
   let fakeTransport: FakeTransport | null = null;
+  let bleUi: DeviceManagerUi | null = null;
   if (!params.rideDev && (rideQ === 'ble' || rideQ === 'blefake')) {
     fakeTransport = rideQ === 'blefake' ? new FakeTransport() : null;
     bleSource = new BleSensorSource(fakeTransport ?? new WebBluetoothTransport());
-    new BleConnectUi(bleSource, true); // starts visible in both modes (B hides)
+    // chip is persistent; the full manager starts closed — 'B' or the chip
+    // click opens it, same as the pre-rebuild panel's toggle
+    bleUi = new DeviceManagerUi(bleSource, false);
   }
   const source: SensorSource | null = params.rideDev
     ? new KeyboardPowerSource()
@@ -185,12 +188,13 @@ async function boot(): Promise<void> {
     const dbg0 =
       (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
     dbg0['bleSource'] = bleSource;
+    dbg0['bleUi'] = bleUi;
     if (fakeTransport) {
       dbg0['bleFake'] = fakeTransport;
       // probes build scripted peripherals in page context (tools/probe-ble.ts)
       const { FakeDevice } = await import('./ride/ble/Transport');
-      dbg0['bleMakeFakeDevice'] = (name: string, services: number[]) =>
-        new FakeDevice(name, services);
+      dbg0['bleMakeFakeDevice'] = (name: string, services: (number | string)[], id?: string) =>
+        new FakeDevice(name, services, id);
     }
     (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg0;
   }
