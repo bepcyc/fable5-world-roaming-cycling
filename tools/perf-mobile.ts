@@ -216,16 +216,19 @@ function str(v: string | boolean | undefined): string | undefined {
 const SAMPLER = (ms: number): string => `(() => new Promise((res) => {
   const t = [];
   const gpuSum = {}; let gpuN = 0;
+  const draws = []; const tris = [];
   let last = performance.now(); const t0 = last;
   requestAnimationFrame(function tick(now) {
     t.push(now - last); last = now;
-    const g = window.__laas.stats && window.__laas.stats.gpuPasses;
+    const s = window.__laas.stats;
+    const g = s && s.gpuPasses;
     if (g) {
       gpuN++;
       for (const k in g) gpuSum[k] = (gpuSum[k] || 0) + g[k];
     }
+    if (s && typeof s.drawCalls === 'number') { draws.push(s.drawCalls); tris.push(s.triangles || 0); }
     if (now - t0 < ${ms}) requestAnimationFrame(tick);
-    else res({ times: t, gpuSum: gpuSum, gpuN: gpuN });
+    else res({ times: t, gpuSum: gpuSum, gpuN: gpuN, draws: draws, tris: tris });
   });
 }))()`;
 
@@ -233,6 +236,27 @@ interface SampleOut {
   times: number[];
   gpuSum: Record<string, number>;
   gpuN: number;
+  draws: number[];
+  tris: number[];
+}
+
+/** Mean + spread of a per-frame series.
+ *
+ *  WHY THIS EXISTS (measured 2026-07-15): drawCalls was read ONCE at the end of
+ *  the window, and consecutive identical runs reported 553 / 687 / 712 / 727 /
+ *  995 draws. That looked like "vegetation is still streaming" and sent a whole
+ *  session chasing a convergence bug that does not exist. It is not streaming —
+ *  the draw count legitimately OSCILLATES frame to frame, because per-frame work
+ *  is staggered (CsmCached refreshes one shadow cascade per frame; the cloud
+ *  shadow re-bakes every ~2.5 s). A single end-of-window read lands on a random
+ *  phase of that cycle. The window MEAN is stable and comparable; the snapshot
+ *  never was. Same reason gpuPasses is already averaged above. */
+function series(xs: number[]): { avg: number; min: number; max: number; spreadPct: number } {
+  if (xs.length === 0) return { avg: 0, min: 0, max: 0, spreadPct: 0 };
+  const avg = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const min = Math.min(...xs);
+  const max = Math.max(...xs);
+  return { avg, min, max, spreadPct: min > 0 ? ((max - min) / min) * 100 : 0 };
 }
 
 /** mean GPU ms per label over the sampled window */
@@ -399,6 +423,12 @@ async function main(): Promise<void> {
   const sample = (await page.evaluate(SAMPLER(measureMs))) as SampleOut;
   const m = reduce(sample.times);
   const gpu = gpuAvg(sample);
+  const drawsS = series(sample.draws ?? []);
+  const trisS = series(sample.tris ?? []);
+  console.log(
+    `[perf-mobile] draws/frame avg ${drawsS.avg.toFixed(0)} (min ${drawsS.min}, max ${drawsS.max}, ` +
+      `oscillates ${drawsS.spreadPct.toFixed(0)}% within the window — the AVG is the comparable number)`,
+  );
 
   const stats = await page.evaluate(() => ({
     triangles: window.__laas.stats?.triangles ?? 0,
@@ -497,8 +527,16 @@ async function main(): Promise<void> {
     warmupMs,
     measureMs,
     ...m,
-    triangles: stats.triangles,
-    drawCalls: stats.drawCalls,
+    // Per-frame MEAN over the measure window — this is the comparable number.
+    // drawCallsEnd/trianglesEnd are the old end-of-window snapshots, kept only
+    // to show how badly a single read scatters (see `series` above).
+    drawCalls: Math.round(drawsS.avg),
+    drawCallsMin: drawsS.min,
+    drawCallsMax: drawsS.max,
+    drawCallsSpreadPct: Number(drawsS.spreadPct.toFixed(1)),
+    triangles: Math.round(trisS.avg),
+    drawCallsEnd: stats.drawCalls,
+    trianglesEnd: stats.triangles,
     cpuUpdateMs,
     cpuSubmitMs,
     cpuFrac,
