@@ -225,6 +225,19 @@ class MainActivity : Activity() {
         fun gpu(msg: String) = Log.i("LaasGpu", msg)
     }
 
+    /** BLUETOOTH_SCAN/BLUETOOTH_CONNECT are runtime permissions and the bridge
+     *  asks for them on its first scan. Only an Activity receives the result,
+     *  so it has to be handed back down — without this the bridge's callback
+     *  never fires and Add Device hangs on a chooser that never scans. */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        bleBridge?.onPermissionsResult(requestCode, grantResults)
+    }
+
     private fun goImmersive() {
         // Immersive sticky, both era-appropriate paths. No status/nav bar, and a
         // swipe brings them back transiently rather than resizing the canvas.

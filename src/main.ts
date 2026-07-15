@@ -36,6 +36,7 @@ import {
 } from './ride/Sensors';
 import { BleSensorSource } from './ride/ble/BleSensorSource';
 import { DeviceManagerUi } from './ride/ble/DeviceManagerUi';
+import { NativeBridgeTransport, nativeBleAvailable } from './ride/ble/NativeBridgeTransport';
 import { FakeTransport, WebBluetoothTransport } from './ride/ble/Transport';
 
 async function boot(): Promise<void> {
@@ -171,7 +172,14 @@ async function boot(): Promise<void> {
   let bleUi: DeviceManagerUi | null = null;
   if (!params.rideDev && (rideQ === 'ble' || rideQ === 'blefake')) {
     fakeTransport = rideQ === 'blefake' ? new FakeTransport() : null;
-    bleSource = new BleSensorSource(fakeTransport ?? new WebBluetoothTransport());
+    // Three transports, one seam (src/ride/ble/Transport.ts). The native
+    // bridge exists ONLY inside the Android WebView APK, which has no
+    // navigator.bluetooth at all — window.LaasBle is injected by BleBridge.kt,
+    // so this test is false everywhere else and desktop Chrome keeps taking
+    // the Web Bluetooth path unchanged.
+    bleSource = new BleSensorSource(
+      fakeTransport ?? (nativeBleAvailable() ? new NativeBridgeTransport() : new WebBluetoothTransport()),
+    );
     // chip is persistent; the full manager starts closed — 'B' or the chip
     // click opens it, same as the pre-rebuild panel's toggle
     bleUi = new DeviceManagerUi(bleSource, false);

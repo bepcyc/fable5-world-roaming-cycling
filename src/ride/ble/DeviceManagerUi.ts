@@ -303,35 +303,54 @@ export class DeviceManagerUi {
     row1.append(name, stage);
     card.appendChild(row1);
 
+    // ONE CHIP PER METRIC, not per (protocol, metric). The owner's Tacx reports
+    // cadence over BOTH Cycling Power (0x1818) and CSC (0x1816), so the old
+    // per-protocol loop drew two identical CADENCE chips and a values line
+    // reading "CADENCE 0 rpm · CADENCE 0 rpm". The owner called that a bug
+    // (2026-07-15) and he is right: cadence is ONE physical quantity, and a
+    // panel that shows it twice is asking the rider to care about our protocol
+    // plumbing. Which protocols carry it IS real information, so it moves into
+    // the chip's tooltip instead of being duplicated on screen.
     const chips = el('div', 'bm-chips');
-    for (const protocol of d.protocols) {
-      const caps = mux.capabilitiesFor(d.id, protocol);
-      if (!caps) continue;
-      for (const metric of METRICS) {
-        if (!caps[metric]) continue;
-        const s = mux.sampleFor(d.id, protocol, metric);
-        const assignedTo = mux.assignmentFor(metric);
-        const isAssigned = assignedTo !== null && assignedTo !== 'none' && assignedTo.deviceId === d.id && assignedTo.protocol === protocol;
-        const chip = el('div', 'bm-chip');
-        chip.classList.toggle('live', s?.state === 'live');
-        chip.classList.toggle('assigned', isAssigned);
-        chip.classList.toggle('stalewarn', isAssigned && (s?.state === 'stale' || s?.state === 'disconnected'));
-        chip.title = `${PROTOCOL_LABEL[protocol]}`;
-        chip.textContent = ROLE_LABEL[metric];
-        chips.appendChild(chip);
-      }
-      const ctrl = mux.controlCapabilityFor(d.id, protocol);
-      if (ctrl) {
-        const assignedTo = mux.assignmentFor('control');
-        const isAssigned = assignedTo !== null && assignedTo !== 'none' && assignedTo.deviceId === d.id && assignedTo.protocol === protocol;
-        const active = mux.isActiveController(d.id, protocol);
-        const chip = el('div', 'bm-chip');
-        chip.classList.toggle('live', active);
-        chip.classList.toggle('assigned', isAssigned);
-        chip.title = `${PROTOCOL_LABEL[protocol]} — ${ctrl.simulation ? 'SIM' : ''}${ctrl.simulation && ctrl.targetPower ? '/' : ''}${ctrl.targetPower ? 'ERG' : ''}`;
-        chip.textContent = 'CONTROL';
-        chips.appendChild(chip);
-      }
+    for (const metric of METRICS) {
+      const carriers = d.protocols.filter((p) => mux.capabilitiesFor(d.id, p)?.[metric]);
+      if (carriers.length === 0) continue;
+      const a = mux.assignmentFor(metric);
+      const assignedHere = a !== null && a !== 'none' && a.deviceId === d.id && carriers.includes(a.protocol);
+      // staleness is only meaningful for the protocol actually feeding the
+      // role — a second, unassigned carrier going quiet is not a warning
+      // (`assignedHere` already narrows `a` to the object form: TS narrows
+      // through aliased conditions, so re-testing it here would be dead code)
+      const assignedSample = assignedHere ? mux.sampleFor(d.id, a.protocol, metric) : null;
+      const anyLive = carriers.some((p) => mux.sampleFor(d.id, p, metric)?.state === 'live');
+      const chip = el('div', 'bm-chip');
+      chip.classList.toggle('live', anyLive);
+      chip.classList.toggle('assigned', assignedHere);
+      chip.classList.toggle(
+        'stalewarn',
+        assignedHere && (assignedSample?.state === 'stale' || assignedSample?.state === 'disconnected'),
+      );
+      chip.title = carriers.map((p) => PROTOCOL_LABEL[p]).join(' + ');
+      chip.textContent = ROLE_LABEL[metric];
+      chips.appendChild(chip);
+    }
+    // likewise one CONTROL chip, though FTMS and FE-C can both offer control
+    const ctrlCarriers = d.protocols.filter((p) => mux.controlCapabilityFor(d.id, p));
+    if (ctrlCarriers.length > 0) {
+      const a = mux.assignmentFor('control');
+      const assignedHere = a !== null && a !== 'none' && a.deviceId === d.id && ctrlCarriers.includes(a.protocol);
+      const chip = el('div', 'bm-chip');
+      chip.classList.toggle('live', ctrlCarriers.some((p) => mux.isActiveController(d.id, p)));
+      chip.classList.toggle('assigned', assignedHere);
+      chip.title = ctrlCarriers
+        .map((p) => {
+          const c = mux.controlCapabilityFor(d.id, p);
+          const modes = [c?.simulation ? 'SIM' : null, c?.targetPower ? 'ERG' : null].filter(Boolean).join('/');
+          return `${PROTOCOL_LABEL[p]}${modes ? ` — ${modes}` : ''}`;
+        })
+        .join(' + ');
+      chip.textContent = 'CONTROL';
+      chips.appendChild(chip);
     }
     if (chips.childElementCount > 0) card.appendChild(chips);
 
@@ -342,12 +361,20 @@ export class DeviceManagerUi {
       card.appendChild(tag);
     }
 
+    // one reading per metric, for the same reason as the chips above: the
+    // protocol actually feeding the role if this device holds it, else the
+    // first carrier that is genuinely streaming
     const vals: string[] = [];
-    for (const protocol of d.protocols) {
-      for (const metric of METRICS) {
-        const s = mux.sampleFor(d.id, protocol, metric);
+    for (const metric of METRICS) {
+      const carriers = d.protocols.filter((p) => mux.capabilitiesFor(d.id, p)?.[metric]);
+      const a = mux.assignmentFor(metric);
+      const preferred = a !== null && a !== 'none' && a.deviceId === d.id && carriers.includes(a.protocol) ? a.protocol : null;
+      const order = preferred ? [preferred, ...carriers.filter((p) => p !== preferred)] : carriers;
+      for (const p of order) {
+        const s = mux.sampleFor(d.id, p, metric);
         if (s && s.state === 'live' && s.value !== null) {
           vals.push(`${ROLE_LABEL[metric]} <b>${fmt(metric, s.value)}</b>`);
+          break;
         }
       }
     }

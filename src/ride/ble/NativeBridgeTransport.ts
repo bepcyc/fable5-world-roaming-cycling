@@ -1,0 +1,486 @@
+/**
+ * NativeBridgeTransport — the THIRD BleTransport, for the Android WebView APK.
+ *
+ * WHY: `navigator.bluetooth` does not exist in Android WebView. Web Bluetooth
+ * is a Chrome-*browser* feature; the embeddable WebView ships neither the
+ * chooser nor the permission model. The APK therefore hosts its own GATT stack
+ * in Kotlin (android/app/src/main/java/com/bepcyc/laas/BleBridge.kt) and this
+ * file re-exposes it as the same `BleTransport`/`BleDeviceHandle` contract that
+ * WebBluetoothTransport and FakeTransport implement. Nothing above the seam
+ * (Capabilities, providers/, TrainerController, RoleMux, DeviceRegistry) learns
+ * which stack is underneath — that is the entire point of Transport.ts.
+ *
+ * THE PROTOCOL, and why it looks like this: `addJavascriptInterface` can only
+ * return a value SYNCHRONOUSLY, while every GATT operation is asynchronous. So
+ * requests carry an id we mint here, `LaasBle.call()` returns nothing but an
+ * "accepted for dispatch" ack, and the actual outcome arrives later through
+ * `window.__laasBleRecv(json)` (Kotlin -> evaluateJavascript) where it resolves
+ * the promise parked under that id. Notifications, scan hits and link drops
+ * ride the same inbound channel unsolicited, with no id. Bytes are base64 both
+ * ways, because the channel is a JS string literal and base64 is the cheapest
+ * way to keep arbitrary GATT payloads out of escaping's reach.
+ *
+ * THE CHOOSER IS OURS NOW. Web Bluetooth's requestDevice() renders a chooser
+ * supplied by the browser; native has no such thing. So requestAnyDevice()
+ * scans through the bridge and renders the picker itself, in the page, styled
+ * to match DeviceManagerUi — deliberately NOT an Android AlertDialog: an
+ * in-page chooser keeps the whole device flow inside one renderer, and inside
+ * the existing UI language. It resolves with a CONNECTED handle exactly like
+ * its Web Bluetooth twin, so DeviceRegistry.addDevice() is unchanged.
+ *
+ * IDENTITY: `BleDeviceHandle.id` is the MAC address here, where Chrome hands
+ * out an opaque per-origin id. Both are stable per device, which is all
+ * DeviceRegistry's persisted role assignments require. They are NOT
+ * interchangeable between the two transports — a device paired in Chrome and
+ * the same device paired in the APK are two different registry entries. That is
+ * correct and unavoidable: the ids come from different namespaces.
+ */
+
+import { t } from '../../core/I18n';
+import {
+  canonicalUuid,
+  KNOWN_SERVICES,
+  type BleDeviceHandle,
+  type BleTransport,
+  type ServiceUuid,
+} from './Transport';
+
+// ---- the Kotlin-side object ----------------------------------------------------
+
+interface LaasBleNative {
+  available(): boolean;
+  unavailableReason(): string;
+  /** JSON in, sync ack JSON out — see BleBridge.call() */
+  call(request: string): string;
+}
+
+interface InboundMsg {
+  t: 'reply' | 'scan' | 'scanfail' | 'notify' | 'gone';
+  id?: string;
+  ok?: boolean;
+  code?: string;
+  error?: string;
+  addr?: string;
+  name?: string;
+  rssi?: number;
+  svc?: string;
+  chr?: string;
+  data?: string;
+  services?: string[] | { uuid: string; chars: string[] }[];
+}
+
+function native(): LaasBleNative | null {
+  return (window as unknown as { LaasBle?: LaasBleNative }).LaasBle ?? null;
+}
+
+/** Is the APK's native bridge present AND does the device have a radio?
+ *  main.ts picks the transport on this — false on desktop/Chrome, where
+ *  window.LaasBle simply does not exist. */
+export function nativeBleAvailable(): boolean {
+  try {
+    return native()?.available() === true;
+  } catch {
+    return false;
+  }
+}
+
+// ---- bytes ---------------------------------------------------------------------
+
+function b64ToDataView(b64: string): DataView {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new DataView(u8.buffer);
+}
+
+function bufToB64(buf: ArrayBuffer): string {
+  const u8 = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]!);
+  return btoa(s);
+}
+
+/** Codes the Kotlin side raises for conditions the rider can actually fix get
+ *  a translated sentence; everything else keeps the native message verbatim
+ *  rather than being flattened into a vague one (DeviceManagerUi surfaces it). */
+function messageFor(msg: InboundMsg): string {
+  switch (msg.code) {
+    case 'off':
+      return t('ble.err.off');
+    case 'perm':
+      return t('ble.err.perm');
+    case 'noadapter':
+      return t('ble.err.noadapter');
+    default:
+      return msg.error ?? 'native BLE error';
+  }
+}
+
+// ---- client --------------------------------------------------------------------
+
+interface Pending {
+  resolve: (m: InboundMsg) => void;
+  reject: (e: Error) => void;
+}
+
+export interface ScanHit {
+  addr: string;
+  name: string;
+  rssi: number;
+  services: string[];
+}
+
+/**
+ * Owns the duplex channel: one `__laasBleRecv` hook, one id sequence, one
+ * pending-promise map, one notification routing table. A module singleton
+ * because `window.__laasBleRecv` is a single global — two clients would fight
+ * over it, and the Kotlin side only knows the one name.
+ */
+class NativeBleClient {
+  private seq = 0;
+  private pending = new Map<string, Pending>();
+  /** `${addr}|${svc}|${chr}` -> notification sink */
+  private notifySinks = new Map<string, (dv: DataView) => void>();
+  /** addr -> link-drop sinks */
+  private goneSinks = new Map<string, (() => void)[]>();
+  private scanSink: ((hit: ScanHit) => void) | null = null;
+
+  constructor() {
+    (window as unknown as { __laasBleRecv?: (s: string) => void }).__laasBleRecv = (s) => this.recv(s);
+  }
+
+  private recv(raw: string): void {
+    let msg: InboundMsg;
+    try {
+      msg = JSON.parse(raw) as InboundMsg;
+    } catch {
+      return;
+    }
+    if (msg.t === 'reply' && msg.id) {
+      const p = this.pending.get(msg.id);
+      if (!p) return;
+      this.pending.delete(msg.id);
+      if (msg.ok) p.resolve(msg);
+      else p.reject(new Error(messageFor(msg)));
+      return;
+    }
+    if (msg.t === 'notify' && msg.addr && msg.svc && msg.chr && msg.data) {
+      this.notifySinks.get(`${msg.addr}|${msg.svc}|${msg.chr}`)?.(b64ToDataView(msg.data));
+      return;
+    }
+    if (msg.t === 'gone' && msg.addr) {
+      const sinks = this.goneSinks.get(msg.addr) ?? [];
+      this.goneSinks.delete(msg.addr);
+      for (const cb of sinks) cb();
+      return;
+    }
+    if (msg.t === 'scan' && msg.addr) {
+      this.scanSink?.({
+        addr: msg.addr,
+        name: msg.name ?? msg.addr,
+        rssi: msg.rssi ?? 0,
+        services: (msg.services as string[]) ?? [],
+      });
+    }
+  }
+
+  call(op: string, args: Record<string, unknown> = {}): Promise<InboundMsg> {
+    const bridge = native();
+    if (!bridge) return Promise.reject(new Error(t('ble.err.noadapter')));
+    const id = String(++this.seq);
+    return new Promise<InboundMsg>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      let ack: { ok?: boolean; error?: string };
+      try {
+        ack = JSON.parse(bridge.call(JSON.stringify({ id, op, ...args }))) as { ok?: boolean; error?: string };
+      } catch (e) {
+        this.pending.delete(id);
+        reject(e instanceof Error ? e : new Error(String(e)));
+        return;
+      }
+      // sync ack only rejects malformed dispatch; the real outcome lands in recv()
+      if (!ack.ok) {
+        this.pending.delete(id);
+        reject(new Error(ack.error ?? 'native BLE rejected the request'));
+      }
+    });
+  }
+
+  onScan(cb: ((hit: ScanHit) => void) | null): void {
+    this.scanSink = cb;
+  }
+
+  onNotify(addr: string, svc: string, chr: string, cb: (dv: DataView) => void): void {
+    this.notifySinks.set(`${addr}|${svc}|${chr}`, cb);
+  }
+
+  onGone(addr: string, cb: () => void): void {
+    const list = this.goneSinks.get(addr) ?? [];
+    list.push(cb);
+    this.goneSinks.set(addr, list);
+  }
+
+  /** drop every sink for a device — a fresh connect to the same MAC must not
+   *  inherit the previous link's callbacks */
+  forget(addr: string): void {
+    for (const key of [...this.notifySinks.keys()]) {
+      if (key.startsWith(`${addr}|`)) this.notifySinks.delete(key);
+    }
+    this.goneSinks.delete(addr);
+  }
+}
+
+let client: NativeBleClient | null = null;
+function bleClient(): NativeBleClient {
+  if (!client) client = new NativeBleClient();
+  return client;
+}
+
+// ---- handle --------------------------------------------------------------------
+
+class NativeDeviceHandle implements BleDeviceHandle {
+  readonly id: string;
+  readonly name: string;
+  connected = true;
+  /** canonical service uuid -> its characteristic uuids, straight from the
+   *  one discoverServices() the bridge ran. Native has no Web Bluetooth
+   *  authorization model, so this is the device's REAL tree; it self-scopes
+   *  because only KNOWN_SERVICES are ever asked about. */
+  private tree: Map<string, Set<string>>;
+  private disconnectCbs: (() => void)[] = [];
+
+  constructor(addr: string, name: string, tree: Map<string, Set<string>>) {
+    this.id = addr;
+    this.name = name;
+    this.tree = tree;
+    bleClient().onGone(addr, () => {
+      this.connected = false;
+      for (const cb of this.disconnectCbs) cb();
+    });
+  }
+
+  hasService(service: ServiceUuid): boolean {
+    return this.tree.has(canonicalUuid(service));
+  }
+
+  hasCharacteristic(service: ServiceUuid, chr: ServiceUuid): boolean {
+    return this.tree.get(canonicalUuid(service))?.has(canonicalUuid(chr)) === true;
+  }
+
+  async startNotify(service: ServiceUuid, chr: ServiceUuid, cb: (dv: DataView) => void): Promise<void> {
+    const svc = canonicalUuid(service);
+    const c = canonicalUuid(chr);
+    // sink BEFORE the CCCD write: a chatty sensor can push its first frame
+    // between the peripheral enabling notifications and this promise
+    // resolving, and that frame must not fall on the floor
+    bleClient().onNotify(this.id, svc, c, cb);
+    await bleClient().call('notify', { addr: this.id, svc, chr: c });
+  }
+
+  async read(service: ServiceUuid, chr: ServiceUuid): Promise<DataView | null> {
+    try {
+      const r = await bleClient().call('read', {
+        addr: this.id,
+        svc: canonicalUuid(service),
+        chr: canonicalUuid(chr),
+      });
+      return r.data ? b64ToDataView(r.data) : null;
+    } catch {
+      return null; // contract: absent/failed reads are null, never a throw
+    }
+  }
+
+  async write(service: ServiceUuid, chr: ServiceUuid, data: ArrayBuffer): Promise<void> {
+    await bleClient().call('write', {
+      addr: this.id,
+      svc: canonicalUuid(service),
+      chr: canonicalUuid(chr),
+      data: bufToB64(data),
+    });
+  }
+
+  onDisconnect(cb: () => void): void {
+    this.disconnectCbs.push(cb);
+  }
+
+  disconnect(): void {
+    void bleClient().call('disconnect', { addr: this.id }).catch(() => {
+      /* already gone — the 'gone' event has done, or will do, the bookkeeping */
+    });
+  }
+}
+
+// ---- in-page chooser -----------------------------------------------------------
+
+const CHOOSER_STYLE = `
+#ble-scan{position:fixed;inset:0;z-index:1002;display:flex;align-items:center;justify-content:center;
+  background:rgba(4,6,5,0.8);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+#ble-scan .bs-card{width:min(420px,94vw);max-height:90vh;display:flex;flex-direction:column;
+  color:#dff0e6;background:rgba(12,16,14,0.96);border:1px solid rgba(255,255,255,0.12);
+  border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5)}
+#ble-scan .bs-title{font:bold 12px/1.2 ui-monospace,monospace;letter-spacing:0.14em;color:#ffe9b0;margin-bottom:8px}
+#ble-scan .bs-note{font:10px/1.5 ui-monospace,monospace;color:#c9b9a4;margin-bottom:10px}
+#ble-scan .bs-list{overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:60px}
+#ble-scan .bs-item{display:flex;align-items:center;gap:8px;padding:10px;border-radius:8px;cursor:pointer;
+  border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03)}
+#ble-scan .bs-item:hover{background:rgba(255,255,255,0.1)}
+#ble-scan .bs-nm{font:bold 11px/1.3 ui-monospace,monospace;flex:1;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+#ble-scan .bs-rssi{font:9px/1 ui-monospace,monospace;color:#8fb39e;flex:none}
+#ble-scan .bs-empty{font:10px/1.5 ui-monospace,monospace;color:#8fb39e;padding:8px 2px}
+#ble-scan .bs-btn{margin-top:12px;font:bold 10px/1 ui-monospace,monospace;letter-spacing:0.06em;
+  color:#dff0e6;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);
+  border-radius:8px;padding:10px;cursor:pointer;text-align:center}
+#ble-scan .bs-btn:hover{background:rgba(255,255,255,0.15)}
+`;
+
+let styleInjected = false;
+
+/** The chooser Web Bluetooth would have drawn for us. Live-updating list: a
+ *  BLE scan streams the same device repeatedly, so hits are keyed by MAC and
+ *  the row is refreshed in place rather than appended. */
+class ScanChooser {
+  private root: HTMLDivElement;
+  private list: HTMLDivElement;
+  private empty: HTMLDivElement;
+  private hits = new Map<string, ScanHit>();
+  private onPick: (hit: ScanHit) => void;
+
+  constructor(onPick: (hit: ScanHit) => void, onCancel: () => void) {
+    this.onPick = onPick;
+    if (!styleInjected) {
+      const style = document.createElement('style');
+      style.textContent = CHOOSER_STYLE;
+      document.head.appendChild(style);
+      styleInjected = true;
+    }
+    this.root = document.createElement('div');
+    this.root.id = 'ble-scan';
+    const card = document.createElement('div');
+    card.className = 'bs-card';
+
+    const title = document.createElement('div');
+    title.className = 'bs-title';
+    title.textContent = t('ble.scan.title');
+    const note = document.createElement('div');
+    note.className = 'bs-note';
+    note.textContent = t('ble.scan.hint');
+
+    this.list = document.createElement('div');
+    this.list.className = 'bs-list';
+    this.empty = document.createElement('div');
+    this.empty.className = 'bs-empty';
+    this.empty.textContent = t('ble.scan.searching');
+    this.list.appendChild(this.empty);
+
+    const cancel = document.createElement('div');
+    cancel.className = 'bs-btn';
+    cancel.textContent = t('ble.scan.cancel');
+    cancel.addEventListener('click', onCancel);
+
+    card.append(title, note, this.list, cancel);
+    this.root.appendChild(card);
+    document.body.appendChild(this.root);
+  }
+
+  add(hit: ScanHit): void {
+    const fresh = !this.hits.has(hit.addr);
+    this.hits.set(hit.addr, hit);
+    if (fresh) this.render();
+    else {
+      const rssi = this.list.querySelector<HTMLDivElement>(`[data-addr="${CSS.escape(hit.addr)}"] .bs-rssi`);
+      if (rssi) rssi.textContent = `${hit.rssi} dBm`;
+    }
+  }
+
+  private render(): void {
+    this.list.replaceChildren();
+    if (this.hits.size === 0) {
+      this.list.appendChild(this.empty);
+      return;
+    }
+    // strongest first: the sensor the rider is sitting on is the near one
+    for (const hit of [...this.hits.values()].sort((a, b) => b.rssi - a.rssi)) {
+      const row = document.createElement('div');
+      row.className = 'bs-item';
+      row.dataset['addr'] = hit.addr;
+      const nm = document.createElement('div');
+      nm.className = 'bs-nm';
+      nm.textContent = hit.name;
+      const rssi = document.createElement('div');
+      rssi.className = 'bs-rssi';
+      rssi.textContent = `${hit.rssi} dBm`;
+      row.append(nm, rssi);
+      row.addEventListener('click', () => this.onPick(hit));
+      this.list.appendChild(row);
+    }
+  }
+
+  close(): void {
+    this.root.remove();
+  }
+}
+
+// ---- transport -----------------------------------------------------------------
+
+export class NativeBridgeTransport implements BleTransport {
+  available(): boolean {
+    return nativeBleAvailable();
+  }
+
+  /** the "cycling devices" chooser: one scan filter PER known cycling service
+   *  = OR across filters, matching the Web Bluetooth chooser's shape (a single
+   *  multi-service filter would be AND, which is what once hid the Tacx). */
+  requestAnyDevice(): Promise<BleDeviceHandle> {
+    return this.chooseAndConnect(
+      KNOWN_SERVICES.filter((s) => s.chooserFilter).map((s) => canonicalUuid(s.uuid)),
+    );
+  }
+
+  /** the literal "all sensors" escape hatch — no service filter at all */
+  requestAllDevices(): Promise<BleDeviceHandle> {
+    return this.chooseAndConnect(null);
+  }
+
+  private async chooseAndConnect(services: string[] | null): Promise<BleDeviceHandle> {
+    const c = bleClient();
+    const hit = await new Promise<ScanHit>((resolve, reject) => {
+      const chooser = new ScanChooser(
+        (h) => {
+          void stop();
+          resolve(h);
+        },
+        () => {
+          void stop();
+          // DeviceManagerUi.guarded() swallows /cancel/i — a dismissed chooser
+          // is a non-event, exactly as a dismissed Web Bluetooth chooser is
+          reject(new Error('cancelled'));
+        },
+      );
+      const stop = async (): Promise<void> => {
+        c.onScan(null);
+        chooser.close();
+        try {
+          await c.call('stopScan');
+        } catch {
+          /* scan already stopped */
+        }
+      };
+      c.onScan((h) => chooser.add(h));
+      c.call('scan', services ? { services } : {}).catch((e: unknown) => {
+        void stop();
+        reject(e instanceof Error ? e : new Error(String(e)));
+      });
+    });
+
+    // a re-connect to a MAC we held before must not inherit the dead link's sinks
+    c.forget(hit.addr);
+    const r = await c.call('connect', { addr: hit.addr });
+    const tree = new Map<string, Set<string>>();
+    for (const s of (r.services as { uuid: string; chars: string[] }[]) ?? []) {
+      tree.set(s.uuid.toLowerCase(), new Set(s.chars.map((x) => x.toLowerCase())));
+    }
+    return new NativeDeviceHandle(hit.addr, r.name ?? hit.name, tree);
+  }
+}

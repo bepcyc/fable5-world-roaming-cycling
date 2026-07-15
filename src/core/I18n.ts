@@ -112,6 +112,41 @@ const DICT: Record<string, Entry> = {
     de: 'Noch keine Ger\u00e4te \u2014 tippe auf ADD DEVICE.',
     ru: '\u041f\u043e\u043a\u0430 \u043d\u0438 \u043e\u0434\u043d\u043e\u0433\u043e \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430 \u2014 \u043d\u0430\u0436\u043c\u0438 ADD DEVICE.',
   },
+  // ---- native BLE bridge chooser (Android WebView APK; see
+  // src/ride/ble/NativeBridgeTransport.ts). WebView has no Web Bluetooth and
+  // therefore no browser-supplied chooser, so the app draws its own and these
+  // are its strings.
+  'ble.scan.title': {
+    en: 'SELECT A DEVICE',
+    de: 'GERÄT AUSWÄHLEN',
+    ru: 'ВЫБЕРИ УСТРОЙСТВО',
+  },
+  'ble.scan.hint': {
+    en: 'Wake the sensor first — spin the cranks, or put the strap on.',
+    de: 'Sensor zuerst aufwecken — Kurbel drehen oder Gurt anlegen.',
+    ru: 'Сначала разбуди датчик — крутни шатуны или надень ремень.',
+  },
+  'ble.scan.searching': {
+    en: 'Searching…',
+    de: 'Suche…',
+    ru: 'Поиск…',
+  },
+  'ble.scan.cancel': { en: 'CANCEL', de: 'ABBRECHEN', ru: 'ОТМЕНА' },
+  'ble.err.off': {
+    en: 'Bluetooth is switched off. Turn it on and try again.',
+    de: 'Bluetooth ist ausgeschaltet. Schalte es ein und versuche es erneut.',
+    ru: 'Bluetooth выключен. Включи его и повтори.',
+  },
+  'ble.err.perm': {
+    en: 'Bluetooth permission denied. Grant "Nearby devices" in Android app settings.',
+    de: 'Bluetooth-Berechtigung verweigert. Erteile "Geräte in der Nähe" in den App-Einstellungen.',
+    ru: 'Нет разрешения на Bluetooth. Выдай «Устройства поблизости» в настройках приложения.',
+  },
+  'ble.err.noadapter': {
+    en: 'This device has no Bluetooth adapter.',
+    de: 'Dieses Gerät hat keinen Bluetooth-Adapter.',
+    ru: 'На этом устройстве нет Bluetooth-адаптера.',
+  },
   'ble.showAll': {
     en: "Don't see your device? Show all Bluetooth devices",
     de: 'Ger\u00e4t nicht dabei? Alle Bluetooth-Ger\u00e4te anzeigen',

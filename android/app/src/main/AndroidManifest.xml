@@ -1,10 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- loopback HTTP server on 127.0.0.1 needs the INTERNET permission
-         (localhost sockets count). NO Bluetooth permissions: the Custom Tab
-         runs in Chrome, and Chrome holds BLUETOOTH_SCAN / BLUETOOTH_CONNECT. -->
+         (localhost sockets count). -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Bluetooth for the in-process WebView path: Chrome held these while the
+         Custom Tab rendered the sim, but a WebView has no Web Bluetooth, so the
+         GATT stack is ours now (BleBridge.kt) and so are the permissions.
+         Both are RUNTIME permissions and BleBridge requests them before its
+         first scan — without the grant, BluetoothLeScanner returns an empty
+         result set and reports success, which looks exactly like "no sensors
+         nearby". minSdk is 31, so the legacy BLUETOOTH/BLUETOOTH_ADMIN pair
+         (maxSdkVersion 30) would be unreachable and is deliberately absent.
+
+         neverForLocation is a factual assertion, not a formality: we derive
+         nothing about the rider's location from an advertisement, we only read
+         cycling sensor UUIDs. It is what lets us skip ACCESS_FINE_LOCATION,
+         the Android 11-and-older scan tax, which minSdk 31 puts out of reach
+         anyway. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- BLE is required for the sensors, but the sim itself renders and rides
+         without them, so this stays optional rather than blocking install. -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <!-- Android 11+ package visibility: we must be able to see + pin Chrome -->
     <queries>
