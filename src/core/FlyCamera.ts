@@ -13,11 +13,44 @@
 
 import type { PerspectiveCamera } from 'three';
 import { Vector3 } from 'three';
+import { isMobileDevice } from './BrowserGate';
 import type { CamPose } from './Hooks';
 
 const FORWARD = new Vector3();
 const RIGHT = new Vector3();
 const MOVE = new Vector3();
+
+// ---- touch controls (mobile only — no keyboard exists on a phone/tablet) ---
+// `#app{touch-action:none}` in index.html already hands the whole canvas'
+// touch stream to us; this is where FlyCamera claims it. Two independent
+// gestures, tracked by pointerId so two fingers never fight each other:
+//   left thumb  → a virtual joystick that just sets the SAME WASD entries
+//                 the keyboard sets (updateWalk/updateFly read `keys` only —
+//                 zero physics duplication, zero drift from the desktop feel)
+//   any other finger on the canvas → drag-to-look (yaw/pitch), the touch
+//                 equivalent of locked-mouse movementX/Y
+const TOUCH_WASD = ['KeyW', 'KeyA', 'KeyS', 'KeyD'] as const;
+const JOY_MAX = 38; // px — clamp radius (matches the CSS thumb travel below)
+const JOY_DEADZONE = JOY_MAX * 0.32;
+const LOOK_SENS = 0.0022; // matches the locked-mouse movementX/Y sensitivity
+
+const TOUCH_STYLE = `
+#laas-touch-joy{position:fixed;left:max(18px,env(safe-area-inset-left));
+  bottom:max(18px,env(safe-area-inset-bottom));z-index:900;
+  width:132px;height:132px;border-radius:50%;
+  background:rgba(9,13,11,0.34);border:1px solid rgba(255,255,255,0.16);
+  touch-action:none;-webkit-user-select:none;user-select:none}
+#laas-touch-joy .thumb{position:absolute;left:50%;top:50%;width:56px;height:56px;
+  margin:-28px 0 0 -28px;border-radius:50%;
+  background:rgba(207,227,214,0.38);border:1px solid rgba(255,255,255,0.35);
+  transition:background 0.12s}
+#laas-touch-joy.on .thumb{background:rgba(255,209,102,0.55)}
+`;
+
+function setKeyState(keys: Set<string>, code: string, on: boolean): void {
+  if (on) keys.add(code);
+  else keys.delete(code);
+}
 
 /** terrain/water heights + surface class + slope at (x, z) — installed by
  *  the world scene. surfaceId = SurfaceId (src/ride/SurfaceMatrix.ts);
@@ -105,6 +138,13 @@ export class FlyCamera {
   // jump input buffer: keydown-edge timestamp — a tap shorter than a frame
   // still jumps on the next grounded update (≤150 ms grace)
   private jumpAt = -1;
+  // touch controls (mobile only — see the block above the class)
+  private touchJoyEl: HTMLDivElement | null = null;
+  private touchJoyThumb: HTMLDivElement | null = null;
+  private touchJoyId: number | null = null;
+  private touchJoyCenter = { x: 0, y: 0 };
+  private touchLookId: number | null = null;
+  private touchLookLast = { x: 0, y: 0 };
 
   constructor(camera: PerspectiveCamera, dom: HTMLElement) {
     this.camera = camera;
@@ -160,6 +200,10 @@ export class FlyCamera {
       }
     };
     dom.addEventListener('click', () => {
+      // a phone/tablet has no mouse to lock — touch drives look via the
+      // pointer-event drag below, and requesting a lock on Chrome Android is
+      // unreliable at best (and pointless: there is no cursor to hide)
+      if (isMobileDevice()) return;
       if (!this.enabled || this.locked) return;
       lockIntentAt = performance.now();
       acquireLock();
@@ -205,6 +249,94 @@ export class FlyCamera {
       },
       { passive: false },
     );
+
+    if (isMobileDevice()) this.initTouchControls(dom);
+  }
+
+  /**
+   * Virtual joystick (left thumb, movement) + drag-to-look (any other
+   * finger on the canvas) — the phone/tablet has no WASD and no mouse, so
+   * without this a touch player cannot move a single step from spawn.
+   */
+  private initTouchControls(dom: HTMLElement): void {
+    const style = document.createElement('style');
+    style.textContent = TOUCH_STYLE;
+    document.head.appendChild(style);
+
+    const base = document.createElement('div');
+    base.id = 'laas-touch-joy';
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    base.appendChild(thumb);
+    document.body.appendChild(base);
+    this.touchJoyEl = base;
+    this.touchJoyThumb = thumb;
+    // hidden while riding a bike — the bike drives itself, WASD does nothing
+    base.style.display = this.modeV === 'ride' ? 'none' : 'flex';
+
+    base.addEventListener('pointerdown', (e) => {
+      if (this.touchJoyId !== null) return;
+      e.preventDefault();
+      this.touchJoyId = e.pointerId;
+      const r = base.getBoundingClientRect();
+      this.touchJoyCenter = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      base.classList.add('on');
+      base.setPointerCapture(e.pointerId);
+      this.applyJoyVector(e.clientX, e.clientY);
+    });
+    base.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== this.touchJoyId) return;
+      e.preventDefault();
+      this.applyJoyVector(e.clientX, e.clientY);
+    });
+    const releaseJoy = (e: PointerEvent): void => {
+      if (e.pointerId !== this.touchJoyId) return;
+      this.touchJoyId = null;
+      base.classList.remove('on');
+      thumb.style.transform = 'translate(0,0)';
+      for (const code of TOUCH_WASD) this.keys.delete(code);
+    };
+    base.addEventListener('pointerup', releaseJoy);
+    base.addEventListener('pointercancel', releaseJoy);
+
+    dom.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch' || this.touchLookId !== null) return;
+      this.touchLookId = e.pointerId;
+      this.touchLookLast = { x: e.clientX, y: e.clientY };
+      dom.setPointerCapture(e.pointerId);
+    });
+    dom.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== this.touchLookId) return;
+      const dx = e.clientX - this.touchLookLast.x;
+      const dy = e.clientY - this.touchLookLast.y;
+      this.touchLookLast = { x: e.clientX, y: e.clientY };
+      this.yaw -= dx * LOOK_SENS;
+      this.pitch -= dy * LOOK_SENS;
+      this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch));
+    });
+    const releaseLook = (e: PointerEvent): void => {
+      if (e.pointerId === this.touchLookId) this.touchLookId = null;
+    };
+    dom.addEventListener('pointerup', releaseLook);
+    dom.addEventListener('pointercancel', releaseLook);
+  }
+
+  /** joystick drag → clamp to the base radius, position the thumb, and set
+   *  the same WASD entries the keyboard sets (digital, 8-way — matches the
+   *  keyboard's own all-or-nothing feel; updateWalk/updateFly never know
+   *  the difference between a finger and a key). */
+  private applyJoyVector(clientX: number, clientY: number): void {
+    const dx0 = clientX - this.touchJoyCenter.x;
+    const dy0 = clientY - this.touchJoyCenter.y;
+    const mag = Math.hypot(dx0, dy0);
+    const clamped = Math.min(mag, JOY_MAX);
+    const dx = mag > 1e-6 ? (dx0 / mag) * clamped : 0;
+    const dy = mag > 1e-6 ? (dy0 / mag) * clamped : 0;
+    if (this.touchJoyThumb) this.touchJoyThumb.style.transform = `translate(${dx}px, ${dy}px)`;
+    setKeyState(this.keys, 'KeyA', dx < -JOY_DEADZONE);
+    setKeyState(this.keys, 'KeyD', dx > JOY_DEADZONE);
+    setKeyState(this.keys, 'KeyW', dy < -JOY_DEADZONE);
+    setKeyState(this.keys, 'KeyS', dy > JOY_DEADZONE);
   }
 
   get mode(): CamMode {
@@ -247,6 +379,7 @@ export class FlyCamera {
       this.resetEffects();
     }
     this.modeV = mode;
+    if (this.touchJoyEl) this.touchJoyEl.style.display = mode === 'ride' ? 'none' : 'flex';
     this.applyRotation(0);
     this.camera.updateMatrixWorld();
     // eslint-disable-next-line no-console

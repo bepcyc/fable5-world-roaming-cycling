@@ -67,7 +67,58 @@ const DICT: Record<string, Entry> = {
     de: 'Diese Einstellung erfordert einen Neustart. Der aktuelle Fahrtfortschritt geht verloren. Fortfahren?',
     ru: 'Эта настройка требует перезагрузки. Текущий прогресс поездки будет потерян. Продолжить?',
   },
-  'msettings.auto': { en: 'auto', de: 'auto', ru: 'авто' },
+  // Static markup labels (index.html, applied by applyStaticI18n below). These
+  // used to live in the markup as `data-de="..." data-ru="..."` attributes —
+  // which nothing ever read, so in practice these strings were ALWAYS English
+  // no matter the language, and they also put Cyrillic outside this file.
+  'menu.settings': { en: 'SETTINGS', de: 'EINSTELLUNGEN', ru: 'НАСТРОЙКИ' },
+  'menu.exit': { en: 'EXIT', de: 'BEENDEN', ru: 'ВЫХОД' },
+  'menu.mainMenu': { en: 'MAIN MENU', de: 'HAUPTMENÜ', ru: 'ГЛАВНОЕ МЕНЮ' },
+  'menu.pause': { en: 'PAUSE', de: 'PAUSE', ru: 'ПАУЗА' },
+  'menu.rotate': { en: 'ROTATE YOUR DEVICE', de: 'GERÄT DREHEN', ru: 'ПОВЕРНИТЕ УСТРОЙСТВО' },
+  'msettings.title': { en: 'SETTINGS', de: 'EINSTELLUNGEN', ru: 'НАСТРОЙКИ' },
+  'msettings.graphics': {
+    en: 'GRAPHICS (RELOAD)',
+    de: 'GRAFIK (NEUSTART)',
+    ru: 'ГРАФИКА (ПЕРЕЗАГРУЗКА)',
+  },
+  'msettings.seedHeading': { en: 'SEED (RELOAD)', de: 'SEED (NEUSTART)', ru: 'СИД (ПЕРЕЗАГРУЗКА)' },
+  'msettings.threads': { en: 'CPU THREADS', de: 'CPU-THREADS', ru: 'ПОТОКИ CPU' },
+  'msettings.language': { en: 'LANGUAGE', de: 'SPRACHE', ru: 'ЯЗЫК' },
+
+  // A language picker names each language in ITS OWN language, so these are
+  // deliberately identical across the three columns.
+  'lang.en': { en: 'English', de: 'English', ru: 'English' },
+  'lang.de': { en: 'Deutsch', de: 'Deutsch', ru: 'Deutsch' },
+  'lang.ru': { en: '\u0420\u0443\u0441\u0441\u043a\u0438\u0439', de: '\u0420\u0443\u0441\u0441\u043a\u0438\u0439', ru: '\u0420\u0443\u0441\u0441\u043a\u0438\u0439' },
+
+  // ---- BLE device manager (src/ride/ble/DeviceManagerUi.ts) ----
+  'ble.unavailable': {
+    en:
+      'Web Bluetooth is unavailable in this browser.<br>' +
+      'Linux Chrome: enable<br><b>chrome://flags/#enable-experimental-web-platform-features</b><br>' +
+      '(needs BlueZ \u2265 5.41) and restart.',
+    de:
+      'Web Bluetooth ist in diesem Browser nicht verf\u00fcgbar.<br>' +
+      'Linux-Chrome: aktiviere<br><b>chrome://flags/#enable-experimental-web-platform-features</b><br>' +
+      '(ben\u00f6tigt BlueZ \u2265 5.41) und starte neu.',
+    ru:
+      'Web Bluetooth \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u0432 \u044d\u0442\u043e\u043c \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0435.<br>' +
+      'Linux Chrome: \u0432\u043a\u043b\u044e\u0447\u0438\u0442\u044c<br><b>chrome://flags/#enable-experimental-web-platform-features</b><br>' +
+      '(\u043d\u0443\u0436\u0435\u043d BlueZ \u2265 5.41) \u0438 \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u0442\u0438\u0442\u044c.',
+  },
+  'ble.noDevices': {
+    en: 'No devices yet \u2014 tap ADD DEVICE.',
+    de: 'Noch keine Ger\u00e4te \u2014 tippe auf ADD DEVICE.',
+    ru: '\u041f\u043e\u043a\u0430 \u043d\u0438 \u043e\u0434\u043d\u043e\u0433\u043e \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430 \u2014 \u043d\u0430\u0436\u043c\u0438 ADD DEVICE.',
+  },
+  'ble.showAll': {
+    en: "Don't see your device? Show all Bluetooth devices",
+    de: 'Ger\u00e4t nicht dabei? Alle Bluetooth-Ger\u00e4te anzeigen',
+    ru: '\u041d\u0435 \u0432\u0438\u0436\u0443 \u0441\u0432\u043e\u0451 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e? \u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0432\u0441\u0435 Bluetooth-\u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430',
+  },
+
+  'msettings.auto': { en: 'auto', de: 'auto', ru: '\u0430\u0432\u0442\u043e' },
   'msettings.seed': { en: 'seed', de: 'Seed', ru: 'сид' },
   'msettings.seedApply': { en: 'apply', de: 'anwenden', ru: 'применить' },
   'msettings.seedRandom': { en: 'random seed', de: 'zufälliger Seed', ru: 'случайный сид' },
@@ -169,6 +220,18 @@ const DICT: Record<string, Entry> = {
   'opt.keyTime': { en: 'time', de: 'Zeit', ru: 'время' },
   'opt.keyViews': { en: 'views', de: 'Ansichten', ru: 'виды' },
   'opt.keyDebug': { en: 'debug', de: 'Debug', ru: 'отладка' },
+  'opt.keyHands': { en: 'hands', de: 'Hände', ru: 'руки' },
+
+  // ---- hands visibility (OptionsMenu.ts touch row + Cockpit.ts Shift+H) ----
+  'opt.hands': { en: 'hands', de: 'Hände', ru: 'руки' },
+  'opt.handsHide': { en: 'hide', de: 'ausblenden', ru: 'скрыть' },
+  'opt.handsShow': { en: 'show', de: 'einblenden', ru: 'показать' },
+
+  // ---- touch pedal/brake (RideHud.ts — the ?ridedev=1 'dev' keyboard
+  // source has no keyboard on a phone/tablet, so these hold-buttons are the
+  // touch equivalent of W/S) ----
+  'ride.pedalBtn': { en: 'PEDAL', de: 'TRETEN', ru: 'ПЕДАЛИ' },
+  'ride.brakeBtn': { en: 'BRAKE', de: 'BREMSE', ru: 'ТОРМОЗ' },
 
   // ---- RideHud.ts (live ride dashboard — highest player visibility) ----
   'ride.speed': { en: 'speed', de: 'Tempo', ru: 'скорость' },
@@ -244,6 +307,26 @@ const DICT: Record<string, Entry> = {
   // keep short, the hazard strip has a fixed pixel width and no wrap) ----
   'cockpit.steep': { en: 'STEEP', de: 'STEIL', ru: 'КРУТО' },
 };
+
+/**
+ * Localize every static label in the markup: `<span data-i18n="menu.exit">`.
+ *
+ * The markup used to carry the translations themselves —
+ * `data-i18n data-de="BEENDEN" data-ru="ВЫХОД"` — and NOTHING read those
+ * attributes. Two bugs in one: the labels silently stayed English in every
+ * language, and Cyrillic sat outside this file, which the owner requires to be
+ * its only home. Now the markup carries a Latin KEY and the words live here.
+ *
+ * Called once at boot, before the menu is shown. Language is reload-scoped (see
+ * the header), so a single pass is enough — same contract as every other
+ * surface, which reads LANG once at construction.
+ */
+export function applyStaticI18n(root: ParentNode = document): void {
+  for (const el of root.querySelectorAll<HTMLElement>('[data-i18n]')) {
+    const key = el.dataset['i18n'];
+    if (key) el.textContent = t(key);
+  }
+}
 
 export function t(key: string, params?: Record<string, string | number>): string {
   const entry = DICT[key];

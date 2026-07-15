@@ -181,6 +181,13 @@ export class KeyboardPowerSource implements SensorSource {
     this.override = w;
   }
 
+  /** touch UI (RideHud pedal button): hold-to-pedal — the tap equivalent of
+   *  W/↑, which only fire from keydown/keyup listeners and so leave this
+   *  source producing zero watts forever on a device with no keyboard. */
+  setPedaling(on: boolean): void {
+    this.pedaling = on;
+  }
+
   update(dt: number, _ctx: SensorCtx): void {
     const target =
       this.override ?? (this.pedaling ? this.targetW * (this.sprint ? DEV_SPRINT_MULT : 1) : 0);

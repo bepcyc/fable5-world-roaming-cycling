@@ -117,8 +117,7 @@ export class Cockpit {
     engine.onUpdate((dt, wt) => this.update(dt, wt));
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'KeyH' || !e.shiftKey) return;
-      this.riderVisible = !this.riderVisible;
-      if (this.riderRig) this.riderRig.visible = this.riderVisible;
+      this.setHandsVisible(!this.riderVisible);
     });
     // probe hook (tools/probe-cktraa.ts): live-toggle the TRAA velocity fix
     const dbg =
@@ -126,7 +125,17 @@ export class Cockpit {
     dbg['ckVelFix'] = (on: boolean): void => {
       this.velFix = on;
     };
+    // touch UI (OptionsMenu HANDS row): Shift+H has no touch equivalent on a
+    // device with no keyboard, so the options panel reads/writes this state
+    // through the same __laasDbg seam rideSetSource/rideCtl already use.
+    dbg['ckHandsVisible'] = (): boolean => this.riderVisible;
+    dbg['ckSetHandsVisible'] = (v: boolean): void => this.setHandsVisible(v);
     (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg;
+  }
+
+  private setHandsVisible(v: boolean): void {
+    this.riderVisible = v;
+    if (this.riderRig) this.riderRig.visible = v;
   }
 
   /** TRAA velocity seam enable (probe-toggleable to demonstrate the smear) */

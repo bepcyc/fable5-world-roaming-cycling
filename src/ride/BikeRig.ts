@@ -348,6 +348,21 @@ export class BikeRig {
     this.source = source;
   }
 
+  /** touch UI (RideHud junction cards): pick a turn by index — the tap
+   *  equivalent of ←/→, which only fires from a keydown listener and so is
+   *  unreachable on a device with no keyboard. Same clamp as pick(). */
+  pickJunctionOption(index: number): void {
+    if (!this.junction) return;
+    const n = this.junction.options.length;
+    this.junction.selected = Math.min(Math.max(index, 0), n - 1);
+  }
+
+  /** touch UI (RideHud brake button): hold-to-brake — the tap equivalent of
+   *  Space/S/↓, which only fire from keydown/keyup listeners. */
+  setBrake(on: boolean): void {
+    this.brake = on;
+  }
+
   /** route graph accessor (bike-computer map, M1.5 owner ref) */
   get routeGraph(): RouteGraph {
     return this.graph;

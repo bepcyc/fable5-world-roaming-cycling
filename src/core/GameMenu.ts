@@ -39,10 +39,13 @@ export function shouldBypass(params: LaasParams): boolean {
 }
 
 const PRESETS: QualityPreset[] = ['low', 'high', 'ultra'];
+// Labels come from I18n, which is the only file allowed to hold non-Latin
+// text. A language picker names each language in its OWN language, so 'ru'
+// must name itself in Cyrillic — that string therefore lives in the dictionary.
 const LANGS: { code: Lang; label: string }[] = [
-  { code: 'en', label: 'English' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'ru', label: 'Русский' },
+  { code: 'en', label: t('lang.en') },
+  { code: 'de', label: t('lang.de') },
+  { code: 'ru', label: t('lang.ru') },
 ];
 
 function el<T extends HTMLElement>(id: string): T {

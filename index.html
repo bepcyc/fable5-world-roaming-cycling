@@ -346,7 +346,10 @@
           padding: 10px;
         }
         .msettings-seed-btn {
+          /* min-WIDTH too: the dice button holds a single glyph and measured
+             44x68 — tall enough, too narrow for a fingertip. */
           min-height: 48px;
+          min-width: 48px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -442,7 +445,7 @@
           <rect x="7" y="2" width="10" height="20" rx="2" />
           <path d="M11 19h2" />
         </svg>
-        <div class="rotate-msg" data-i18n data-de="GERÄT DREHEN" data-ru="ПОВЕРНИТЕ УСТРОЙСТВО">ROTATE YOUR DEVICE</div>
+        <div class="rotate-msg" data-i18n="menu.rotate">ROTATE YOUR DEVICE</div>
       </div>
     </div>
 
@@ -473,11 +476,11 @@
           </button>
           <button class="menu-btn" id="btn-settings" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.2 12a7.2 7.2 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 00-2.1-1.2L14.3 3h-4l-.4 2.7a7.4 7.4 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7.3 7.3 0 000 2.4l-2 1.5 2 3.4 2.3-1c.6.5 1.4.9 2.1 1.2l.4 2.7h4l.4-2.7a7.4 7.4 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>
-            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+            <span data-i18n="menu.settings">SETTINGS</span>
           </button>
           <button class="menu-btn" id="btn-exit" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><path d="M12 7v5" stroke-linecap="round"/></svg>
-            <span data-i18n data-de="BEENDEN" data-ru="ВЫХОД">EXIT</span>
+            <span data-i18n="menu.exit">EXIT</span>
           </button>
         </div>
         <div id="splash-hint"></div>
@@ -486,20 +489,20 @@
       <div id="msettings">
         <div class="msettings-card">
           <div class="msettings-title">
-            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+            <span data-i18n="menu.settings">SETTINGS</span>
             <div class="msettings-x" id="msettings-close">✕</div>
           </div>
-          <div class="msettings-h" data-i18n data-de="GRAFIK (NEUSTART)" data-ru="ГРАФИКА (ПЕРЕЗАГРУЗКА)">GRAPHICS (RELOAD)</div>
+          <div class="msettings-h" data-i18n="msettings.graphics">GRAPHICS (RELOAD)</div>
           <div class="msettings-row" id="msettings-preset"></div>
-          <div class="msettings-h" data-i18n data-de="SEED (NEUSTART)" data-ru="СИД (ПЕРЕЗАГРУЗКА)">SEED (RELOAD)</div>
+          <div class="msettings-h" data-i18n="msettings.seedHeading">SEED (RELOAD)</div>
           <div class="msettings-seed-row">
             <input type="number" id="msettings-seed-input" min="0" max="4294967295" step="1" />
             <div class="msettings-seed-btn" id="msettings-seed-random">🎲</div>
             <div class="msettings-seed-btn primary" id="msettings-seed-apply">APPLY</div>
           </div>
-          <div class="msettings-h" data-i18n data-de="CPU-THREADS" data-ru="ПОТОКИ CPU">CPU THREADS</div>
+          <div class="msettings-h" data-i18n="msettings.threads">CPU THREADS</div>
           <div class="msettings-row" id="msettings-threads"></div>
-          <div class="msettings-h" data-i18n data-de="SPRACHE" data-ru="ЯЗЫК">LANGUAGE</div>
+          <div class="msettings-h" data-i18n="msettings.language">LANGUAGE</div>
           <div class="msettings-row" id="msettings-language"></div>
           <div class="msettings-hint" id="msettings-hint"></div>
         </div>
@@ -509,19 +512,19 @@
     <!-- in-game pause: ESC toggles; engine.paused freezes the frame beneath it -->
     <div id="pause">
       <div id="pause-card">
-        <div id="pause-title" data-i18n data-de="PAUSE" data-ru="ПАУЗА">PAUSE</div>
+        <div id="pause-title" data-i18n="menu.pause">PAUSE</div>
         <div class="menu-col">
           <button class="menu-btn primary" id="btn-resume" type="button">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            <span data-i18n data-de="FORTSETZEN" data-ru="ПРОДОЛЖИТЬ">RESUME</span>
+            <span data-i18n="menu.resume">RESUME</span>
           </button>
           <button class="menu-btn" id="btn-pause-settings" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.2 12a7.2 7.2 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 00-2.1-1.2L14.3 3h-4l-.4 2.7a7.4 7.4 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7.3 7.3 0 000 2.4l-2 1.5 2 3.4 2.3-1c.6.5 1.4.9 2.1 1.2l.4 2.7h4l.4-2.7a7.4 7.4 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>
-            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+            <span data-i18n="menu.settings">SETTINGS</span>
           </button>
           <button class="menu-btn" id="btn-mainmenu" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7M6 10v9h12v-9"/></svg>
-            <span data-i18n data-de="HAUPTMENÜ" data-ru="ГЛАВНОЕ МЕНЮ">MAIN MENU</span>
+            <span data-i18n="menu.mainMenu">MAIN MENU</span>
           </button>
         </div>
       </div>

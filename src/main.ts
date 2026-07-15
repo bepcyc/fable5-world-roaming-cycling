@@ -12,6 +12,7 @@ import {
 import { Engine } from './core/Engine';
 import { FlyCamera } from './core/FlyCamera';
 import { GameMenu } from './core/GameMenu';
+import { applyStaticI18n } from './core/I18n';
 import { initHooks } from './core/Hooks';
 import { initImmersiveMobile } from './core/ImmersiveMobile';
 import { parseCamString, parseParams } from './core/Params';
@@ -50,12 +51,13 @@ async function boot(): Promise<void> {
   // display must not dim/lock mid-ride on any platform
   initWakeLock();
   const params = parseParams();
-  // mobile only: cover the screen until the FIRST tap, so that tap (not
-  // whenever the user happens to touch the screen) is the one that reaches
-  // initImmersiveMobile()'s listener above — keeps the Custom Tab toolbar
-  // gone for the entire load, not just once "in game" (owner report)
   // reverse debug channel (?debug=1): phone → desktop telemetry sink
   initTelemetry(params.debug);
+  // Localize the static labels in index.html before anything shows them. They
+  // used to carry their own translations as data-de/data-ru attributes that no
+  // code ever read, so EXIT/PAUSE/SETTINGS/MAIN MENU stayed English in every
+  // language; the markup now carries a key and I18n owns the words.
+  applyStaticI18n();
   // splash+menu is static markup in index.html — this only wires behavior
   // onto it, and boot() below keeps running in the background regardless
   // of whether the user has clicked Start yet

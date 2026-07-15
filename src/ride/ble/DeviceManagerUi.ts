@@ -21,6 +21,7 @@
  * still-rendering ride — nothing pauses.
  */
 
+import { t } from '../../core/I18n';
 import type { Metric, Protocol, Role } from './Capabilities';
 import type { BleSensorSource } from './BleSensorSource';
 import type { ConnectionStage, PairedDevice } from './DeviceRegistry';
@@ -216,23 +217,22 @@ export class DeviceManagerUi {
     const card = el('div', 'bm-card');
 
     const title = el('div', 'bm-title');
-    const t = document.createElement('span');
-    t.textContent = 'BLUETOOTH SENSORS';
+    // `label`, not `t`: `t` is the project-wide translate function, and a local
+    // shadowing it here made t('ble.unavailable') a call on an HTMLSpanElement.
+    const label = document.createElement('span');
+    label.textContent = 'BLUETOOTH SENSORS';
     const x = el('div', 'bm-x');
-    x.textContent = '✕';
+    x.textContent = '\u2715';
     x.addEventListener('click', () => {
       this.visible = false;
       this.render();
     });
-    title.append(t, x);
+    title.append(label, x);
     card.appendChild(title);
 
     if (!this.source.available()) {
       const note = el('div', 'bm-note');
-      note.innerHTML =
-        'Web Bluetooth недоступен в этом браузере.<br>' +
-        'Linux Chrome: включить<br><b>chrome://flags/#enable-experimental-web-platform-features</b><br>' +
-        '(нужен BlueZ ≥ 5.41) и перезапустить.';
+      note.innerHTML = t('ble.unavailable');
       card.appendChild(note);
       this.root.appendChild(card);
       return;
@@ -270,7 +270,7 @@ export class DeviceManagerUi {
     const devices = this.source.registry.list();
     if (devices.length === 0) {
       const note = el('div', 'bm-note');
-      note.textContent = 'Пока ни одного устройства — нажми ADD DEVICE.';
+      note.textContent = t('ble.noDevices');
       wrap.appendChild(note);
     }
     for (const d of devices) wrap.appendChild(this.buildDeviceCard(d));
@@ -283,7 +283,7 @@ export class DeviceManagerUi {
     wrap.appendChild(btns);
 
     const allLink = el('div', 'bm-link');
-    allLink.textContent = 'Не вижу своё устройство? Показать все Bluetooth-устройства';
+    allLink.textContent = t('ble.showAll');
     allLink.addEventListener('click', () => void this.guarded(() => this.source.registry.addDevice(true)));
     wrap.appendChild(allLink);
 

@@ -17,6 +17,7 @@
  * speed (±1 % acceptance, `ride.hudKmh100` vs `ride.kmh100` counters).
  */
 
+import { isMobileDevice } from '../core/BrowserGate';
 import type { Engine } from '../core/Engine';
 import type { FlyCamera } from '../core/FlyCamera';
 import { t } from '../core/I18n';
@@ -88,7 +89,11 @@ const STYLE = `
   background:rgba(9,13,11,0.64);backdrop-filter:blur(10px);
   -webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.10);
   color:#9db8ab;transition:transform 0.18s,border-color 0.18s,background 0.18s;
-  box-shadow:0 3px 14px rgba(0,0,0,0.35)}
+  box-shadow:0 3px 14px rgba(0,0,0,0.35);
+  /* the row's own pointer-events:none (above) keeps it from stealing the
+     free-look drag everywhere else on screen; each card opts back in so a
+     tap/click can pick it — the ←/→ keys have no touch equivalent otherwise */
+  pointer-events:auto;cursor:pointer}
 .rj-opt.sel{transform:translateY(-4px) scale(1.06);color:#f2fbf5;
   border-color:rgba(255,209,102,0.85);background:rgba(26,30,20,0.78);
   box-shadow:0 6px 20px rgba(0,0,0,0.45),0 0 0 1px rgba(255,209,102,0.25)}
@@ -98,6 +103,21 @@ const STYLE = `
 .rj-hint{margin-top:8px;font:10px/1.2 ui-monospace,Menlo,monospace;
   color:#b9cdc1;text-shadow:0 1px 5px rgba(0,0,0,0.8);letter-spacing:0.08em}
 .rj-hint b{color:#ffd166}
+#ride-pedal{position:fixed;left:max(18px,env(safe-area-inset-left));
+  bottom:max(18px,env(safe-area-inset-bottom));z-index:950;display:none;
+  flex-direction:row;gap:12px;align-items:flex-end;
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+#ride-pedal.on{display:flex}
+.rp-btn{width:84px;height:84px;border-radius:50%;flex:none;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(9,13,11,0.58);border:1px solid rgba(255,255,255,0.18);
+  color:#cfe3d6;font:bold 10px/1.2 ui-monospace,Menlo,monospace;
+  letter-spacing:0.08em;text-transform:uppercase;user-select:none;
+  touch-action:none;transition:background 0.12s,transform 0.12s}
+.rp-btn.active{background:rgba(255,209,102,0.42);transform:scale(0.96)}
+.rp-btn.brake{width:64px;height:64px;font-size:9px;color:#ffb09a;
+  border-color:rgba(255,138,112,0.4)}
+.rp-btn.brake.active{background:rgba(255,138,112,0.38)}
 `;
 
 /** per-road-class accent (matches world materials' reading) */
@@ -153,6 +173,9 @@ export class RideHud {
   private junctionRow: HTMLDivElement;
   private junctionTitle: HTMLDivElement;
   private junctionKey = '';
+  /** touch UI (mobile only): hold-to-pedal + hold-to-brake, the tap
+   *  equivalent of the 'dev' keyboard source's W/S — see buildTouchPedal() */
+  private pedalWrap: HTMLDivElement | null = null;
   private visible: boolean;
   private last: { x: number; z: number } | null = null;
   private speedMs = 0;
@@ -219,6 +242,8 @@ export class RideHud {
     this.junctionRow = this.junctionEl.querySelector('.rj-row') as HTMLDivElement;
     document.body.appendChild(this.junctionEl);
 
+    if (isMobileDevice()) this.buildTouchPedal();
+
     this.applyVisibility();
 
     window.addEventListener('keydown', (e) => {
@@ -234,6 +259,51 @@ export class RideHud {
     });
 
     engine.onUpdate((dt) => this.update(dt));
+  }
+
+  /**
+   * Touch UI: hold-to-pedal + hold-to-brake — the 'dev' power source (KEYS,
+   * picked from the touch-friendly OptionsMenu) reads W/S from a keydown
+   * listener with no touch path, so on a phone/tablet it mounted the bike
+   * and then produced zero watts forever. These two buttons are the tap
+   * equivalent, shown only while that source is actually mounted (update()).
+   */
+  private buildTouchPedal(): void {
+    const wrap = document.createElement('div');
+    wrap.id = 'ride-pedal';
+    const pedal = document.createElement('div');
+    pedal.className = 'rp-btn';
+    pedal.textContent = t('ride.pedalBtn');
+    const brake = document.createElement('div');
+    brake.className = 'rp-btn brake';
+    brake.textContent = t('ride.brakeBtn');
+    wrap.append(pedal, brake);
+    document.body.appendChild(wrap);
+    this.pedalWrap = wrap;
+
+    const setPedal = (on: boolean): void => {
+      pedal.classList.toggle('active', on);
+      if (this.source?.kind === 'dev') (this.source as KeyboardPowerSource).setPedaling(on);
+    };
+    pedal.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      pedal.setPointerCapture(e.pointerId);
+      setPedal(true);
+    });
+    pedal.addEventListener('pointerup', () => setPedal(false));
+    pedal.addEventListener('pointercancel', () => setPedal(false));
+
+    const setBrake = (on: boolean): void => {
+      brake.classList.toggle('active', on);
+      this.rig?.setBrake(on);
+    };
+    brake.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      brake.setPointerCapture(e.pointerId);
+      setBrake(true);
+    });
+    brake.addEventListener('pointerup', () => setBrake(false));
+    brake.addEventListener('pointercancel', () => setBrake(false));
   }
 
   /** BikeRig attaches after world build (needs the road graph) */
@@ -310,6 +380,9 @@ export class RideHud {
     if (!this.visible) return;
 
     const st = this.rig?.state() ?? null;
+    if (this.pedalWrap) {
+      this.pedalWrap.classList.toggle('on', this.source?.kind === 'dev' && (st?.riding ?? false));
+    }
     const sample = this.source?.read() ?? { cadenceRpm: null, heartRateBpm: null, powerW: null };
     // session recording (1 Hz decimation inside; power is real solver input)
     {
@@ -408,13 +481,16 @@ export class RideHud {
     if (key !== this.junctionKey) {
       this.junctionKey = key;
       this.junctionRow.innerHTML = '';
-      for (const o of j.options) {
+      j.options.forEach((o, i) => {
         const el = document.createElement('div');
         el.className = 'rj-opt';
         const color = CLS_COLOR[o.cls] ?? '#cfe3d6';
         el.innerHTML = `${turnSvg(o.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${t('surface.' + o.cls)}</div>`;
+        // tap/click picks this turn — the only path before was ←/→, a
+        // keydown listener with nothing to fire it on a phone/tablet
+        el.addEventListener('click', () => this.rig?.pickJunctionOption(i));
         this.junctionRow.appendChild(el);
-      }
+      });
     }
     const kids = this.junctionRow.children;
     for (let i = 0; i < kids.length; i++) {

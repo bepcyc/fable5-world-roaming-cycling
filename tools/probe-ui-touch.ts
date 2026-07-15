@@ -112,8 +112,17 @@ const AUDIT_FN = `(args) => {
     return r.width > 0 && r.height > 0;
   };
 
-  for (const el of document.querySelectorAll('*')) {
-    if (!isControl(el)) continue;
+  // A control inside a scrollable panel may legitimately sit below the fold —
+  // a finger reaches it by scrolling, so judging it where it happens to rest is
+  // a false alarm. Scroll each one into view first and measure it THERE; that is
+  // the state the user actually touches. Anything still clipped or covered after
+  // its own container brought it into view is a real defect.
+  const controls = [];
+  for (const el of document.querySelectorAll('*')) if (isControl(el)) controls.push(el);
+
+  for (const el of controls) {
+    if (!visible(el, el.getBoundingClientRect())) continue;
+    el.scrollIntoView({ block: 'center', inline: 'center' });
     const r = el.getBoundingClientRect();
     if (!visible(el, r)) continue;
     // A control nested inside another control (icon in a button) is not a
@@ -205,15 +214,24 @@ const STATES: State[] = [
     name: 'pause',
     url: '/?scene=world&seed=1&preset=min',
     enter: async (page) => {
-      await page.waitForSelector('#pause', { timeout: 45000 });
+      // state:'attached' — waitForSelector defaults to 'visible', and this panel
+      // is hidden until a ride is running: waiting for it to show BEFORE the
+      // line below shows it is a deadlock against ourselves.
+      await page.waitForSelector('#pause', { state: 'attached', timeout: 45000 });
       // GameMenu opens this on Escape — a key a phone does not have, which is
       // itself one of the findings. Force it visible so the PANEL can still be
       // audited; whether a finger can reach it at all is a separate question,
       // and the keyboard-parity check is what answers that.
       // Both the `hidden` attribute AND the `.on` class matter: `hidden` is how
       // the menu keeps pause out of the splash state, `.on` is what displays it.
+      // Model the REAL state, not a possible one: pause is only ever reached
+      // from PLAYING, and entering PLAYING hides the splash. Leaving the splash
+      // up while forcing pause visible put two menus on screen at once — a
+      // screen the user never sees — and every pause button then reported as
+      // covered by the splash behind it. That was the probe inventing a defect.
       await page.evaluate(
-        "(() => { const p = document.getElementById('pause');" +
+        "(() => { const s = document.getElementById('splash'); if (s) s.hidden = true;" +
+          "const p = document.getElementById('pause');" +
           'if (p) { p.hidden = false; p.classList.add("on"); } })()',
       );
       await page.waitForSelector('#pause.on', { state: 'visible', timeout: 5000 });
