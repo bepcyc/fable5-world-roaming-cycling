@@ -84,6 +84,46 @@ export function parseParams(search: string = window.location.search): LaasParams
   };
 }
 
+export type PrepassMode = 'off' | 'grass' | 'on';
+
+/**
+ * Depth-prepass policy. ON everywhere EXCEPT preset=min, where it is OFF.
+ *
+ * MEASURED on the Adreno 730 (Tab S8 Ultra, 2026-07-15), three cooled runs per
+ * arm at a MATCHED 492 MHz GPU clock (raw fps across different clocks is not a
+ * comparison — see the clock law below):
+ *
+ *   prepass ON   frame 237.2 ms | 4.22 fps | cpu.submit 49.6
+ *   prepass OFF  frame 184.3 ms | 5.43 fps | cpu.submit 43.2      = -22% wall
+ *
+ * Clock-normalized GPU work W = (frameMs - 20.4) * clockMHz: 106.7k -> 80.6k,
+ * i.e. the prepass costs 24.4% of all GPU work and buys nothing back. An earlier
+ * independent battery measured 80.0k for the same arm (0.8% apart), and the
+ * picture was verified side-by-side: grass carpet intact, no z-fighting.
+ *
+ * WHY IT INVERTS ON MOBILE: the prepass is a real win on an IMR desktop GPU
+ * (STATUS.md: bm4 GPU 49.6 -> 39.4 ms on the M1 Max) because it lets early-Z
+ * reject shaded fragments. Adreno is a TBDR: it already resolves visibility per
+ * tile on-chip (low-res Z + early-Z), so the twins reject almost nothing while
+ * still paying full geometry + duplicated vertex wind. GPU_CPU_ISSUE_CODEX.md
+ * §5 P2.6 sanctions exactly this ("на TBDR отключить depth prepass, если
+ * prepass=0 выигрывает на устройстве") — it does, so it is off on min.
+ *
+ * Desktop defaults to preset=high and is therefore UNAFFECTED ('on').
+ * ?prepass=0|1|grass overrides explicitly on any preset:
+ *   0     — off for both grass and tree cards
+ *   grass — grass keeps its prepass, tree cards do not (the old 'grass' value)
+ *   1     — force on
+ */
+export function prepassMode(search: string = window.location.search): PrepassMode {
+  const q = new URLSearchParams(search);
+  const raw = q.get('prepass');
+  if (raw === '0') return 'off';
+  if (raw === 'grass') return 'grass';
+  if (raw === '1') return 'on';
+  return (q.get('preset') ?? 'high') === 'min' ? 'off' : 'on';
+}
+
 /** Parse a `cam` string into pose components; returns null when malformed. */
 export function parseCamString(
   cam: string,

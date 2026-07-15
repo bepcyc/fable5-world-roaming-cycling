@@ -92,6 +92,7 @@ import {
 import { buildRock } from './RockBuilder';
 import { buildFlower } from './Understory';
 import type { WorldSeed } from '../core/Seed';
+import { prepassMode } from '../core/Params';
 import { runiform } from '../gpu/RenderUniform';
 
 const GRASS_GRID = 3072;
@@ -982,8 +983,9 @@ export class GroundRing {
       this.group.add(mesh);
       // grass layers shade 2-8x per pixel without a prepass (random draw
       // order defeats early-Z); twin shares geometry = same indirect slot
-      const noPrepass =
-        new URLSearchParams(window.location.search).get('prepass') === '0';
+      // default OFF on preset=min — TBDR early-Z already does this job and the
+      // twins cost 24% of GPU work (see prepassMode()).
+      const noPrepass = prepassMode() === 'off';
       if (!noPrepass && (spec.g <= 2 || spec.g === 8)) {
         const matS = spec.mat as unknown as { positionNode: unknown; maskNode: unknown };
         this.prepassGroup.add(

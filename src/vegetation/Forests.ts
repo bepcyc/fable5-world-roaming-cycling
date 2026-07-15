@@ -79,6 +79,7 @@ import {
   vec4,
 } from 'three/tsl';
 import type { Heightfield } from '../world/Heightfield';
+import { prepassMode } from '../core/Params';
 import { hash12 } from '../gpu/noise/NoiseTSL';
 import type { ProbeGI } from '../gpu/passes/ProbeGI';
 import { canopyAt, type ScatterLayer, type ScatterResult } from '../gpu/passes/Scatter';
@@ -355,8 +356,10 @@ export class Forests {
     const draws: DrawSpec[] = [];
     const meshes: Mesh[] = [];
 
-    const prepassQ = new URLSearchParams(window.location.search).get('prepass');
-    const noPrepass = prepassQ === '0' || prepassQ === 'grass';
+    // 'grass' = grass keeps its prepass, tree cards do not. Default is OFF on
+    // preset=min (TBDR: the twins reject nothing and cost 24% of GPU work —
+    // see prepassMode()).
+    const noPrepass = prepassMode() !== 'on';
     const addDraw = (
       geo: import('three').BufferGeometry,
       mat: MeshStandardNodeMaterial,
