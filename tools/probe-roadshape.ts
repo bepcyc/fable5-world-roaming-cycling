@@ -113,18 +113,30 @@ async function measureSeed(seed: number, cls: string, preset: string): Promise<S
     // road, it is the riverbed class the carve must not dissolve into.
     var ROAD_IDS = { 10: 1, 11: 1, 12: 1, 13: 1, 14: 1 };
     var CLS = ${JSON.stringify(cls)};
+    // RoadRoute.cls is a RoadClassSpec OBJECT (RoadNetwork.ts:116-120), not a
+    // string. Guessing through r.cls || r.klass || r.type picked the object,
+    // String()'d it to [object Object], matched nothing, and reported "no
+    // routes of class asphalt" on a map full of asphalt. Read the declared
+    // field instead of guessing at field names. (No backticks in this comment:
+    // the whole function is a template literal, and one would close it.)
     var routes = roads.routes.filter(function (r) {
-      var n = String(r.cls || r.klass || r.type || (r.spec && r.spec.name) || '');
-      return n.indexOf(CLS) === 0;
+      return !!(r.cls && r.cls.name === CLS);
     });
     if (!routes.length) {
       return JSON.stringify({ err: 'no routes of class ' + CLS, seen: Array.from(new Set(
-        roads.routes.map(function (r) { return String(r.cls || r.klass || r.type || (r.spec && r.spec.name)); }))) });
+        roads.routes.map(function (r) { return r.cls ? r.cls.name : '(no cls)'; }))) });
     }
     var pick = routes.slice().sort(function (a, b) { return (b.pts ? b.pts.length : 0) - (a.pts ? a.pts.length : 0); })[0];
     var pts = pick.pts || [];
-    var halfW = pick.halfWidth != null ? pick.halfWidth : (pick.spec && pick.spec.halfWidth);
-    if (!halfW) return JSON.stringify({ err: 'no halfWidth on route' });
+    // Same trap as the class lookup above, and this file fell into it twice:
+    // halfWidth is declared on RoadClassSpec (RoadNetwork.ts:38), reached as
+    // route.cls.halfWidth. Probing for a field by trying names until one is
+    // truthy reads whatever exists and calls it an answer; read the type.
+    var halfW = pick.cls && pick.cls.halfWidth;
+    if (!halfW) {
+      return JSON.stringify({ err: 'no halfWidth on route ' + (pick.name || '(unnamed)'),
+        clsKeys: pick.cls ? Object.keys(pick.cls) : null });
+    }
 
     var out = [];
     var STEP = Math.max(1, Math.floor(pts.length / 80));
