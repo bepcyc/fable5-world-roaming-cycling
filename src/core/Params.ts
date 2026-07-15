@@ -125,13 +125,29 @@ export function prepassMode(search: string = window.location.search): PrepassMod
 }
 
 /**
- * CSM shadow-map resolution PER CASCADE. Was a hardcoded 2048 at every preset,
- * i.e. preset=min rasterized 4 x 2048^2 = 16.8M shadow texels per full refresh
- * on a phone-class tiler. 1024 on min quarters that to 4.2M.
+ * CSM shadow-map resolution PER CASCADE (CSMShadowNode clones sun.shadow per
+ * cascade, so this applies to each of the four maps — ShadowSetup.ts).
  *
- * CSMShadowNode CLONES sun.shadow per cascade, so this value applies to each of
- * the four maps (ShadowSetup.ts). ?shadowmap=N overrides on any preset (sweep
- * knob); desktop = preset=high = 2048 = unchanged.
+ * 2048 AT EVERY PRESET — deliberately, after MEASURING that lowering it is a
+ * pure quality loss. It looks like an obvious mobile win (preset=min rasterizes
+ * 4 x 2048^2 = 16.8M shadow texels per full refresh on a phone-class tiler), and
+ * it is not. Tab S8 Ultra, Adreno 730, preset=min, matched 492 MHz clock:
+ *
+ *   2048 (control)  157.5 ms | 6.35 fps
+ *   1024            156.9 ms | 6.37 fps
+ *    512            157.2 ms | 6.36 fps
+ *
+ * FLAT across a 16x change in texel count — a 0.4% spread against a 0.7% noise
+ * floor. The flag is NOT dead, which was verified rather than assumed: at the
+ * measurement camera the sun is at zenith (T=14) and casts almost no visible
+ * shadow, so a desktop capture at T=8 was used instead, where 512 visibly blurs
+ * the tree shadows on the hillside and the boulder/bush contact shadows (judged
+ * independently by codex-terra: 8/10, "LEFT sharper, especially under the
+ * foreground boulder/bush").
+ *
+ * CONCLUSION: shadow cost here is caster GEOMETRY + draw encoding, not fill or
+ * resolution. Do not spend shadow quality on resolution — it buys nothing.
+ * The knob stays as an attribution tool so this does not get re-derived.
  */
 export function shadowMapSize(search: string = window.location.search): number {
   const q = new URLSearchParams(search);
@@ -141,7 +157,7 @@ export function shadowMapSize(search: string = window.location.search): number {
     // power of two, 256..4096
     if (Number.isFinite(n) && n >= 256 && n <= 4096 && (n & (n - 1)) === 0) return n;
   }
-  return (q.get('preset') ?? 'high') === 'min' ? 1024 : 2048;
+  return 2048;
 }
 
 /** Parse a `cam` string into pose components; returns null when malformed. */
