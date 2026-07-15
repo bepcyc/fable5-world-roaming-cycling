@@ -42,6 +42,14 @@ export interface LaasParams {
    *  Android it is still an extra submission + readback on the same queue every
    *  frame. With this set there are no GPU ms at all; that is the point. */
   noTimestamp: boolean;
+  /** ?segments=1 — bracket every Renderer._renderScene() call and publish the
+   *  per-render-context CPU ms into stats.counters as `seg.<label>Ms100`.
+   *
+   *  This is the cpu.submit SPLIT (GPU_CPU_ISSUE_CODEX.md §5 P0.2). cpu.submit
+   *  is one bracket around three's whole render+encode path (Engine.ts:205-236);
+   *  this says which of the ~19 render contexts inside it pays what. Debug only —
+   *  without the flag the patch is never installed. See src/debug/RenderSegments.ts. */
+  segments: boolean;
 }
 
 function num(v: string | null, fallback: number): number {
@@ -72,6 +80,7 @@ export function parseParams(search: string = window.location.search): LaasParams
     rideDev: q.get('ridedev') === '1',
     debug: q.get('debug') === '1',
     noTimestamp: q.get('notimestamp') === '1',
+    segments: q.get('segments') === '1',
   };
 }
 

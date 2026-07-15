@@ -55,10 +55,13 @@
  * readout visible).
  */
 
-import { execFileSync, execSync } from 'node:child_process';
+import { execFile, execFileSync, execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 /* ---- THE FIXED MEASUREMENT URL ------------------------------------------
  * Identical every run or the numbers are not comparable.
@@ -314,6 +317,102 @@ interface SampleOut {
   cCalls: number[];
 }
 
+/* ---- Adreno GPU clock + busy, sampled DURING the measure window ------------
+ * WHY EVERY RUN NOW CARRIES THIS (measured 2026-07-15): the ablation battery
+ * produced physically impossible rows — `ablate=ao` REMOVES a GPU pass and reads
+ * gpuTotalMs 26.6 -> 38.2, `ablate=clouds` 26.6 -> 39.2. GPU work cannot grow by
+ * deleting it AT A FIXED CLOCK, so the clock is not fixed: msm-adreno-tz is a
+ * DVFS governor and it re-picks a frequency per condition. A GPU ms compared
+ * across two different clocks is not a comparison at all.
+ *
+ * KGSL is world-readable, no root:
+ *   devfreq/cur_freq  current clock (Hz)
+ *   gpubusy           busy/total since the LAST read — DESTRUCTIVE, resets each
+ *                     read, so the poll gap IS the window. Reading it in a tight
+ *                     loop yields "0 0" (that bug cost a tool revision).
+ * Async on purpose: execFileSync would block node's loop and stall the CDP pump. */
+const KGSL = '/sys/class/kgsl/kgsl-3d0';
+
+interface ClockWindow {
+  samples: number;
+  clockMHzAvg: number;
+  clockMHzMin: number;
+  clockMHzMax: number;
+  clockPctOfMax: number;
+  busyPctAvg: number;
+  maxMHz: number;
+  governor: string;
+  throttling: string;
+  gpussTempC: number | null;
+}
+
+/** THE SAMPLER CAN BE THE BUG — read this before turning `busy` on.
+ *
+ *  Measured 2026-07-15: `abl-base` and `abl-base2` (no clock sampling) ran at
+ *  150.7 / 155.1 ms. `clk-base` and `clk-base3` (clock sampling WITH gpubusy) ran
+ *  at 237.6 / 236.7 ms at a 60% clock — the same code and URL, 55% slower, twice,
+ *  reproducibly. The suspect is mechanical: reading `gpubusy` RESETS its
+ *  counters, and msm-adreno-tz is a utilisation governor that reads THOSE SAME
+ *  counters to pick a frequency. Polling it 4x/second plausibly starves the
+ *  governor of the statistics it decides on.
+ *
+ *  So `busy` defaults to OFF: cur_freq is a plain read with no reset semantics
+ *  and is safe to poll. Turn busy on only for a dedicated experiment, and never
+ *  compare a busy-sampled run's fps against a normal one. */
+async function sampleClockDuring(ms: number, periodMs = 250, busy = false): Promise<ClockWindow | null> {
+  try {
+    const gov = (await execFileAsync(ADB, ['shell', `cat ${KGSL}/devfreq/governor`])).stdout.trim();
+    const avail = (await execFileAsync(ADB, ['shell', `cat ${KGSL}/devfreq/available_frequencies`])).stdout
+      .trim().split(/\s+/).map(Number).filter((n) => isFinite(n) && n > 0);
+    const maxHz = Math.max(...avail);
+    const thr = (await execFileAsync(ADB, ['shell', `cat ${KGSL}/throttling 2>/dev/null || echo n/a`])).stdout.trim();
+    const freqs: number[] = [];
+    const busies: number[] = [];
+    const t0 = Date.now();
+    if (busy) await execFileAsync(ADB, ['shell', `cat ${KGSL}/gpubusy`]); // prime: first window is unknown
+    while (Date.now() - t0 < ms) {
+      await new Promise((r) => setTimeout(r, periodMs));
+      const cmd = busy ? `cat ${KGSL}/devfreq/cur_freq ${KGSL}/gpubusy` : `cat ${KGSL}/devfreq/cur_freq`;
+      const out = (await execFileAsync(ADB, ['shell', cmd])).stdout;
+      const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+      const f = Number(lines[0]);
+      if (isFinite(f) && f > 0) freqs.push(f / 1e6);
+      if (busy) {
+        const parts = (lines[1] ?? '').split(/\s+/).map(Number);
+        const bz = parts[0] ?? 0;
+        const total = parts[1] ?? 0;
+        if (total > 0) busies.push((bz / total) * 100);
+      }
+    }
+    if (freqs.length === 0) return null;
+    let temp: number | null = null;
+    try {
+      const t = (await execFileAsync(ADB, [
+        'shell',
+        `for i in $(seq 0 40); do z=/sys/class/thermal/thermal_zone$i; ` +
+          `[ "$(cat $z/type 2>/dev/null)" = "gpuss-0" ] && cat $z/temp 2>/dev/null; done`,
+      ])).stdout.trim().split('\n')[0];
+      const v = Number(t);
+      if (isFinite(v) && v > 0) temp = v / 1000;
+    } catch { /* thermal zone naming varies; it is a diagnostic, not a gate */ }
+    const avg = (xs: number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
+    return {
+      samples: freqs.length,
+      clockMHzAvg: avg(freqs),
+      clockMHzMin: Math.min(...freqs),
+      clockMHzMax: Math.max(...freqs),
+      clockPctOfMax: (avg(freqs) / (maxHz / 1e6)) * 100,
+      busyPctAvg: busies.length > 0 ? avg(busies) : -1,
+      maxMHz: maxHz / 1e6,
+      governor: gov,
+      throttling: thr,
+      gpussTempC: temp,
+    };
+  } catch {
+    return null; // KGSL layout differs on other SoCs — a missing clock is not a failed run
+  }
+}
+
 function series(xs: number[]): { avg: number; min: number; max: number; spreadPct: number } {
   if (xs.length === 0) return { avg: 0, min: 0, max: 0, spreadPct: 0 };
   const avg = xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -550,7 +649,12 @@ async function main(): Promise<void> {
   console.log(`[perf-tablet] warmup done: ${warm.avgFps.toFixed(2)} fps (discarded)`);
 
   console.log(`[perf-tablet] measuring ${measureMs} ms…`);
-  const sample = await cdp.evaluate<SampleOut>(SAMPLER(measureMs), measureMs + 120_000, true);
+  // clock sampling runs CONCURRENTLY with the in-page sampler so the frequency
+  // reported is the one the measured frames actually ran at
+  const [sample, clock] = await Promise.all([
+    cdp.evaluate<SampleOut>(SAMPLER(measureMs), measureMs + 120_000, true),
+    sampleClockDuring(measureMs, 250, args['clock-busy'] === true),
+  ]);
   const m = reduce(sample.times);
   const gpu = gpuAvg(sample);
   const drawsS = series(sample.draws ?? []);
@@ -619,6 +723,23 @@ async function main(): Promise<void> {
     `[RESULT ${label}] thermal: ${before.tempC.toFixed(1)}C -> ${after.tempC.toFixed(1)}C | ` +
       `battery ${before.batteryPct}% -> ${after.batteryPct}%`,
   );
+  if (clock) {
+    console.log(
+      `[RESULT ${label}] GPU CLOCK ${clock.clockMHzAvg.toFixed(0)} MHz ` +
+        `(${clock.clockMHzMin.toFixed(0)}..${clock.clockMHzMax.toFixed(0)}) = ` +
+        `${clock.clockPctOfMax.toFixed(0)}% of max ${clock.maxMHz.toFixed(0)} | ` +
+        `GPU BUSY ${clock.busyPctAvg < 0 ? 'not sampled (destructive read — see sampleClockDuring)' : clock.busyPctAvg.toFixed(1) + '%'} | gov ${clock.governor} | ` +
+        `throttling=${clock.throttling} | gpuss ${clock.gpussTempC?.toFixed(1) ?? '?'}C`,
+    );
+    if (clock.busyPctAvg > 95 && clock.clockPctOfMax < 90) {
+      console.log(
+        `[GATE] !! GPU is ${clock.busyPctAvg.toFixed(0)}% BUSY but only at ` +
+          `${clock.clockPctOfMax.toFixed(0)}% of its max clock. The governor is leaving ` +
+          `headroom on a saturated GPU — and GPU ms measured at THIS clock cannot be ` +
+          `compared with GPU ms from a run at a different clock.`,
+      );
+    }
+  }
   console.log(
     `[RESULT ${label}] BOUND=${bound} | frame ${avgMs.toFixed(1)} ms = ` +
       `GPU(timed passes) ${gpuTotalMs.toFixed(1)} ms (${(gpuFrac * 100).toFixed(0)}%) | ` +
@@ -701,6 +822,9 @@ async function main(): Promise<void> {
     gpuPasses: gpu,
     gpuSamples: sample.gpuN,
     gpuTimestampsAvailable,
+    /** Adreno DVFS state DURING the measure window. Without this, gpuTotalMs
+     *  across conditions is not comparable — the governor re-clocks per run. */
+    gpuClock: clock,
     // the bound question, measured rather than assumed — see the block above
     gpuTotalMs,
     gpuRenderMs,

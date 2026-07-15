@@ -11,6 +11,7 @@ import { tele } from './Telemetry';
 import { installMaterialKeyMemo } from '../render/ThreePatches';
 import { installPositionInvariance } from '../render/VegPrepass';
 import { GpuProfiler } from './GpuProfiler';
+import { installRenderSegments } from '../debug/RenderSegments';
 import type { EngineStats, LaasHooks } from './Hooks';
 import type { LaasParams } from './Params';
 
@@ -60,6 +61,9 @@ export class Engine {
   private timestampsSupported = false;
   private timestampPending = false;
   private profiler: GpuProfiler | null = null;
+  /** ?segments=1 only — publishes per-render-context CPU ms into stats.counters
+   *  once per frame. null in production (the patch is never installed). */
+  private segmentsFlush: (() => void) | null = null;
 
   private constructor(renderer: WebGPURenderer, params: LaasParams, hooks: LaasHooks) {
     this.renderer = renderer;
@@ -169,6 +173,10 @@ export class Engine {
     // shadow-pass render objects re-hash their material node graph every
     // frame (see ThreePatches) — memoize per material
     installMaterialKeyMemo(renderer);
+    // ?segments=1 — split cpu.submit per render context (P0.2). Debug only: the
+    // patch is not installed at all without the flag, so production and the
+    // desktop preset run the unpatched renderer.
+    if (params.segments) engine.segmentsFlush = installRenderSegments(renderer, engine.stats);
 
     window.addEventListener('resize', () => {
       engine.camera.aspect = window.innerWidth / window.innerHeight;
@@ -239,6 +247,9 @@ export class Engine {
     const c2 = performance.now();
     this.stats.counters['cpu.updateMs100'] = Math.round((c1 - c0) * 100);
     this.stats.counters['cpu.submitMs100'] = Math.round((c2 - c1) * 100);
+    // publish this frame's per-context segments (?segments=1) and reset the
+    // accumulator — must run AFTER the render path, before stats are read
+    if (this.segmentsFlush) this.segmentsFlush();
     this.collectStats(rawDt);
 
     if (this.settleWaiters.length > 0) {
