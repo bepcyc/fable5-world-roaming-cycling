@@ -16,6 +16,7 @@ import { initHooks } from './core/Hooks';
 import { initImmersiveMobile } from './core/ImmersiveMobile';
 import { parseCamString, parseParams } from './core/Params';
 import { WorldSeed } from './core/Seed';
+import { initTapGate } from './core/TapGate';
 import { Hud } from './debug/HUD';
 import { DebugOverlay } from './debug/DebugOverlay';
 import { buildGalleryScene } from './debug/GalleryScene';
@@ -46,6 +47,11 @@ async function boot(): Promise<void> {
   // so the very first touch anywhere goes immersive (no-op on desktop/Electron)
   initImmersiveMobile();
   const params = parseParams();
+  // mobile only: cover the screen until the FIRST tap, so that tap (not
+  // whenever the user happens to touch the screen) is the one that reaches
+  // initImmersiveMobile()'s listener above — keeps the Custom Tab toolbar
+  // gone for the entire load, not just once "in game" (owner report)
+  initTapGate(params);
   // reverse debug channel (?debug=1): phone → desktop telemetry sink
   initTelemetry(params.debug);
   // splash+menu is static markup in index.html — this only wires behavior
