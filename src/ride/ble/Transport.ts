@@ -52,10 +52,27 @@ export const SVC = {
    *  Listed here only so it can be discovered/shown honestly — no provider
    *  ever reads from it. */
   runningSpeedCadence: 0x1814,
+  /** Device Information (0x180A) — model/firmware/hardware revision. Read-only
+   *  identification, no telemetry: which trainer generation and firmware this
+   *  is decides whether handlebar-button export exists at all. */
+  deviceInformation: 0x180a,
   /** Tacx/Garmin "FE-C over BLE" — measured live on the owner's Tacx Smart
    *  Bike 12583, which advertises NO 0x1826 FTMS at all. This is that
    *  trainer's ONLY resistance-control path. */
   tacxFec: '6e40fec1-b5a3-f393-e0a9-e50e24dcca9e',
+  /** Tacx vendor service, present on the owner's trainer (dumped live over the
+   *  native bridge 2026-07-15, the only non-DFU custom service in its tree).
+   *  STRONGLY SUSPECTED to be Garmin's private "Tacx Trainer BLE Service",
+   *  which Garmin's own developer page says carries BUTTON STATUS and
+   *  VIRTUAL-GEAR STATUS — the handlebar controls the owner wants forwarded.
+   *
+   *  NOTHING here decodes it, and nothing may pretend to: Garmin does not
+   *  publish the frame format (it is available by request only), and no public
+   *  decoder exists — QDomyos-Zwift, Gymnasticon and openant were all checked
+   *  and none handle cf8000*. Listed ONLY so the service is authorized and
+   *  reachable for TacxControlsProbe's capture; the byte layout must be earned
+   *  from a real capture, not invented. */
+  tacxControls: 'cf800001-00db-15a1-0e3f-ffa5794c3719',
 } as const;
 
 export const CHR = {
@@ -74,6 +91,18 @@ export const CHR = {
   tacxFecTx: '6e40fec2-b5a3-f393-e0a9-e50e24dcca9e',
   /** write, client → trainer */
   tacxFecRx: '6e40fec3-b5a3-f393-e0a9-e50e24dcca9e',
+  /** the two characteristics of the Tacx vendor service. Named A/B rather than
+   *  tx/rx ON PURPOSE: which one notifies and which one is written is NOT
+   *  documented anywhere public, and direction must never be inferred from
+   *  UUID numbering. TacxControlsProbe reads the live property bitmask and
+   *  reports what the device actually says. */
+  tacxControlsA: 'cf800002-00db-15a1-0e3f-ffa5794c3719',
+  tacxControlsB: 'cf800003-00db-15a1-0e3f-ffa5794c3719',
+  /** Device Information — settles WHICH trainer generation/firmware this is,
+   *  which decides whether button/steering export can exist at all */
+  modelNumber: 0x2a24,
+  firmwareRevision: 0x2a26,
+  hardwareRevision: 0x2a27,
 } as const;
 
 export interface KnownService {
@@ -115,6 +144,21 @@ export const KNOWN_SERVICES: KnownService[] = [
     chooserFilter: true,
   },
   { uuid: SVC.battery, label: 'Battery', chars: [CHR.batteryLevel], chooserFilter: false },
+  {
+    uuid: SVC.tacxControls,
+    label: 'Tacx Controls (vendor)',
+    chars: [CHR.tacxControlsA, CHR.tacxControlsB],
+    // never a reason to appear in the chooser by itself: no rider adds a
+    // device BECAUSE of an undecoded vendor service. Authorized only, so the
+    // capture can reach it on a trainer already paired for its real protocols.
+    chooserFilter: false,
+  },
+  {
+    uuid: SVC.deviceInformation,
+    label: 'Device Information',
+    chars: [CHR.modelNumber, CHR.firmwareRevision, CHR.hardwareRevision],
+    chooserFilter: false,
+  },
   {
     uuid: SVC.runningSpeedCadence,
     label: 'RSC',

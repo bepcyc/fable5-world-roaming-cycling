@@ -66,7 +66,15 @@ interface InboundMsg {
   svc?: string;
   chr?: string;
   data?: string;
-  services?: string[] | { uuid: string; chars: string[] }[];
+  services?: string[] | GattService[];
+}
+
+/** one discovered service and its characteristics, with the raw property
+ *  bitmask each one reports (READ 0x02, WRITE_NO_RESPONSE 0x04, WRITE 0x08,
+ *  NOTIFY 0x10, INDICATE 0x20) */
+export interface GattService {
+  uuid: string;
+  chars: { uuid: string; props: number }[];
 }
 
 function native(): LaasBleNative | null {
@@ -242,14 +250,14 @@ class NativeDeviceHandle implements BleDeviceHandle {
   readonly id: string;
   readonly name: string;
   connected = true;
-  /** canonical service uuid -> its characteristic uuids, straight from the
-   *  one discoverServices() the bridge ran. Native has no Web Bluetooth
-   *  authorization model, so this is the device's REAL tree; it self-scopes
-   *  because only KNOWN_SERVICES are ever asked about. */
-  private tree: Map<string, Set<string>>;
+  /** canonical service uuid -> (characteristic uuid -> property bitmask),
+   *  straight from the one discoverServices() the bridge ran. Native has no
+   *  Web Bluetooth authorization model, so this is the device's REAL tree; it
+   *  self-scopes because only KNOWN_SERVICES are ever asked about. */
+  private tree: Map<string, Map<string, number>>;
   private disconnectCbs: (() => void)[] = [];
 
-  constructor(addr: string, name: string, tree: Map<string, Set<string>>) {
+  constructor(addr: string, name: string, tree: Map<string, Map<string, number>>) {
     this.id = addr;
     this.name = name;
     this.tree = tree;
@@ -265,6 +273,26 @@ class NativeDeviceHandle implements BleDeviceHandle {
 
   hasCharacteristic(service: ServiceUuid, chr: ServiceUuid): boolean {
     return this.tree.get(canonicalUuid(service))?.has(canonicalUuid(chr)) === true;
+  }
+
+  /** BEYOND the BleTransport contract, and deliberately so: this is native-only
+   *  reconnaissance for decoding the Tacx vendor service, where the direction
+   *  of cf800002/cf800003 is undocumented and must be read off the device
+   *  rather than guessed. Web Bluetooth exposes `properties` too, but nothing
+   *  in the sensor layer needs it, so it stays off the shared interface —
+   *  TacxControlsProbe feature-detects this method. */
+  properties(service: ServiceUuid, chr: ServiceUuid): number | null {
+    return this.tree.get(canonicalUuid(service))?.get(canonicalUuid(chr)) ?? null;
+  }
+
+  /** the device's complete real GATT tree — what the vendor-service capture
+   *  needs to report before it touches anything */
+  dumpTree(): Record<string, { uuid: string; props: number }[]> {
+    const out: Record<string, { uuid: string; props: number }[]> = {};
+    for (const [svc, chars] of this.tree) {
+      out[svc] = [...chars].map(([uuid, props]) => ({ uuid, props }));
+    }
+    return out;
   }
 
   async startNotify(service: ServiceUuid, chr: ServiceUuid, cb: (dv: DataView) => void): Promise<void> {
@@ -477,9 +505,9 @@ export class NativeBridgeTransport implements BleTransport {
     // a re-connect to a MAC we held before must not inherit the dead link's sinks
     c.forget(hit.addr);
     const r = await c.call('connect', { addr: hit.addr });
-    const tree = new Map<string, Set<string>>();
-    for (const s of (r.services as { uuid: string; chars: string[] }[]) ?? []) {
-      tree.set(s.uuid.toLowerCase(), new Set(s.chars.map((x) => x.toLowerCase())));
+    const tree = new Map<string, Map<string, number>>();
+    for (const s of (r.services as GattService[]) ?? []) {
+      tree.set(s.uuid.toLowerCase(), new Map(s.chars.map((x) => [x.uuid.toLowerCase(), x.props])));
     }
     return new NativeDeviceHandle(hit.addr, r.name ?? hit.name, tree);
   }

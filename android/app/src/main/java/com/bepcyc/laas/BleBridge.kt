@@ -540,7 +540,16 @@ class BleBridge(
             val services = JSONArray()
             for (s in g.services) {
                 val chars = JSONArray()
-                for (c in s.characteristics) chars.put(c.uuid.toString())
+                // `props` is the raw BluetoothGattCharacteristic property bitmask
+                // (READ 0x02, WRITE_NO_RESPONSE 0x04, WRITE 0x08, NOTIFY 0x10,
+                // INDICATE 0x20). Reported because direction CANNOT be inferred
+                // from UUID numbering: on the owner's Tacx the vendor service
+                // cf800001 exposes cf800002/cf800003 and nothing public says
+                // which is the notify path and which is the write path. The only
+                // honest way to find out is to look.
+                for (c in s.characteristics) {
+                    chars.put(JSONObject().put("uuid", c.uuid.toString()).put("props", c.properties))
+                }
                 services.put(JSONObject().put("uuid", s.uuid.toString()).put("chars", chars))
             }
             Log.i(TAG, "ready $addr: ${g.services.size} services")

@@ -37,7 +37,7 @@ import {
 import { BleSensorSource } from './ride/ble/BleSensorSource';
 import { DeviceManagerUi } from './ride/ble/DeviceManagerUi';
 import { NativeBridgeTransport, nativeBleAvailable } from './ride/ble/NativeBridgeTransport';
-import { FakeTransport, WebBluetoothTransport } from './ride/ble/Transport';
+import { FakeTransport, SVC, WebBluetoothTransport } from './ride/ble/Transport';
 
 async function boot(): Promise<void> {
   const hooks = initHooks();
@@ -197,6 +197,21 @@ async function boot(): Promise<void> {
       (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
     dbg0['bleSource'] = bleSource;
     dbg0['bleUi'] = bleUi;
+    // Tacx vendor-service capture rig (src/ride/ble/TacxControlsProbe.ts).
+    // NOT a decoder: Garmin does not publish the cf800001 frame format and no
+    // public decoder exists, so the handlebar buttons/gears can only be earned
+    // from a real capture with the owner on the bike. Debug-surface only —
+    // nothing in the ride path touches it.
+    dbg0['tacxProbe'] = async (): Promise<unknown> => {
+      const { probeTacxControls, TacxControlsCapture } = await import('./ride/ble/TacxControlsProbe');
+      const trainer = bleSource?.registry.list().find((d) => d.handle?.hasService(SVC.tacxControls));
+      if (!trainer?.handle) return { error: 'no connected device exposes the Tacx vendor service cf800001' };
+      const capture = new TacxControlsCapture();
+      dbg0['tacxCapture'] = capture;
+      dbg0['tacxMark'] = (note: string) => capture.mark(note);
+      dbg0['tacxDump'] = () => ({ events: capture.events, fecPages: capture.fecPageHistogram() });
+      return probeTacxControls(trainer.handle, capture);
+    };
     if (fakeTransport) {
       dbg0['bleFake'] = fakeTransport;
       // probes build scripted peripherals in page context (tools/probe-ble.ts)
