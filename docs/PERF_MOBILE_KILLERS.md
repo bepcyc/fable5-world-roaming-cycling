@@ -1,5 +1,45 @@
 # Mobile perf killers — the practical, code-grounded autopsy
 
+> ## ⚠️ ОПРОВЕРГНУТО ЧАСТИЧНО — читай вместе с `GPU_CPU_ISSUE_CODEX.md`
+>
+> Владелец заказал собственное исследование (`GPU_CPU_ISSUE_CODEX.md`, 2026-07-15), и оно
+> **опровергает пункт №5 этого документа** («фрагментация compute-диспатчей»).
+>
+> **Почему:** `Engine.ts:205-236` — порядок такой:
+> `c0 → fixedFns + updateFns → c1 → post.meter()/post.render() → c2`,
+> где `cpu.update = c1-c0` и `cpu.submit = c2-c1`.
+> `GroundRing.update()` и `Forests.update()` зарегистрированы через `engine.onUpdate()`,
+> значит **все 18 вызовов `renderer.compute()` выполняются между c0 и c1** и их CPU-цена
+> уже сидит внутри **`cpu.update` = 1.4 мс**. Они физически не могут объяснить
+> `cpu.submit` = 31.8 мс. Внутри `cpu.submit` из compute есть только exposure-ядро
+> (`PostStack.ts:702-710`).
+>
+> Батчить ядра через `renderer.compute([...])` по-прежнему стоит (меньше submissions,
+> ровнее фид GPU, лучше p95) — но это **не выигрыш в десятки миллисекунд**, и подавать
+> его так нельзя.
+>
+> **Что такое `cpu.submit` на самом деле:** весь синхронный путь
+> `PostStack.meter()` + `RenderPipeline.render()` — обновление узлов и uniform-групп,
+> обход графа сцены, сборка и сортировка render-списков, shadow passes, проверки
+> geometry/bindings/pipelines, кодирование ~563 draw-команд, кодирование всех вложенных
+> post-проходов, `finish()`, несколько `queue.submit()` и возможный backpressure.
+>
+> **Что читать вместо догадок:** `STATUS.md:538-559` — там уже лежит РЕАЛЬНЫЙ CDP-профиль
+> этого пути с именами функций (`Bindings._update` 2.64 мс, `UniformsGroup.update` 1.1,
+> `updateForRender` 1.6, `updateMatrixWorld` 0.67, `_projectObject` 0.51), а `STATUS.md:457-474`
+> фиксирует, что устранение повторного хеширования node-графа материала уронило
+> `cpu.submit` с 15.7 до 11.7 мс.
+>
+> **Главный кандидат на лечение:** `BundleGroup` (есть в three r184) — записать постоянные
+> draw-последовательности в `GPURenderBundle` и звать `executeBundles()` вместо повторного
+> кодирования. Сочетается с нашим GPU-куллингом: bundle хранит `drawIndirect`, а compute
+> каждый кадр переписывает indirect-аргументы — видимость остаётся динамической без CPU.
+>
+> **Ещё одна оговорка ко ВСЕМ цифрам ниже:** они сняты, когда на GPU таблетки жили
+> ДВЕ вкладки сима одновременно (5176 и 47862). Ранжирование пассов, вероятно, устояло,
+> но абсолютные значения занижены/зашумлены. Перемерить на чистой таблетке.
+
+
 **Date:** 2026-07-15 · **Branch:** `perf-mobile-fps` · **Supersedes ranking in
 [`docs/PERF_FPS_MOBILE.md`](PERF_FPS_MOBILE.md)** (that document is an
 *estimate dossier* from three agents that never touched the device; every
