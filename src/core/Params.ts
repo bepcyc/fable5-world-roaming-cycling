@@ -30,6 +30,18 @@ export interface LaasParams {
   rideDev: boolean;
   /** ?debug=1 — on-screen boot diagnostic overlay (adapter, limits, timed steps) */
   debug: boolean;
+  /** ?notimestamp=1 — build the renderer WITHOUT trackTimestamp and skip the
+   *  per-frame resolveTimestampsAsync + GpuProfiler entirely.
+   *
+   *  This is the OBSERVER-EFFECT control (GPU_CPU_ISSUE_CODEX.md §4). Timing
+   *  the GPU is not free: three allocates a query pair per render context /
+   *  compute call, and every resolve creates a command encoder, does a
+   *  resolveQuerySet, copies into a MAP_READ buffer, issues an EXTRA
+   *  queue.submit() and a mapAsync (WebGPUTimestampQueryPool.js:115-218).
+   *  It is not awaited inside rAF, so it is not an explicit CPU fence — but on
+   *  Android it is still an extra submission + readback on the same queue every
+   *  frame. With this set there are no GPU ms at all; that is the point. */
+  noTimestamp: boolean;
 }
 
 function num(v: string | null, fallback: number): number {
@@ -59,6 +71,7 @@ export function parseParams(search: string = window.location.search): LaasParams
     fixedDt: Math.min(50, Math.max(2, num(q.get('dt'), 1000 / 120))) / 1000,
     rideDev: q.get('ridedev') === '1',
     debug: q.get('debug') === '1',
+    noTimestamp: q.get('notimestamp') === '1',
   };
 }
 

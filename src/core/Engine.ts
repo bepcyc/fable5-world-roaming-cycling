@@ -89,7 +89,9 @@ export class Engine {
   static async create(params: LaasParams, hooks: LaasHooks): Promise<Engine> {
     const renderer = new WebGPURenderer({
       antialias: false,
-      trackTimestamp: true,
+      // ?notimestamp=1 builds the renderer with NO timestamp queries at all —
+      // the observer-effect control (see LaasParams.noTimestamp).
+      trackTimestamp: !params.noTimestamp,
       requiredLimits: hooks.diag ? buildRequiredLimits(hooks.diag) : {},
     });
     await renderer.init();
@@ -156,7 +158,10 @@ export class Engine {
     container.appendChild(renderer.domElement);
 
     const engine = new Engine(renderer, params, hooks);
-    engine.timestampsSupported = (hooks.diag?.features ?? []).includes('timestamp-query');
+    // one gate for both the profiler and the per-frame resolve: with
+    // ?notimestamp=1 neither is ever constructed nor called
+    engine.timestampsSupported =
+      !params.noTimestamp && (hooks.diag?.features ?? []).includes('timestamp-query');
     if (engine.timestampsSupported) engine.profiler = new GpuProfiler(renderer);
     // depth-prepass correctness (see VegPrepass): position math must land
     // on identical depths across the depth-only and shaded pipelines
@@ -260,6 +265,15 @@ export class Engine {
     s.drawCalls = this.renderer.info.render.drawCalls;
     s.triangles = this.renderer.info.render.triangles;
     s.frame = this.frameCounter++;
+    // render/compute SUBMISSION boundaries per frame (GPU_CPU_ISSUE_CODEX.md
+    // §5 P0.1): three ends every render context with backend.finishRender() ->
+    // its own queue.submit(), and every renderer.compute() with finishCompute()
+    // -> another. These count them for real instead of estimating from the TSL
+    // graph. Info.reset() runs at the top of each rAF tick (Animation.js:75),
+    // before this callback, so these are this frame's counts — same contract
+    // drawCalls already relies on.
+    s.counters['render.frameCalls'] = this.renderer.info.render.frameCalls;
+    s.counters['compute.frameCalls'] = this.renderer.info.compute.frameCalls;
 
     // resolve EVERY frame: the 2048-query pool only resets its write index
     // on resolve — the old every-10-frames cadence overflowed it (≈100
