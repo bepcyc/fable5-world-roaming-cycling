@@ -1,5 +1,16 @@
 # Mobile FPS optimization — findings (Pixel 10 Pro / Imagination TBDR)
 
+**⚠️ SUPERSEDED ON RANKING (2026-07-15) — see
+[`docs/PERF_MOBILE_KILLERS.md`](PERF_MOBILE_KILLERS.md).** This document is
+an *estimate dossier* — three agents reasoning from code, none of them ran
+on a device. A live measurement on the owner's tablet then contradicted
+three of its four checkable predictions: particles predicted +8–25%,
+measured 0.4%; froxels predicted +10–25%, measured 3.1%; shadows ranked
+4th of 12, measured as the #1 GPU cost; only the grass-cull ranking (#1)
+held up. It also never addressed the ~55–75% of the frame that measurement
+showed is not GPU work at all. Keep this file for its file:line map
+references on vegetation/froxel/post code — **do not use it for priority.**
+
 **Date:** 2026-07-14 · **Target:** Google Pixel 10 Pro, GPU = Imagination img-tec
 D-series (Tensor G5), a **tile-based deferred renderer (TBDR)**. Currently runs
 the offline APK at `preset=min` + `dpr=0.6`, renders but is slow with heavy
