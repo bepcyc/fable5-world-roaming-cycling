@@ -19,10 +19,25 @@
         overflow: hidden;
         background: #06080a;
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        /* the single most important line here: without it a downward swipe
+           on the game surface triggers Chrome's pull-to-refresh, reloading
+           the page and costing the rider a ~105s world regen mid-ride */
+        overscroll-behavior: none;
       }
+      /* game surface only (the 3D canvas lives inside #app) — #boot/#splash/
+         #pause/#msettings/#ble-panel/HUD are all separate body-level
+         overlays, so this does NOT touch their tappability or selectable
+         text (seed input, settings labels, BLE device names). */
       #app {
         position: fixed;
         inset: 0;
+        /* browser stops owning drags as scroll/pan/pinch-zoom (also removes
+           the ~300ms double-tap-zoom delay) — FlyCamera/BikeRig own touch */
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        /* iOS/Android long-press callout (copy/lookup popup) over the world */
+        -webkit-touch-callout: none;
       }
       #app canvas {
         display: block;
@@ -379,7 +394,10 @@
       </div>
     </div>
 
-    <div id="app"></div>
+    <!-- oncontextmenu here (not on body) so a long-press over the 3D world
+         doesn't pop a "save image" menu, while the seed input / BLE panel /
+         menu text elsewhere keep their normal right-click / long-press -->
+    <div id="app" oncontextmenu="return false"></div>
     <div id="boot">
       <div class="title">L A A S</div>
       <div id="boot-msg">initializing</div>

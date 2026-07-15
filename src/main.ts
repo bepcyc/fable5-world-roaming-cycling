@@ -15,6 +15,7 @@ import { GameMenu } from './core/GameMenu';
 import { initHooks } from './core/Hooks';
 import { initImmersiveMobile } from './core/ImmersiveMobile';
 import { parseCamString, parseParams } from './core/Params';
+import { initWakeLock } from './core/WakeLock';
 import { WorldSeed } from './core/Seed';
 import { Hud } from './debug/HUD';
 import { DebugOverlay } from './debug/DebugOverlay';
@@ -45,6 +46,9 @@ async function boot(): Promise<void> {
   // mobile only: arm first-tap fullscreen + landscape lock before heavy work,
   // so the very first touch anywhere goes immersive (no-op on desktop/Electron)
   initImmersiveMobile();
+  // desktop AND mobile: a ride is a game session, not a document — the
+  // display must not dim/lock mid-ride on any platform
+  initWakeLock();
   const params = parseParams();
   // reverse debug channel (?debug=1): phone → desktop telemetry sink
   initTelemetry(params.debug);
