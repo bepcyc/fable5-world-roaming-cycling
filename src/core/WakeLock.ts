@@ -25,17 +25,32 @@
  */
 
 let sentinel: WakeLockSentinel | null = null;
+/** In-flight request. `sentinel !== null` alone does NOT serialise: it is read
+ *  synchronously, but request() is async, so two visibilitychange 'visible'
+ *  events in the same tick (app-switch, notification shade) both pass that
+ *  check and each acquire a real lock. Only the last one is stored, and the
+ *  orphans' own 'release' events then null out a newer, still-valid sentinel. */
+let inFlight: Promise<void> | null = null;
 
 async function acquire(): Promise<void> {
   if (sentinel !== null) return; // already held
-  try {
-    sentinel = await navigator.wakeLock.request('screen');
-    sentinel.addEventListener('release', () => {
-      sentinel = null; // platform-released (backgrounded) — visibilitychange re-arms
-    });
-  } catch {
-    /* unsupported / backgrounded / battery saver — best-effort, no throw */
-  }
+  if (inFlight !== null) return inFlight; // request already on the wire — join it
+  inFlight = (async () => {
+    try {
+      const s = await navigator.wakeLock.request('screen');
+      sentinel = s;
+      s.addEventListener('release', () => {
+        // only clear if THIS sentinel is still the current one — a late
+        // release from an orphan must not wipe a newer lock's reference
+        if (sentinel === s) sentinel = null; // visibilitychange re-arms
+      });
+    } catch {
+      /* unsupported / backgrounded / battery saver — best-effort, no throw */
+    } finally {
+      inFlight = null;
+    }
+  })();
+  return inFlight;
 }
 
 /** Request the screen wake lock now and keep re-acquiring it after every
