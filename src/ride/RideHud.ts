@@ -120,6 +120,19 @@ const STYLE = `
 .rp-btn.brake.active{background:rgba(255,138,112,0.38)}
 `;
 
+/** `setPointerCapture()` throws NotFoundError once the browser no longer
+ *  considers the pointer active — an uncaught exception anywhere reaches
+ *  installGlobalErrorHooks() (src/core/Diagnostics.ts) and paints a
+ *  permanent full-screen fatal overlay over the whole game. Same guard as
+ *  src/core/FlyCamera.ts's touch joystick/look controls. */
+function safeCapture(el: Element, pointerId: number): void {
+  try {
+    el.setPointerCapture(pointerId);
+  } catch {
+    /* pointer already released — the button state change above still applies */
+  }
+}
+
 /** per-road-class accent (matches world materials' reading) */
 const CLS_COLOR: Record<string, string> = {
   asphalt: '#9fb4c8',
@@ -287,8 +300,8 @@ export class RideHud {
     };
     pedal.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      pedal.setPointerCapture(e.pointerId);
       setPedal(true);
+      safeCapture(pedal, e.pointerId);
     });
     pedal.addEventListener('pointerup', () => setPedal(false));
     pedal.addEventListener('pointercancel', () => setPedal(false));
@@ -299,8 +312,8 @@ export class RideHud {
     };
     brake.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      brake.setPointerCapture(e.pointerId);
       setBrake(true);
+      safeCapture(brake, e.pointerId);
     });
     brake.addEventListener('pointerup', () => setBrake(false));
     brake.addEventListener('pointercancel', () => setBrake(false));

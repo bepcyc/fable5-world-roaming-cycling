@@ -52,6 +52,26 @@ function setKeyState(keys: Set<string>, code: string, on: boolean): void {
   else keys.delete(code);
 }
 
+/**
+ * `setPointerCapture()` throws a `NotFoundError` (spec-documented: no active
+ * pointer with that id — a synthetic dispatch never has one, and a fast
+ * enough real tap-release race can hit this too) whenever called on a
+ * pointer id the browser no longer considers live. Uncaught, that exception
+ * reaches `installGlobalErrorHooks()` (src/core/Diagnostics.ts), which paints
+ * a permanent full-screen fatal overlay over the WHOLE game on ANY uncaught
+ * error — so an unguarded capture call turns a routine touch edge case into
+ * a session-ending crash. Capture is a nice-to-have (keeps drag tracking
+ * once the finger leaves the element's bounds); it must never be allowed to
+ * abort the caller.
+ */
+function safeCapture(el: Element, pointerId: number): void {
+  try {
+    el.setPointerCapture(pointerId);
+  } catch {
+    /* pointer already released — the rest of the handler still applies */
+  }
+}
+
 /** terrain/water heights + surface class + slope at (x, z) — installed by
  *  the world scene. surfaceId = SurfaceId (src/ride/SurfaceMatrix.ts);
  *  slope = rise/run. Walk/fly use ground+water; ride physics (M1.3), HUD
@@ -281,8 +301,8 @@ export class FlyCamera {
       const r = base.getBoundingClientRect();
       this.touchJoyCenter = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       base.classList.add('on');
-      base.setPointerCapture(e.pointerId);
       this.applyJoyVector(e.clientX, e.clientY);
+      safeCapture(base, e.pointerId);
     });
     base.addEventListener('pointermove', (e) => {
       if (e.pointerId !== this.touchJoyId) return;
@@ -303,7 +323,7 @@ export class FlyCamera {
       if (e.pointerType !== 'touch' || this.touchLookId !== null) return;
       this.touchLookId = e.pointerId;
       this.touchLookLast = { x: e.clientX, y: e.clientY };
-      dom.setPointerCapture(e.pointerId);
+      safeCapture(dom, e.pointerId);
     });
     dom.addEventListener('pointermove', (e) => {
       if (e.pointerId !== this.touchLookId) return;
