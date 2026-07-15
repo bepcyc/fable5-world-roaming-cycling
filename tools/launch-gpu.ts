@@ -88,12 +88,13 @@ function isRealGpu(info: AdapterInfo): boolean {
 
 async function probeRecipe(
   recipe: GpuRecipe,
+  extraArgs: string[] = [],
 ): Promise<{ browser: Browser; info: AdapterInfo } | null> {
   let browser: Browser | null = null;
   try {
     const opts: Parameters<typeof chromium.launch>[0] = {
       headless: recipe.headless,
-      args: recipe.args,
+      args: [...recipe.args, ...extraArgs],
     };
     if (recipe.executablePath) opts.executablePath = recipe.executablePath;
     if (recipe.channel) opts.channel = recipe.channel;
@@ -129,21 +130,31 @@ async function probeRecipe(
   }
 }
 
-/** Launch a browser whose WebGPU adapter is a REAL GPU; throw otherwise. */
-export async function launchWebGPUReal(): Promise<{
+/** Launch a browser whose WebGPU adapter is a REAL GPU; throw otherwise.
+ *
+ *  `extraArgs` are appended to the winning recipe's Chrome args but are NOT
+ *  part of the cached recipe — the cache stays a pure "which binary/flags
+ *  yield a real adapter here" record, shared with every other tool. Used by
+ *  tools/perf-mobile.ts to pass --disable-gpu-vsync / --disable-frame-rate-limit
+ *  so the rAF meter is not pinned at the 60 Hz refresh (a vsync-capped meter
+ *  reads every optimization as "60 fps, no change"). */
+export async function launchWebGPUReal(
+  opts: { extraArgs?: string[] } = {},
+): Promise<{
   browser: Browser;
   info: AdapterInfo;
   recipe: GpuRecipe;
 }> {
+  const extraArgs = opts.extraArgs ?? [];
   try {
     const cached = JSON.parse(readFileSync(CACHE_PATH, 'utf8')) as GpuRecipe;
-    const hit = await probeRecipe(cached);
+    const hit = await probeRecipe(cached, extraArgs);
     if (hit) return { ...hit, recipe: cached };
   } catch {
     /* no cache yet */
   }
   for (const recipe of CANDIDATES) {
-    const hit = await probeRecipe(recipe);
+    const hit = await probeRecipe(recipe, extraArgs);
     if (hit) {
       mkdirSync('.cache', { recursive: true });
       writeFileSync(CACHE_PATH, JSON.stringify(recipe, null, 2));
