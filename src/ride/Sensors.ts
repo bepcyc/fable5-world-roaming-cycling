@@ -37,9 +37,16 @@ export interface SensorSource {
   update(dt: number, ctx: SensorCtx): void;
   read(): RideSample;
   /** optional back-channel: the rig reports live grade + surface Crr each
-   *  fixed step; BLE trainers turn it into FTMS SIM-resistance writes
-   *  (M1.4). Sources without physical resistance simply omit this. */
+   *  fixed step; BLE trainers turn it into FTMS SIM/FE-C-resistance writes.
+   *  Sources without physical resistance simply omit this. */
   setSimState?(gradeFrac: number, crr: number): void;
+  /** optional control-activation hooks — BikeRig calls these from its
+   *  mount()/dismount() lifecycle, NEVER at connect/assignment time: a
+   *  controllable BLE device sitting in the device manager must not start
+   *  sending resistance writes until the rider actually mounts a bike.
+   *  Sources with no controllable device simply omit these (no-op). */
+  activateControl?(): void;
+  releaseControl?(): void;
 }
 
 // ---- demo stream tuning -----------------------------------------------------

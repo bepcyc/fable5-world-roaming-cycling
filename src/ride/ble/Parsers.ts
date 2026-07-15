@@ -178,6 +178,28 @@ export function parseCyclingPower(dv: DataView): CyclingPowerData {
   return out;
 }
 
+// ---- Cycling Power Feature 0x2A65 (service 0x1818, read) ----------------------
+
+export interface CpFeatureBits {
+  wheelRevolutionSupported: boolean;
+  crankRevolutionSupported: boolean;
+}
+
+/** u32 LE bitfield: bit2 wheel-revolution-data supported, bit3
+ *  crank-revolution-data supported. This is a CONNECT-TIME capability
+ *  probe only — a per-notification CPM flags word (parseCyclingPower) is
+ *  the sole per-packet authority on whether crank data is actually in
+ *  THIS payload; a device may declare the bit yet omit the field on any
+ *  given notification (e.g. between duty-cycled updates). */
+export function parseCpFeature(dv: DataView): CpFeatureBits {
+  const c = new Cursor(dv);
+  const bits = c.u32() ?? 0;
+  return {
+    wheelRevolutionSupported: (bits & (1 << 2)) !== 0,
+    crankRevolutionSupported: (bits & (1 << 3)) !== 0,
+  };
+}
+
 // ---- CSC Measurement 0x2A5B (service 0x1816) ----------------------------------
 
 export interface CscData {
@@ -211,13 +233,60 @@ export function parseCsc(dv: DataView): CscData {
   return out;
 }
 
+// ---- CSC Feature 0x2A5C (service 0x1816, read) ---------------------------------
+
+export interface CscFeatureBits {
+  wheelRevolutionSupported: boolean;
+  crankRevolutionSupported: boolean;
+}
+
+/** u16 LE bitfield: bit0 wheel-revolution-data supported, bit1
+ *  crank-revolution-data supported. Same connect-time-only caveat as
+ *  CP Feature above. */
+export function parseCscFeature(dv: DataView): CscFeatureBits {
+  const c = new Cursor(dv);
+  const bits = c.u16() ?? 0;
+  return {
+    wheelRevolutionSupported: (bits & 0x0001) !== 0,
+    crankRevolutionSupported: (bits & 0x0002) !== 0,
+  };
+}
+
 // ---- revolution-data accumulator (cadence / speed from cumulative counters) ---
+
+// Reject-as-garbage rate ceiling: no crank/wheel spins faster than this.
+const MAX_PLAUSIBLE_REV_PER_S = 20;
+// A forward counter delta this large in ONE notification interval is not a
+// real ride — it's the wrap-detector's own upper bound for "this negative
+// delta is a genuine mod-N rollover" (see wrapOrReset below).
+const MAX_REVS_PER_PUSH = 200; // > 20 rev/s × several-second gap, generous
+const MAX_TICKS_PER_PUSH_S = 10; // ticks: bound in seconds, scaled by ticksPerS
+
+/**
+ * cur - prev, treating a negative raw difference as either:
+ *  (a) a genuine mod-`mod` rollover (the counter wrapped past 0), if the
+ *      wrapped-around delta is itself small/plausible, or
+ *  (b) a PHYSICAL counter reset — reconnect, battery pull, firmware clear,
+ *      mode change — which does NOT wrap through 0, it just restarts low.
+ * Case (b) must never be read as case (a): a reset from revs=50000 to
+ * revs=10 raw-diffs to -49990, and modular arithmetic alone would report a
+ * transaction of (65536-49990)=15546 "revolutions" in one packet — a
+ * spurious triple-digit cadence spike. Returns null for a detected reset;
+ * the caller re-baselines without producing a rate sample.
+ */
+function wrapOrReset(cur: number, prev: number, mod: number, maxPlausiblePerStep: number): number | null {
+  const raw = cur - prev;
+  if (raw >= 0) return raw;
+  const wrapped = raw + mod;
+  return wrapped <= maxPlausiblePerStep ? wrapped : null;
+}
 
 /**
  * Turns (cumulative revolutions, last event time) pairs into a rate.
- * Handles counter and timer rollover (mod counterBits / mod 2^16 ticks) and
- * the "no new event" case (identical event time → keep last rate, decay to
- * zero after `staleS` without events — rider stopped pedaling).
+ * Handles counter/timer rollover (mod counterBits / mod 2^16 ticks) AND
+ * physical counter resets (see wrapOrReset) distinctly, and the "no new
+ * event" case (identical event time → keep last rate, decay to zero after
+ * `staleS` without events — rider stopped pedaling).
  */
 export class RevolutionRate {
   private prevRevs: number | null = null;
@@ -234,29 +303,56 @@ export class RevolutionRate {
     this.staleS = staleS;
   }
 
-  /** feed one (revs, eventT) sample; dt = wall time since previous feed */
-  push(revs: number, eventT: number, dt: number): void {
+  /**
+   * Feed one (revs, eventT) sample; dt = wall time since previous feed.
+   * Returns the rev/s rate ONLY when this push produced a genuinely
+   * accepted sample (normal forward progress, or a confirmed idle/no-new-
+   * revolution reading) — the caller (a provider) MUST treat null as "no
+   * update happened" and skip re-stamping its AgingChannel. Returning the
+   * held-over rate unconditionally on the FIRST-ever packet, a physical
+   * reset, or a rejected implausible spike would let the channel's
+   * freshness clock reset on every one of those pushes — publishing a
+   * confidently wrong "freshly live" cadence that never actually changed
+   * (codex build-review finding, 2026-07-15: a reset mid-ride at 90 rpm
+   * kept re-publishing the stale 90 rpm as live every packet). */
+  push(revs: number, eventT: number, dt: number): number | null {
     if (this.prevRevs === null || this.prevT === null) {
       this.prevRevs = revs;
       this.prevT = eventT;
-      return;
+      return null; // no prior baseline — nothing to compute yet
     }
-    const dRevs = (revs - this.prevRevs + this.revsMod) % this.revsMod;
-    const dTicks = (eventT - this.prevT + 0x10000) % 0x10000;
-    if (dTicks > 0 && dRevs > 0) {
-      // reject absurd jumps (sensor reset / reconnect): > 20 rev/s is garbage
-      const r = dRevs / (dTicks / this.ticksPerS);
-      if (r <= 20) this.rate = r;
+    const dRevs = wrapOrReset(revs, this.prevRevs, this.revsMod, MAX_REVS_PER_PUSH);
+    const dTicks = wrapOrReset(eventT, this.prevT, 0x10000, this.ticksPerS * MAX_TICKS_PER_PUSH_S);
+    if (dRevs === null || dTicks === null) {
+      // physical reset on either counter — re-baseline, no rate sample this
+      // push (holding the last rate rather than zeroing it: a mid-ride
+      // sensor hiccup shouldn't read as "stopped pedaling") — but the
+      // caller must NOT treat this as fresh data either (null, not rate)
       this.prevRevs = revs;
       this.prevT = eventT;
       this.idleS = 0;
+      return null;
+    }
+    if (dTicks > 0 && dRevs > 0) {
+      const r = dRevs / (dTicks / this.ticksPerS);
+      this.prevRevs = revs;
+      this.prevT = eventT;
+      this.idleS = 0;
+      if (r > MAX_PLAUSIBLE_REV_PER_S) return null; // rejected spike — no accepted sample
+      this.rate = r;
+      return this.rate;
     } else if (dRevs === 0) {
-      // same counter — pedaling stopped; decay after stale window
+      // same counter — pedaling stopped; decay after stale window. This
+      // IS a genuine sample (the sensor is confirmed still transmitting,
+      // just reporting no new revolution) — return it so the channel's
+      // freshness tracks the sensor's own liveness, not just motion.
       this.prevRevs = revs;
       this.prevT = eventT;
       this.idleS += dt;
       if (this.idleS >= this.staleS) this.rate = 0;
+      return this.rate;
     }
+    return null;
   }
 
   /** advance idle clock on frames without a notification */

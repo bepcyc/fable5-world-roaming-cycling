@@ -403,6 +403,11 @@ export class BikeRig {
     const g = this.probe(sm.x, sm.z);
     this.seedPose(sm.x, g.ground + EYE_SADDLE, sm.z, this.heading(sm.tx, sm.tz));
     this.flash(t('ride.mountBike', { mode: t('mode.' + mode) }));
+    // control ACTIVATION (not assignment) happens here, on the transition
+    // from not-riding to riding — a controllable BLE device sitting in the
+    // device manager must never send resistance writes on its own, only
+    // once the rider actually mounts a bike (BLE_ZWIFT_PLAN.md design)
+    this.source.activateControl?.();
     return true;
   }
 
@@ -414,6 +419,7 @@ export class BikeRig {
     this.solver = { v: 0, stalled: false };
     this.fly.setMode('walk');
     this.flash(t('ride.onFoot'));
+    this.source?.releaseControl?.();
   }
 
   private flash(msg: string): void {
