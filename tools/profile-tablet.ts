@@ -1,9 +1,9 @@
 /**
  * CPU PROFILER — THE REAL TABLET (Galaxy Tab S8 Ultra / SM-X900, Adreno 730).
  *
- * GPU_CPU_ISSUE_CODEX.md §5 P0.2: "Если прямые границы TSL nodes неудобны,
- * использовать CDP CPU profile на 200-300 кадров реального планшета и искать
- * Bindings._update, UniformsGroup.update, NodeManager.updateForRender,
+ * GPU_CPU_ISSUE_CODEX.md §5 P0.2: "If direct TSL-node boundaries are
+ * inconvenient, use a CDP CPU profile over 200-300 frames of a real tablet and
+ * look for Bindings._update, UniformsGroup.update, NodeManager.updateForRender,
  * _projectObject, WebGPUBackend._draw, GPUQueue.submit/Dawn wire calls."
  *
  * That is exactly what this does. tools/perf-tablet.ts answers HOW MUCH

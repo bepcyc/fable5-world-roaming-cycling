@@ -192,7 +192,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const bio = texture(inp.biomeTex, uv);
   const fields = texture(inp.fieldsTex, uv);
   // Chebyshev radius from the world ORIGIN — the same metric the far-band
-  // envelopes use (MacroMap FAR_BAND_ENV), shared by outsideK and the П.6-7
+  // envelopes use (MacroMap FAR_BAND_ENV), shared by outsideK and the P.6-7
   // per-plane tone steps below
   const chebR = wxz.abs().x.max(wxz.abs().y);
   // Beyond the world edge the baked maps clamp to their last texel row and
@@ -201,7 +201,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const outsideK = inp.far
     ? smoothstep(WORLD_HALF * 0.96, WORLD_HALF * 1.0, chebR)
     : float(0);
-  // П.6-7: which far PLANE a fragment sits on — 0 = bandA (foothills),
+  // P.6-7: which far PLANE a fragment sits on — 0 = bandA (foothills),
   // 1 = bandB (middle range), 2 = bandC (horizon wall). Radially these are
   // ramps across the env gaps, but on screen the planes are separated by the
   // envelope troughs, so between visible surfaces the step reads as a
@@ -229,7 +229,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const macroTint = macroMix.sub(0.5).mul(0.16); // ±8% value shift
 
   // ---------- meso/micro detail noise ------------------------------------------
-  // П.6-7 texture ladder: the NEAR far-plane (bandA) gets a live coarse 140 m
+  // P.6-7 texture ladder: the NEAR far-plane (bandA) gets a live coarse 140 m
   // variation instead of the dead 0.5 constant; the farther planes flatten
   // out (B ≈30% left, C fully flat) — texture density itself becomes a
   // per-plane depth cue, orthogonal to fog
@@ -240,7 +240,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
 
   // ---------- class palettes ----------------------------------------------------
   // rock: strata banding; warm rust in the alpine zone, pale gray in karst.
-  // П.8: ONE bedding phase (beddingCorePhase — the same plane family the
+  // P.8: ONE bedding phase (beddingCorePhase — the same plane family the
   // geometric ledge-beds step along in MacroMap) drives the albedo bands,
   // the iron seams AND the slab-edge normal bump below, so paint, rust and
   // light all land on the same diagonal slabs. Warp budget ≤0.30 period —
@@ -268,7 +268,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   // recessed shelf); elsewhere a soft band keeps the old low-contrast look
   // banding retreats to genuinely steep summit rock (0.55→0.85 floor): with
   // green now on the flanks, the old wide gate painted zebra tonal rings on
-  // ground that should read as meadow (owner: "полосы как баг заливки")
+  // ground that should read as meadow (owner: "stripes like a fill bug")
   const strataBoost = zm.tAlp.mul(smoothstep(0.85, 1.25, slope)).toVar();
   const bedToneHard = smoothstep(0.62, 0.16, bandF)
     .mul(bedHash.x.mul(0.5).add(0.6)) // wider per-bed tone random (0.6..1.1)
@@ -405,7 +405,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   col = mix(col, forestFloor, forestW);
   col = mix(col, scree, screeW);
   col = mix(col, rockCol, rockW);
-  // П.8 ledge greens: ref-05 shows GREEN turf ribbons on the flat shelf tops
+  // P.8 ledge greens: ref-05 shows GREEN turf ribbons on the flat shelf tops
   // between protruding slab edges — without them the massif reads as bare
   // "zebra". Shelf zone = high bandF (the long shallow tail behind the crest,
   // the falling side of bedToneHard's profile) — the built-in "locally
@@ -774,7 +774,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   // mid/far ridges craggy where geometric density has LOD'd out. Applied by
   // DISTANCE on both near tiles and the far shell.
   const farK = inp.far ? float(1) : smoothstep(900, 2600, camDist);
-  // П.8 slab-edge gate: where the bedding shows (steep alpine faces, no
+  // P.8 slab-edge gate: where the bedding shows (steep alpine faces, no
   // snow) — shared by the bedding bump below and the isotropic-noise damping
   const bedGate = strataBoost.mul(snowW.mul(0.8).oneMinus()).toVar();
   // pre-baked ridged gradient at 310 m features; ×44 ≈ the old ±22 m
@@ -789,7 +789,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     .mul(farK)
     .mul(bedGate.mul(0.6).oneMinus());
   if (inp.far) {
-    // П.6-7: crag strength steps DOWN per far plane (1.0 / 0.675 / 0.35) —
+    // P.6-7: crag strength steps DOWN per far plane (1.0 / 0.675 / 0.35) —
     // the near foothills keep crunchy relief, the horizon wall goes flat
     farAmp = farAmp.mul(float(1).sub(planStep.mul(0.325)));
   }
@@ -797,7 +797,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const perturbed = baseNormal.add(vec3(rg.x, 0, rg.y).mul(farAmp));
   let nrm: NV3 = vec3(perturbed.x, perturbed.y.max(0.1), perturbed.z).normalize();
 
-  // П.8 bedding bump: virtual slab displacement d = A·prof(bandF) along the
+  // P.8 bedding bump: virtual slab displacement d = A·prof(bandF) along the
   // bed normal, applied as n' = normalize(n − ∇ₜd) with the TANGENTIAL phase
   // gradient (CPU-constant ∇φ + the baked warp gradient — pure ALU, no extra
   // fetches). prof' is asymmetric: a sharp rise at the slab edge catches the
@@ -857,7 +857,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     const gF = fbmG(DISP.sF1).mul(2 * DISP.wF1);
     const gR = ridG(DISP.sRid)
       .mul(rockKd.mul(1 - DISP.ridBase).add(DISP.ridBase).mul(DISP.wRid))
-      // П.8: micro ridged creases yield to the diagonal bedding on slab walls
+      // P.8: micro ridged creases yield to the diagonal bedding on slab walls
       .mul(bedGate.mul(0.45).oneMinus());
     const gSum = gF.add(gR).mul(dispAmpF);
     nrm = nrm.add(vec3(gSum.x.negate(), 0, gSum.y.negate())).normalize();

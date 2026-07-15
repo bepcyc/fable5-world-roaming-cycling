@@ -1,10 +1,10 @@
 /**
  * Dead-end gate — integration test over the runtime RIDE GRAPH (RouteGraph).
  *
- * Owner directive (2026-07-14, дословно по смыслу): «сделай гейт по количеству
- * ТУПИКОВ дорог — их сейчас невероятное количество; доведи на 3 рандомных
- * сидах до НЕ БОЛЕЕ 1 тупика на большой квадрант. Дороги, по которым нельзя
- * ездить — заебали.»
+ * Owner directive (2026-07-14, paraphrased verbatim): «make a gate on the
+ * number of road DEAD ENDS — there's an incredible number of them right now;
+ * get it down, on 3 random seeds, to NO MORE THAN 1 dead-end per large
+ * quadrant. Roads you can't ride on — I'm sick of them.»
  *
  * Boots ?scene=world&seed=N per seed and reads `window.__laasDbg.rideGraph`
  * (the boot-time RouteGraph built from RoadNetwork) plus the heightfield CPU
@@ -22,8 +22,8 @@
  *                    too steep for its class (grade ahead > maxGrade·SLOPE_MUL
  *                    across the whole forward fan) — a mountain road that
  *                    climbed/ran as far as the flank allows (serpentine
- *                    summit, contour hitting a cliff band). «Упирается в
- *                    склон намеренно.»
+ *                    summit, contour hitting a cliff band). «Deliberately
+ *                    runs into the slope.»
  * Everything else — a road ending in open, rideable ground for no physical
  * reason — is an ILLEGITIMATE dead-end (a stub in the middle of a quadrant).
  *

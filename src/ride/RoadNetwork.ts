@@ -165,8 +165,8 @@ const ASPHALT_RETRY_GRADE_MUL = 2.8;
 const ASPHALT_RETRY_JITTER_CELLS = 3; // ± grid cells, seeded jitter
 const ASPHALT_RETRY_ATTEMPTS = 3;
 
-// ---- dead-end stitching (owner 2026-07-14: «дороги, по которым нельзя
-// ездить — заебали»; гейт ≤1 тупик на большой квадрант). A ride-graph
+// ---- dead-end stitching (owner 2026-07-14: «roads you can't ride on —
+// I'm sick of them»; gate ≤1 dead-end per large quadrant). A ride-graph
 // terminus (degree-1 node) is LEGIT only at the world edge, at a water bank
 // it can't cross, or against an unbuildable slope — everything else is a
 // stub connected below or dropped. See probe-deadends.ts (same thresholds).
@@ -521,8 +521,8 @@ export class RoadNetwork {
       }
     }
 
-    // MUD/WETLAND avoidance (owner 2026-07-06, дословно: «тоненькие
-    // малюсенькие дорожки среди грязи»). A flat wetland reads as the CHEAPEST
+    // MUD/WETLAND avoidance (owner 2026-07-06, verbatim: «thin
+    // tiny little roads winding through the mud»). A flat wetland reads as the CHEAPEST
     // terrain for the A* (grade≈0 ⇒ mult≈1), so roads were magnetically drawn
     // INTO the bogs and rendered as thin dirt ribbons winding across the mud.
     // A previous attempt penalized water PROXIMITY (ground < 2.5 m over the
@@ -675,7 +675,7 @@ export class RoadNetwork {
           let mult = 1 + 14 * gk * gk;
           // side-hill construction cost (cut/fill volume rises with cross
           // slope); quadratic tail = cliff faces are near-prohibitive (owner
-          // repro: a dirt thread traversing bare rock walls read as "палка")
+          // repro: a dirt thread traversing bare rock walls read as "a stick")
           const side = Math.max(0, (gs[ni] as number) - grade);
           mult += 1.2 * side + 10 * side * side;
           // crossings are possible but expensive → rare, short, ⟂-ish;
@@ -688,7 +688,7 @@ export class RoadNetwork {
           // expensive; crossing it stays possible but is a real junction
           // now, not free: at +10 a serpentine wove through the valley
           // road 13× (each weave = an unplanned level-conflicted crossing,
-          // owner anomaly list «пересечения без узла»). The level-mismatch
+          // owner anomaly list «crossings without a junction node»). The level-mismatch
           // term makes crossing a built road ON ITS GRADE LINE affordable
           // and crossing its embankment/cutting prohibitive — junctions
           // happen where the two roads can actually meet.
@@ -841,8 +841,8 @@ export class RoadNetwork {
       return p;
     };
 
-    // ---- alignment shaping (owner 2026-07-06: «минимум 20 м от поворота до
-    // поворота ВСЕГДА; на шоссе лучше участки 100–500 м без поворотов»). The
+    // ---- alignment shaping (owner 2026-07-06: «minimum 20 m from turn to
+    // turn ALWAYS; on highways stretches of 100–500 m without turns are better»). The
     // A* walks an 8-connected 8 m lattice — its raw polyline is a staircase
     // of 8 m micro-turns that Chaikin only ROUNDS, never removes. Fix at the
     // source: Douglas-Peucker straightens the lattice noise into real
@@ -1156,7 +1156,7 @@ export class RoadNetwork {
         }
       }
 
-      // ---- self-intersection repair (owner «прочее»: петли-самопересечения;
+      // ---- self-intersection repair (owner «misc»: self-intersection loops;
       // root cause of the blend-conflict walls/narrow tread at fold sites) —
       // leg stitching, Chaikin rounding and ford snap-backs can fold the
       // polyline over itself; the carve then blends the two conflicting
@@ -1216,7 +1216,7 @@ export class RoadNetwork {
         }
       }
 
-      // ---- junction leveling (owner list: пересечения дорог без узла) ----
+      // ---- junction leveling (owner list: road crossings without a junction node) ----
       // Where this route crosses or hugs an ALREADY BUILT route, the two
       // carved surfaces must meet at one height — otherwise the crossing is
       // a grade-separated step with no bridge (the carve blends the two
@@ -1444,7 +1444,7 @@ export class RoadNetwork {
       // it (it used to run only INSIDE the loop; the closing grade clamp
       // then walked the profile 20–50 m off the terrain on sustained
       // over-grade ground — the carve turned that into slot canyons and
-      // rampart embankments, the owner's «дорога въезжает в стену»)
+      // rampart embankments, the owner's «the road drives into a wall»)
       const cutFillClamp = (): void => {
         for (let i = 0; i < n; i++) {
           if (pinned(i)) continue;
@@ -1875,7 +1875,7 @@ export class RoadNetwork {
         while (b > a + 1 && onNet(leg[b] as Cell) && onNet(leg[b - 1] as Cell)) b--;
         leg = leg.slice(Math.max(0, a - 1), b + 2);
         if (leg.length < 3) continue;
-        // T-JUNCTION rule (owner anomaly «пересечения без узла»): a leg whose
+        // T-JUNCTION rule (owner anomaly «crossings without a junction node»): a leg whose
         // MIDDLE rides an existing corridor for ≥ 10 cells (~80 m; a
         // perpendicular crossing of the ±2-cell mask is ≤ ~7) is duplicating
         // that road at its own, different grade line — the two profiles then
@@ -2166,15 +2166,15 @@ export class RoadNetwork {
       );
     }
 
-    // ---- dead-end stitching (owner 2026-07-14: «дороги, по которым нельзя
-    // ездить — заебали»). RoadNetwork ships independent polylines; a route
+    // ---- dead-end stitching (owner 2026-07-14: «roads you can't ride on —
+    // I'm sick of them»). RoadNetwork ships independent polylines; a route
     // that ENDS in open rideable ground — not at the world edge, not at a
     // water bank, not against an unbuildable slope — becomes a degree-1
     // dead-end in the ride graph (RouteGraph). Connect every such tip to the
     // nearest OTHER route with a real, ridable connector through the SAME
     // A*+buildRoute pipeline (grade/water/wall laws all apply), or — if the
     // route is an isolated island no connector can reach — drop it (an
-    // unreachable road is exactly «дорога по которой нельзя ездить»). Legit
+    // unreachable road is exactly «a road you can't ride on»). Legit
     // termini are left alone. Runs BEFORE scenic so the connectors are in
     // netMask. Gate: tools/probe-deadends.ts (≤1 dead-end per big quadrant).
     const dropped = new Set<RoadRoute>();

@@ -22,8 +22,8 @@
  *   hardness 0.34 (soil base)   → 38°   owner's 36–40° soft-ground ceiling
  *   hardness ≥0.62 (rock/karst) → 57°   ceiling: rock belts near crests stay
  *                                       steep and short; valley-to-peak sheer
- *                                       walls relax (owner 2026-07-14: "просили
- *                                       баварские Альпы, сделали Пакистан")
+ *                                       walls relax (owner 2026-07-14: "asked
+ *                                       for the Bavarian Alps, got Pakistan")
  * plus shed-rate max((1−hardness)^1.5, 0.20) — soft soil flows freely; rock is
  * slow but NOT frozen, so super-critical rock faces actually shed their excess
  * (the old (1−h)^1.5 alone gave karst 0.005 → walls never moved at all).
@@ -31,7 +31,7 @@
  * Optional gates (weight → 0 freezes a cell):
  *   waterY   — shoreline cells ≤0.4 m above the water surface are frozen so
  *              the baked water sheet never ends up perched over a slumped bank
- *              (the "гель над ямкой" bug class — see reconcileWaterAfterCarve).
+ *              (the "gel over a dip" bug class — see reconcileWaterAfterCarve).
  *   roadField — tread + shoulder (+2 m) untouched, full relax from +8 m out;
  *              Heightfield re-runs roadField.carve() afterwards to re-pin the
  *              designed profile exactly (probe-roadgates guard).

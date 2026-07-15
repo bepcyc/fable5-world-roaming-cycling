@@ -8,7 +8,7 @@
  * freezes worldTime/physics/updateFns, the frame keeps rendering so the
  * pause card sits over a still — not black — world). "Main menu" from
  * pause keeps the world paused and re-shows the splash with the Start
- * button relabeled "ПРОДОЛЖИТЬ" — the world is never torn down mid-session
+ * button relabeled "CONTINUE" — the world is never torn down mid-session
  * (Engine has no dispose; a real "new ride" would just reload the page).
  *
  * Bypass (`?nosplash=1`, `navigator.webdriver`, non-`world` debug scenes,
@@ -182,7 +182,7 @@ export class GameMenu {
   }
 
   private onMainMenuClick(): void {
-    // world stays paused; splash comes back with Start relabeled "продолжить"
+    // world stays paused; splash comes back with Start relabeled "Resume"
     this.pause.classList.remove('on');
     this.splash.hidden = false;
     this.state = 'MENU';

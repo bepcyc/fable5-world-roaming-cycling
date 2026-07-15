@@ -8,8 +8,8 @@
  *
  * Riding follows the road graph (Zwift principle): position advances along
  * RouteGraph edges from the fixed-timestep BikeSolver; at junctions the
- * rider CHOOSES (owner directive: on-screen "turn ahead" pick, не по
- * рельсам) with ←/→, default = straightest exit. Dead ends U-turn.
+ * rider CHOOSES (owner directive: on-screen "turn ahead" pick, not on
+ * rails) with ←/→, default = straightest exit. Dead ends U-turn.
  *
  * The solver runs ONLY on Engine.onFixedUpdate — never on frame dt — so
  * P1–P4 hold across ?dt sweeps. Camera: FlyCamera 'ride' mode (free

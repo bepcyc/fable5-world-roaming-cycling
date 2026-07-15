@@ -8,7 +8,7 @@
  * — cadence/HR/power read "—" without a source.
  *
  * Bottom center: the junction chooser (owner directive: Zwift-style
- * on-screen "turn ahead" pick, не по рельсам) — arrow cards, ←/→ select,
+ * on-screen "turn ahead" pick, not on rails) — arrow cards, ←/→ select,
  * live distance countdown. Center: status banner (BLOCKED / STALLED /
  * mode notes). All DOM+CSS, zero canvas — TRAA never touches it.
  *

@@ -106,8 +106,8 @@ export type PrepassMode = 'off' | 'grass' | 'on';
  * reject shaded fragments. Adreno is a TBDR: it already resolves visibility per
  * tile on-chip (low-res Z + early-Z), so the twins reject almost nothing while
  * still paying full geometry + duplicated vertex wind. GPU_CPU_ISSUE_CODEX.md
- * §5 P2.6 sanctions exactly this ("на TBDR отключить depth prepass, если
- * prepass=0 выигрывает на устройстве") — it does, so it is off on min.
+ * §5 P2.6 sanctions exactly this ("on TBDR, turn off depth prepass if
+ * prepass=0 wins on the device") — it does, so it is off on min.
  *
  * Desktop defaults to preset=high and is therefore UNAFFECTED ('on').
  * ?prepass=0|1|grass overrides explicitly on any preset:
@@ -122,6 +122,26 @@ export function prepassMode(search: string = window.location.search): PrepassMod
   if (raw === 'grass') return 'grass';
   if (raw === '1') return 'on';
   return (q.get('preset') ?? 'high') === 'min' ? 'off' : 'on';
+}
+
+/**
+ * CSM shadow-map resolution PER CASCADE. Was a hardcoded 2048 at every preset,
+ * i.e. preset=min rasterized 4 x 2048^2 = 16.8M shadow texels per full refresh
+ * on a phone-class tiler. 1024 on min quarters that to 4.2M.
+ *
+ * CSMShadowNode CLONES sun.shadow per cascade, so this value applies to each of
+ * the four maps (ShadowSetup.ts). ?shadowmap=N overrides on any preset (sweep
+ * knob); desktop = preset=high = 2048 = unchanged.
+ */
+export function shadowMapSize(search: string = window.location.search): number {
+  const q = new URLSearchParams(search);
+  const raw = q.get('shadowmap');
+  if (raw !== null) {
+    const n = Number(raw);
+    // power of two, 256..4096
+    if (Number.isFinite(n) && n >= 256 && n <= 4096 && (n & (n - 1)) === 0) return n;
+  }
+  return (q.get('preset') ?? 'high') === 'min' ? 1024 : 2048;
 }
 
 /** Parse a `cam` string into pose components; returns null when malformed. */

@@ -91,6 +91,24 @@ const ADB = join(process.env['ANDROID_HOME'] ?? join(homedir(), 'Android/Sdk'), 
 const CDP_PORT = 9223;
 const DEV_PORT = 5176;
 
+/* ---- APK mode (--apk) ----------------------------------------------------
+ * Measures the SHIPPED offline APK instead of the vite dev server. Three things
+ * differ from the dev-server path and each one is load-bearing:
+ *
+ *  1. ORIGIN is the app's OWN loopback server (AssetHttpServer.kt, port 47862),
+ *     serving the bundled dist/. There is no `adb reverse` and no dev server to
+ *     reach — asserting the desktop's vite is up would be meaningless here.
+ *  2. The CDP socket is `webview_devtools_remote_<pid>`, NOT
+ *     `chrome_devtools_remote`. The pid is the app's, so it changes every launch
+ *     and the forward has to be re-pointed per run.
+ *  3. The URL is not passed with `-d`; MainActivity owns the origin (it knows
+ *     the bound port) and takes the query via `--es params`. Both the WebView
+ *     and the Custom Tab path honour that extra, which is what makes the A/B
+ *     legitimate: identical URL, identical preset, only the host differs.
+ */
+const APK_PKG = 'com.bepcyc.laas';
+const APK_PORT = 47862;
+
 /* ---- adb helpers --------------------------------------------------------- */
 
 function adb(args: string[], timeout = 30_000): string {
@@ -109,6 +127,7 @@ interface DeviceState {
   tempC: number;
   focus: string;
   chromeForeground: boolean;
+  laasForeground: boolean;
 }
 
 /** Battery temp is the thermal-throttle tell; focus is the rAF tell. */
@@ -132,14 +151,34 @@ function readDevice(): DeviceState {
     tempC: temp,
     focus,
     chromeForeground: /chrome/i.test(focus),
+    laasForeground: new RegExp(APK_PKG.replace(/\./g, '\\.'), 'i').test(focus),
   };
+}
+
+/** Device shell for reporting fields only — a missing OEM command must annotate
+ *  the record, never abort a measured run. */
+function safeShell(cmd: string): string | null {
+  try {
+    return adbShell(cmd).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** The app's pid — the WebView CDP socket is named after it, so this must be
+ *  re-read on every launch rather than cached. */
+function apkPid(): number {
+  const out = adbShell(`pidof ${APK_PKG} || true`).trim();
+  const pid = Number(out.split(/\s+/)[0] ?? 0);
+  if (!pid) throw new Error(`${APK_PKG} is not running (pidof empty) — did am start fail?`);
+  return pid;
 }
 
 /** Wake + tunnels. NEVER reboots, never touches lock/power settings — the owner
  *  cannot recover a locked tablet remotely, so this stays strictly read-only on
  *  device config (stay_on_while_plugged_in / screen_off_timeout are already set
  *  and are NOT modified here). */
-function ensureDevice(): void {
+function ensureDevice(apkMode = false): void {
   const devices = adb(['devices']);
   const online = devices.split('\n').slice(1).filter((l) => /\tdevice$/.test(l.trim()));
   if (online.length === 0) {
@@ -149,9 +188,23 @@ function ensureDevice(): void {
     );
   }
   adbShell('input keyevent KEYCODE_WAKEUP');
+  if (apkMode) return; // socket forward happens post-launch (needs the pid)
   // Tunnels are idempotent; re-adding a live one is a no-op.
   adb(['reverse', `tcp:${DEV_PORT}`, `tcp:${DEV_PORT}`]);
   adb(['forward', `tcp:${CDP_PORT}`, 'localabstract:chrome_devtools_remote']);
+}
+
+/** Point the CDP tunnel at whichever engine hosts the sim this run.
+ *  WebView   -> webview_devtools_remote_<pid>  (in OUR process)
+ *  CustomTab -> chrome_devtools_remote         (Chrome's process) */
+function forwardCdp(socket: string): void {
+  try {
+    adb(['forward', '--remove', `tcp:${CDP_PORT}`]);
+  } catch {
+    /* nothing forwarded yet — that is the normal first-run state */
+  }
+  adb(['forward', `tcp:${CDP_PORT}`, `localabstract:${socket}`]);
+  console.log(`[perf-tablet] CDP tcp:${CDP_PORT} -> ${socket}`);
 }
 
 /** Assert the DEVICE can reach the dev server. The vite server binds [::1] only,
@@ -509,13 +562,23 @@ async function main(): Promise<void> {
   const shotPath = str(args['shot']) ?? `shots/wip/perf-tablet-${label}.png`;
   const readyTimeoutMs = Number(str(args['ready-timeout']) ?? 300_000);
 
+  // --apk           : the shipped offline APK, rendered by an in-process WebView
+  // --apk --customtab: the same APK, rendered by a Chrome Custom Tab (the old
+  //                    variant-B host). The pair is the WebView-vs-Chrome A/B.
+  const apkMode = args['apk'] === true;
+  const customTab = args['customtab'] === true;
+  if (customTab && !apkMode) throw new Error('--customtab is only meaningful with --apk');
+
   const params = [...BASE_PARAMS];
   if (urlExtra) params.push(...urlExtra.split('&').filter(Boolean));
-  const url = `${ORIGIN}/?${params.join('&')}`;
+  const query = params.join('&');
+  const origin = apkMode ? `http://127.0.0.1:${APK_PORT}` : ORIGIN;
+  const url = `${origin}/?${query}`;
+  const matchPort = apkMode ? APK_PORT : DEV_PORT;
 
-  console.log(`[perf-tablet] url ${url}`);
-  ensureDevice();
-  assertServerReachable();
+  console.log(`[perf-tablet] url ${url}  (host: ${apkMode ? (customTab ? 'APK/CustomTab' : 'APK/WebView') : 'dev-server/Chrome'})`);
+  ensureDevice(apkMode);
+  if (!apkMode) assertServerReachable();
 
   const before = readDevice();
   console.log(
@@ -523,30 +586,57 @@ async function main(): Promise<void> {
       `battery ${before.batteryPct}%, ${before.tempC.toFixed(1)}C`,
   );
 
-  // `am start` both foregrounds Chrome AND loads the URL. Foreground is not
+  // `am start` both foregrounds the host AND loads the URL. Foreground is not
   // cosmetic: rAF is throttled to a stop in the background, which would read as
   // 0 fps and look like a catastrophic regression.
-  adbShell(
-    `am start -a android.intent.action.VIEW ` +
-      `-n com.android.chrome/com.google.android.apps.chrome.Main -d '${url}'`,
-    30_000,
-  );
+  if (apkMode) {
+    // force-stop first: a warm process would keep the OLD WebView (and the old
+    // bundle) and silently ignore the new --es params.
+    adbShell(`am force-stop ${APK_PKG}`, 20_000);
+    await new Promise((r) => setTimeout(r, 1500));
+    // -f 0x10008000 = FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK. NOT
+    // optional, and this cost a failed round: a Custom Tab from a previous run
+    // stays on top of OUR task (that is how Custom Tabs work — Chrome's
+    // activity, our task). force-stop kills our process but leaves the task
+    // record, so a plain `am start` reports "intent delivered to currently
+    // running top-most instance", resumes the stale tab, never starts
+    // MainActivity, and pidof then comes back empty.
+    // Use the RAW flags: `am` has --activity-clear-task but NO
+    // --activity-new-task (IllegalArgumentException: Unknown option), and
+    // CLEAR_TASK without NEW_TASK is ignored by the platform.
+    // -S force-stops the target too; both are kept deliberately.
+    adbShell(
+      `am start -S -n ${APK_PKG}/.MainActivity -f 0x10008000 ` +
+        `--es params '${query}'` +
+        (customTab ? ' --ez customtab true' : ''),
+      30_000,
+    );
+    // boot + bind of the loopback server, then the WebView/tab attaches
+    await new Promise((r) => setTimeout(r, 6000));
+    forwardCdp(customTab ? 'chrome_devtools_remote' : `webview_devtools_remote_${apkPid()}`);
+  } else {
+    adbShell(
+      `am start -a android.intent.action.VIEW ` +
+        `-n com.android.chrome/com.google.android.apps.chrome.Main -d '${url}'`,
+      30_000,
+    );
+  }
   await new Promise((r) => setTimeout(r, 4000));
 
-  // Find our tab. Chrome may hold several; prefer one already on the dev server.
+  // Find our tab. The host may hold several; prefer one already on our origin.
   let target: CdpTarget | undefined;
   const deadlineT = Date.now() + 60_000;
   while (Date.now() < deadlineT) {
     const ts = await cdpTargets();
     const pages = ts.filter((t) => t.type === 'page' && t.webSocketDebuggerUrl);
-    target = pages.find((t) => t.url.includes(`:${DEV_PORT}/`)) ?? undefined;
+    target = pages.find((t) => t.url.includes(`:${matchPort}/`)) ?? undefined;
     if (target) break;
     await new Promise((r) => setTimeout(r, 2000));
   }
   if (!target?.webSocketDebuggerUrl) {
     const ts = await cdpTargets();
     throw new Error(
-      `no CDP page target on :${DEV_PORT}. Targets:\n` +
+      `no CDP page target on :${matchPort}. Targets:\n` +
         ts.map((t) => `  ${t.type} ${t.url}`).join('\n'),
     );
   }
@@ -556,7 +646,7 @@ async function main(): Promise<void> {
   // would contend with the one we are measuring — the device-side form of Trap 3).
   const all = await cdpTargets();
   for (const t of all) {
-    if (t.type === 'page' && t.id !== target.id && t.url.includes(`:${DEV_PORT}/`)) {
+    if (t.type === 'page' && t.id !== target.id && t.url.includes(`:${matchPort}/`)) {
       await fetch(`http://localhost:${CDP_PORT}/json/close/${t.id}`).catch(() => undefined);
       console.log(`[perf-tablet] closed duplicate tab ${t.id}`);
     }
@@ -634,10 +724,16 @@ async function main(): Promise<void> {
       `(CSS ${canvas.cssW}x${canvas.cssH}, inner ${canvas.innerW}x${canvas.innerH}, dpr ${canvas.dpr})`,
   );
 
+  // rAF is throttled to a stop in the background, so the WRONG host being on
+  // screen makes every fps number fiction. Which host must be focused depends on
+  // the mode: the WebView run wants OUR package focused (that is the entire
+  // point of variant C), the Custom Tab run wants Chrome.
   const focusNow = readDevice();
-  if (!focusNow.chromeForeground) {
+  const fgOk = apkMode && !customTab ? focusNow.laasForeground : focusNow.chromeForeground;
+  if (!fgOk) {
+    const want = apkMode && !customTab ? APK_PKG : 'Chrome';
     throw new Error(
-      `Chrome is NOT foregrounded (focus: ${focusNow.focus}) — rAF is throttled in the ` +
+      `${want} is NOT foregrounded (focus: ${focusNow.focus}) — rAF is throttled in the ` +
         `background and every fps number would be fiction.`,
     );
   }
@@ -787,6 +883,11 @@ async function main(): Promise<void> {
     label,
     when: new Date().toISOString(),
     device: { model: before.model, android: before.release },
+    // WHICH ENGINE DREW THIS, and under which Game Mode. Without these a JSON
+    // from a WebView run is indistinguishable from a Custom Tab one, and the
+    // whole variant-B-vs-C comparison becomes unfalsifiable a week later.
+    host: apkMode ? (customTab ? 'apk-customtab' : 'apk-webview') : 'dev-chrome',
+    gameMode: apkMode ? safeShell(`cmd game list-modes ${APK_PKG}`) : null,
     thermal: {
       tempBeforeC: before.tempC,
       tempAfterC: after.tempC,

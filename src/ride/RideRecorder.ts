@@ -1,6 +1,6 @@
 /**
  * RideRecorder — DRAFT session export to Garmin .FIT (owner ask 2026-07-03,
- * "черновая, без особого тестирования"; Zwift/MyWhoosh-style activity file).
+ * "a draft, without much testing"; Zwift/MyWhoosh-style activity file).
  *
  * Records 1 Hz samples of the rig's logical pose (position, altitude, ground
  * speed, distance) plus whatever the sensor seam provides (HR/cadence; power

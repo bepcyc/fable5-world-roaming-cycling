@@ -74,7 +74,7 @@ export interface MacroParams {
     [number, number]
   >;
   /**
-   * П.8 tilted strata ledge-beds (ref-05): massif-global bedding orientation.
+   * P.8 tilted strata ledge-beds (ref-05): massif-global bedding orientation.
    * dip = unit XZ direction the beds descend toward (strike ⊥ to it, along
    * the NE–SW ridgelines); tilt = dip angle from horizontal (rad, 31–41° —
    * steep enough that the phase isolines run DIAGONAL across the walls, not
@@ -177,11 +177,11 @@ export function makeMacroParams(seed: WorldSeed): MacroParams {
       detail: off(),
       hard: off(),
       // far/far2/far3 drawn LAST in the rngOff stream: adding the two outer
-      // bands (П.6) must not re-roll any earlier offset for a given seed
+      // bands (P.6) must not re-roll any earlier offset for a given seed
       far: off(),
       far2: off(),
       far3: off(),
-      // П.6 rev2: appended AFTER far3 — same determinism rule (rngOff draw
+      // P.6 rev2: appended AFTER far3 — same determinism rule (rngOff draw
       // order), adding these must not re-roll any earlier offset
       farW: off(), // domain warp of bandB
       farPk: off(), // dominant-peak fields (all bands, decorrelated by +const)
@@ -190,7 +190,7 @@ export function makeMacroParams(seed: WorldSeed): MacroParams {
 }
 
 /**
- * П.8: CPU-side bedding basis — cos/sin of the tilt plus the constant world
+ * P.8: CPU-side bedding basis — cos/sin of the tilt plus the constant world
  * gradient ∇φ (1/m) of the bedding phase. Shared by geometry, albedo and the
  * slab-edge normal so all three consumers agree on the plane family.
  */
@@ -207,7 +207,7 @@ export function beddingBasis(mp: MacroParams) {
 }
 
 /**
- * П.8: bedding-phase core (no warp) — the ONE projection formula onto the
+ * P.8: bedding-phase core (no warp) — the ONE projection formula onto the
  * bed-plane normal: (y·cosθ + dip·sinθ) / period, massif-centered. Integer
  * part = bed index, fract = position within the bed.
  */
@@ -319,7 +319,7 @@ export function zoneMasks(p: NV2, mp: MacroParams): ZoneMasks {
 }
 
 /**
- * П.6 far-band Chebyshev envelopes [r0 rise, r1, r2, r3 fall] (m) — the ONE
+ * P.6 far-band Chebyshev envelopes [r0 rise, r1, r2, r3 fall] (m) — the ONE
  * source of truth shared by the far-shell geometry (macroTerrain below) and
  * TerrainMaterial's per-plane tone steps, so retuning a band never desyncs
  * silhouette and shading. A[0] = WORLD_HALF+600 is the playable-world guard:
@@ -426,7 +426,7 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
       r = r.add(n.mul(n).mul(amp));
       norm += amp;
       // gain 0.42→0.35 (codex gpt-5.6-terra 2026-07-14: left terrain reads
-      // "резкие, дробные, шипастые ... почти вертикальные бороздчатые стены").
+      // "sharp, fragmented, spiky ... almost vertical fluted walls").
       // Faster amp decay + fewer octaves + controlled anisotropy strip the
       // high-frequency dissection/washboard so forms read as broad connected
       // massifs, not a spiky generated saw. gain·lac = 0.35·2.13 = 0.745 < 1.
@@ -470,7 +470,7 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
   const m0 = mtnAt(p);
   const mountains = tAlp.mul(m0.add(tAlp.mul(45)));
 
-  // --- П.8 tilted strata ledge-beds (ref-05) ----------------------------------
+  // --- P.8 tilted strata ledge-beds (ref-05) ----------------------------------
   // The reference massif is NOT a triangular saw: diagonal bedding planes
   // protrude through the green cover as stacked slabs with grassy shelves
   // between them. Step the steep alpine flanks along a massif-global TILTED
@@ -540,7 +540,7 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
 
   // --- far shell: outer ranges beyond the world edge --------------------------
   if (!full) {
-    // П.6 rev2 (ref-04): THREE independent ridge bands at increasing radii,
+    // P.6 rev2 (ref-04): THREE independent ridge bands at increasing radii,
     // each farther band ~25% TALLER than the one before — AND each with its
     // own silhouette CHARACTER: its own ridge azimuth/anisotropy, its own
     // lacunarity/gain (sawtooth vs massive shoulders), a per-band domain
@@ -734,7 +734,7 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
   )
     .mul(0.5)
     .add(0.5);
-  // П.8: bedding-banded resistance across the WHOLE massif wall (a wider
+  // P.8: bedding-banded resistance across the WHOLE massif wall (a wider
   // gate than ledgeGate, which only marks the steepest steps) — hydraulics
   // carve the soft shelves BETWEEN beds, so the vertical wash-gullies break
   // into slab-length segments instead of erasing the diagonal rhythm
@@ -748,7 +748,7 @@ export function macroTerrain(p: NV2, mp: MacroParams, detail: 'full' | 'far'): M
       .add(tKarst.mul(0.28))
       .add(tAlp.mul(0.12))
       .add(bedHard.mul(bedHardGate).mul(0.24))
-      // П.8: slab crests are the resistant beds — harder so erosion carves
+      // P.8: slab crests are the resistant beds — harder so erosion carves
       // the shelves between them instead of washing the steps flat
       .add(ledgeGate.mul(ledgeProf.add(0.42)).mul(0.18))
       .sub(tLake.mul(0.2)),

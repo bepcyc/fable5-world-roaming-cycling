@@ -176,7 +176,7 @@ export interface BleTransport {
    *  cycling-relevant service. MUST be called from a user gesture.
    *  Rejects on user-cancel. */
   requestAnyDevice(): Promise<BleDeviceHandle>;
-  /** the literal "все датчики" escape hatch: acceptAllDevices, no service
+  /** the literal "all sensors" escape hatch: acceptAllDevices, no service
    *  filter at all — for a sensor this registry doesn't yet recognize. */
   requestAllDevices(): Promise<BleDeviceHandle>;
 }

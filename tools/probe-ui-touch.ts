@@ -1,10 +1,9 @@
 /**
  * Touch-UI gate — does every control on a phone/tablet actually WORK?
  *
- * The owner's bar, verbatim: "меню адаптировано под тач везде (да везде, это
- * везде) и нигде ни один элемент не пересекается и не закрывает другой делая
- * его невозможным для использования... на мобильном ожидается клавиатура для
- * управления. десктоп это десктоп, мобильник это мобильник."
+ * The owner's bar: every menu is touch-adapted EVERYWHERE; no element overlaps
+ * or covers another in a way that makes it unusable; a phone must never expect
+ * a keyboard. Desktop is desktop, mobile is mobile.
  *
  * WHY THIS IS A PROBE AND NOT ME LOOKING AT SCREENSHOTS: I have repeatedly
  * described frames as fine while they were broken. A rendered overlap is a
@@ -12,15 +11,15 @@
  *
  * THREE FAILURES IT MEASURES, each a distinct owner complaint:
  *
- * 1. OCCLUDED — "перекрывающаяся и перекрывающая другие показатели".
+ * 1. OCCLUDED — a control that overlaps, or is covered by, another one.
  *    NOT rect-vs-rect intersection: a modal legitimately covers the world, and
  *    a bounding box legitimately overlaps a transparent parent. The honest test
  *    is hit-testing. For each visible control we ask the browser
  *    `elementFromPoint()` at the control's own centre and at each corner inset
  *    by a fingertip radius. If the answer is not the control (or something
  *    inside it), a real finger there lands somewhere else — the control is
- *    unusable no matter how it looks. That IS "делая его невозможным для
- *    использования", expressed as something a machine can check.
+ *    unusable no matter how it looks. That is "covered so it cannot be used",
+ *    expressed as something a machine can check.
  *
  * 2. TOO SMALL — a control smaller than 48 CSS px in either axis. Android's
  *    Material guidance and WCAG 2.2 Target Size (Minimum) agree on ~48dp/44px;
@@ -176,12 +175,13 @@ interface State {
 /** The world takes 45-105 s to load and none of that changes the LAYOUT, which
  *  is what this gate measures. Every panel lives in index.html behind a stable
  *  id and toggles on a `.on` class, so each state is reachable as soon as the
- *  DOM is up — wait for the id, not for a stopwatch. `freeze=1` keeps the
- *  renderer from competing for the GPU while we measure boxes. */
+ *  DOM is up — wait for the id, not for a stopwatch. NO `freeze=1` and NO
+ *  `nosplash=1` here even though both would load faster: shouldBypass() treats
+ *  each as "this caller does not want the menu" and never renders it. */
 const STATES: State[] = [
   {
     name: 'splash',
-    url: '/?scene=world&seed=1&preset=min&freeze=1',
+    url: '/?scene=world&seed=1&preset=min',
     enter: async (page) => {
       await page.waitForSelector('#splash', { state: 'visible', timeout: 45000 });
       return true;
@@ -189,31 +189,40 @@ const STATES: State[] = [
   },
   {
     name: 'settings',
-    url: '/?scene=world&seed=1&preset=min&freeze=1',
+    url: '/?scene=world&seed=1&preset=min',
     enter: async (page) => {
       await page.waitForSelector('#btn-settings', { state: 'visible', timeout: 45000 });
-      await page.click('#btn-settings');
+      // force: the splash art animates continuously (Ken Burns + a pulsing
+      // hint), so Playwright's "element is stable" precondition never settles
+      // and a normal click times out. We are auditing layout, not the click
+      // path, and the button's own box is what we need on screen.
+      await page.click('#btn-settings', { force: true, timeout: 15000 });
       await page.waitForSelector('#msettings.on', { timeout: 8000 });
       return true;
     },
   },
   {
     name: 'pause',
-    url: '/?scene=world&seed=1&preset=min&freeze=1&nosplash=1',
+    url: '/?scene=world&seed=1&preset=min',
     enter: async (page) => {
       await page.waitForSelector('#pause', { timeout: 45000 });
       // GameMenu opens this on Escape — a key a phone does not have, which is
-      // itself one of the findings. Force the class so the PANEL can still be
-      // audited; whether a finger can reach it is a separate question the
-      // keyboard-parity check answers.
-      await page.evaluate(() => document.getElementById('pause')?.classList.add('on'));
-      await page.waitForSelector('#pause.on', { timeout: 5000 });
+      // itself one of the findings. Force it visible so the PANEL can still be
+      // audited; whether a finger can reach it at all is a separate question,
+      // and the keyboard-parity check is what answers that.
+      // Both the `hidden` attribute AND the `.on` class matter: `hidden` is how
+      // the menu keeps pause out of the splash state, `.on` is what displays it.
+      await page.evaluate(
+        "(() => { const p = document.getElementById('pause');" +
+          'if (p) { p.hidden = false; p.classList.add("on"); } })()',
+      );
+      await page.waitForSelector('#pause.on', { state: 'visible', timeout: 5000 });
       return true;
     },
   },
   {
     name: 'boot',
-    url: '/?scene=world&seed=1&preset=min&freeze=1',
+    url: '/?scene=world&seed=1&preset=min',
     enter: async (page) => {
       const boot = await page.waitForSelector('#boot', { timeout: 20000 }).catch(() => null);
       return boot !== null;
@@ -239,6 +248,27 @@ async function auditState(
     userAgent:
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
   });
+  // WITHOUT THIS THE GATE IS BLIND, and that is why no probe ever caught a
+  // menu defect. GameMenu.shouldBypass() returns true for
+  // `navigator.webdriver`, which Playwright always sets — so under automation
+  // the splash/pause/settings simply never render, and a probe would report a
+  // clean UI because there was no UI. The escape hatch exists for the shooting
+  // tools (they want the world, not the menu); auditing the menu means opting
+  // back in. Same for maxTouchPoints: BrowserGate.isMobileDevice() keys off it
+  // because the tablet's Chrome reports a desktop UA, so a probe that leaves it
+  // at 0 tests the desktop layout while claiming to test the phone.
+  // STRING form, not a function: tsx compiles this file with esbuild, which
+  // wraps functions in a `__name(fn, "...")` helper to preserve names. Playwright
+  // ships a function argument by calling toString() on it, so the page received
+  // code referencing `__name`, which does not exist there — the init script threw
+  // silently and the override never applied (measured: navigator.webdriver was
+  // still true, maxTouchPoints still 0). A string cannot be rewritten by the
+  // compiler, so it arrives intact.
+  await ctx.addInitScript({
+    content:
+      "Object.defineProperty(navigator, 'webdriver', { get: () => false });" +
+      "Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5 });",
+  });
   const page = await ctx.newPage();
   const findings: Finding[] = [];
   try {
@@ -258,17 +288,22 @@ async function auditState(
     // Audit BEFORE screenshotting: the audit is the deliverable, and
     // page.screenshot() waits on font loading, which timed out at 30 s while
     // the world was still streaming and took the whole state down with it.
-    const raw = (await page.evaluate(AUDIT_FN as never, {
-      minTap: MIN_TAP_PX,
-      inset: FINGER_INSET,
-    })) as { kind: Finding['kind']; label: string; detail: string }[] | undefined;
+    // Build a self-calling expression with the args inlined. `evaluate(string)`
+    // EVALUATES the string — a bare `(args) => {...}` therefore yields the
+    // function object itself, which serializes to undefined and never runs. The
+    // second parameter is only honoured for function arguments, which esbuild
+    // has already made unusable here (see addInitScript above).
+    const args = JSON.stringify({ minTap: MIN_TAP_PX, inset: FINGER_INSET });
+    const raw = (await page.evaluate(`(${AUDIT_FN})(${args})`)) as
+      | { kind: Finding['kind']; label: string; detail: string }[]
+      | undefined;
     if (!Array.isArray(raw)) throw new Error(`audit returned ${typeof raw}, not an array`);
     for (const f of raw) findings.push({ profile: profile.name, state: state.name, ...f });
     if (shots) {
       mkdirSync('shots/wip/ui', { recursive: true });
       await page
         .screenshot({ path: `shots/wip/ui/${profile.name}-${state.name}.png`, timeout: 60000 })
-        .catch((e) => console.log(`    (кадр не снят: ${String(e).slice(0, 60)})`));
+        .catch((e) => console.log(`    (no shot: ${String(e).slice(0, 60)})`));
     }
   } catch (e) {
     findings.push({
@@ -276,7 +311,7 @@ async function auditState(
       state: state.name,
       kind: 'OFF_SCREEN',
       label: '(state failed to load)',
-      detail: String(e).slice(0, 160),
+      detail: String(e).slice(0, 700),
     });
   }
   await ctx.close();
@@ -298,12 +333,12 @@ async function main(): Promise<void> {
       const f = await auditState(browser, profile, state, shots);
       all.push(...f);
       const bad = f.length;
-      console.log(`  ${profile.name.padEnd(14)} ${state.name.padEnd(11)} ${bad === 0 ? 'чисто' : bad + ' проблем'}`);
+      console.log(`  ${profile.name.padEnd(14)} ${state.name.padEnd(11)} ${bad === 0 ? 'clean' : bad + ' issue(s)'}`);
     }
   }
   await browser.close();
 
-  console.log('\n══════ НАХОДКИ ══════');
+  console.log('\n====== FINDINGS ======');
   for (const kind of ['OCCLUDED', 'TOO_SMALL', 'OFF_SCREEN'] as const) {
     const f = all.filter((x) => x.kind === kind);
     if (f.length === 0) continue;
@@ -312,7 +347,7 @@ async function main(): Promise<void> {
   }
   mkdirSync('shots/wip', { recursive: true });
   writeFileSync('shots/wip/ui-touch-audit.json', JSON.stringify(all, null, 2));
-  console.log(`\nВсего: ${all.length}. Отчёт: shots/wip/ui-touch-audit.json`);
+  console.log(`\nTotal: ${all.length}. Report: shots/wip/ui-touch-audit.json`);
   if (all.length > 0) process.exit(2);
 }
 

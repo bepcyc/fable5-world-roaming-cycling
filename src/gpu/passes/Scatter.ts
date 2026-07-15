@@ -842,7 +842,7 @@ export async function runScatter(
 
     // logs slide off steep ground; decay class follows moisture. 0.38 (was
     // 0.5): a 5 m rigid tube on a 0.5 slope floats ~1.3 m at the ends —
-    // owner-visible "палки, торчащие из склона" — lean is shear-based and
+    // owner-visible "sticks poking out of the slope" — lean is shear-based and
     // cannot bed a lying log into the incline
     If(cls.equal(int(VegClass.Log)).and(s.slope.greaterThan(0.38)), () => {
       Return();
@@ -1031,13 +1031,13 @@ export async function runScatter(
       .mul(float(1).sub(s.snow.mul(0.85)));
     // soft-track override: on the tread swap the terrain-driven density for a
     // FLAT sparse probability (~5%, textured by patch) so it reads as discrete
-    // окатыши, not an even scree speckle; at the verge lift it so cobbles
+    // rounded cobbles, not an even scree speckle; at the verge lift it so cobbles
     // gather at the shoulder. Off soft tracks stoneBase is untouched.
     const stoneKeyed = treadSoft
       .greaterThan(0.5)
       .select(
         // one candidate per 2.1 m cell — near-1 keeps a fist-melon cobble
-        // every couple metres of tread (ref-01's embedded окатыши); patch
+        // every couple metres of tread (ref-01's embedded rounded cobbles); patch
         // would starve it (0.055×patch ≈ 3% ⇒ one per ~130 m², invisible)
         float(0.95),
         vergeSoft

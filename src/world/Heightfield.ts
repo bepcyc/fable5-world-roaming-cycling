@@ -269,8 +269,8 @@ export class Heightfield {
       await hf.scenicField.bake(renderer);
     }
 
-    // post-carve water reconcile (owner 2026-07-06: «прокапывание ямки
-    // СНАЧАЛА, потом кладите гель»): waterY freezes BEFORE the road carve
+    // post-carve water reconcile (owner 2026-07-06: «dig the pit FIRST,
+    // THEN pour the gel»): waterY freezes BEFORE the road carve
     // lowers ground, so a cutting under a perched pond left the water
     // hanging as a tilted sheet over the new cut. Re-run the containment
     // clamp near roads against the CARVED terrain, then drop residual
