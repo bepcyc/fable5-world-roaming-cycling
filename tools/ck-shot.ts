@@ -56,7 +56,11 @@ async function main(): Promise<void> {
   const w = Number(str(a['w']) ?? 1600);
   const h = Number(str(a['h']) ?? 900);
   const out = str(a['out']) ?? 'shots/wip/m152/ck-shot.png';
-  const extra = str(a['extra']) ?? '';
+  const extraRaw = str(a['extra']) ?? '';
+  // --extra "ridetraj=0" and --extra "&ridetraj=0" both work: the URL below
+  // concatenates right after ridedev=1, so a missing separator silently
+  // corrupts ridedev (→ no power source → coasting) — bitten 2026-07-04.
+  const extra = extraRaw && !extraRaw.startsWith('&') ? `&${extraRaw}` : extraRaw;
   const burstN = Number(str(a['burst']) ?? 1);
   const burstGap = Number(str(a['burstGap']) ?? 3);
 
