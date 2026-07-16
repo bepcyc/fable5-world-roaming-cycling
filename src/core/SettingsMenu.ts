@@ -254,6 +254,7 @@ export class SettingsMenu {
     for (const tab of TAB_ORDER) {
       const b = document.createElement('div');
       b.className = 'qset-tab';
+      b.dataset['tab'] = tab; // stable hook for tooling screenshots
       b.textContent = t(`settings.tab.${tab}`);
       b.addEventListener('click', () => {
         this.activeTab = tab;
