@@ -164,6 +164,50 @@ checks): boots the needed scenes once per check, exits non-zero on any fail.
 Wire 1-6 into package.json script `gates:visual`; document in
 docs/LAUNCH_AND_DEBUG.md.
 
+## Takeover ledger (2026-07-16 ~13:00, opus agents stopped by owner order)
+
+Owner paradigm shift: opus agents stopped mid-flight, main thread harvested
+their worktrees; every NEW agent runs on Fable 5 max with three skills loaded
+first (Skill tool) and this war plan in the brief.
+
+What the opus fronts proved before the stop:
+
+- FRONT A (worktree agent-a74fd0c79cac5adfc, uncommitted diff in
+  src/render/PostStack.ts): ROOT CAUSE of ALL black-sliver artifacts found
+  and fixed. The grade's saturation stage (uSat=1.4 at midday) extrapolates
+  away from luma, driving a saturated hue's minor channel NEGATIVE; the next
+  contrast pow(neg, 1.07) yields NaN; AgX's channel-mixing matrix smears the
+  NaN into pure black. Thin saturated geometry (grass blades, flower stems,
+  unlit magenta debug stems) is the victim; above-horizon stand pixels
+  survived only because sky bleed desaturated them. Fix: clamp before the
+  pow — `c = c.max(0).div(0.18).pow(...)` (PostStack.ts grade tail). Also
+  added ?ablate=aerial and ?ablate=grade instrumentation. Numbers: stand
+  solid 3.809% black/37 clusters -> 0.248% (badge text only); game p7 grass
+  ROI slivers gone (marked SBS in the bot). NOT yet done by A: ablate=bloom
+  output-kill fix, parts-mode vdata read fix, visible trefoil heads,
+  gate-visual runner.
+- FRONT B (worktree agent-a4dab564696c35b6c): probe-roadshape --seeds 1,2,3
+  re-run in progress (seed-1 stations measured ratio=1 so far — bubble fix
+  01edbba appears to HOLD); tools/probe-terrace.ts written (numeric transect
+  across the spot1 river-gravel ribbon incl. surface class per station);
+  oblique spot1 pair shot. NOT yet done: terrace root cause, overlay black
+  producer, class drift (asphalt rendered vs dirt classified), red horizon
+  band, froxel bilinear fix, gates:roads wiring.
+- FRONT C (worktree agent-aad0d51b6a94f1561): specularIntensity sweep on
+  GroundRing grassMaterial CONFIRMS the fix: far-band blue 21.46% ->
+  0.86%/0.92%/0.87% at spec 0.15/0.25/0.35; picked 0.25. tools/
+  measure-grass-blue.mjs + montage-grid.mjs written. CAVEAT: C's near-frame
+  after-shot shows NEW black slivers — that is Front A's grade-NaN bug
+  (C's worktree lacks the clamp; changed shading values push more channels
+  negative). Not a spec-fix regression.
+
+MERGE ORDER (hard): A's NaN-guard first (one-line clamp + ablate keys),
+then C's spec fix re-validated on top (blue numbers stand, sliver pollution
+disappears), then B's road/overlay work. Re-test the spot1 surfdbg BLACK
+BAND after A's clamp lands — the overlay palette colors are fully saturated,
+so the band may be the same NaN mechanism (untested hypothesis; the earlier
+ablate=ao test does NOT rule grade out).
+
 ## Process law for every agent (cannot be dropped)
 
 - Own worktree (Agent isolation=worktree), own LAAS_PORT, own dev server:
