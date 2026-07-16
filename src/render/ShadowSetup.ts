@@ -6,7 +6,7 @@
  */
 
 import type { DirectionalLight, PerspectiveCamera, Texture } from 'three';
-import { shadowMapSize } from '../core/Params';
+import { quality } from '../core/Quality';
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
 import { CachedCsmShadowNode } from './CsmCached';
 import {
@@ -119,12 +119,14 @@ export function setupSunShadows(
     sun.castShadow = false;
     return { csm: null as unknown as CSMShadowNode };
   }
-  const maxFar = opts?.maxFar ?? 3200;
+  const Q = quality();
+  const maxFar = opts?.maxFar ?? Q.shadowMaxFar;
   const lightMargin = opts?.lightMargin ?? 700;
   sun.castShadow = true;
-  // per cascade (CSMShadowNode clones this shadow) — 2048 everywhere except
-  // preset=min, which was paying 4 x 2048^2 = 16.8M shadow texels on a tiler.
-  const smap = shadowMapSize();
+  // per cascade (CSMShadowNode clones this shadow). Resolution is measured
+  // NOT to be a perf lever on tilers (R3) — the knob exists for attribution
+  // and for ultra to buy quality. Quality maps the legacy ?shadowmap= alias.
+  const smap = Q.shadowMapSize;
   sun.shadow.mapSize.set(smap, smap);
   sun.shadow.bias = -0.00012;
   sun.shadow.normalBias = 2.2;
@@ -137,7 +139,7 @@ export function setupSunShadows(
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = lightMargin + maxFar * 2.2;
 
-  if (!ablate.has('pcss')) {
+  if (!ablate.has('pcss') && Q.pcss) {
     const gate = ablate.has('cloudshadow') ? undefined : cloudShadow;
     const filter = gate
       ? Fn((inputs: unknown) => {
@@ -155,8 +157,10 @@ export function setupSunShadows(
   // shadow-debug bisects: ?csmcasc=1 single cascade, ?csmfade=0 hard splits,
   // ?shadowcache=0 re-renders every cascade every frame (perf A/B)
   const q = new URLSearchParams(window.location.search);
+  // cascade count comes from Quality (?csmcasc / ?q.shadowCascades override
+  // there); Forests reads the same value for its per-cascade caster groups.
   const csmOpts = {
-    cascades: Math.max(1, Math.min(4, Number(q.get('csmcasc') ?? 4))),
+    cascades: Math.max(1, Math.min(4, Q.shadowCascades)),
     maxFar,
     mode: 'practical' as const,
     lightMargin,

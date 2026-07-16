@@ -94,6 +94,7 @@ import { buildRock } from './RockBuilder';
 import { buildFlower } from './Understory';
 import type { WorldSeed } from '../core/Seed';
 import { prepassMode } from '../core/Params';
+import { quality } from '../core/Quality';
 import { runiform } from '../gpu/RenderUniform';
 import { RING_DBG, cssOf } from '../debug/DebugPalette';
 
@@ -113,24 +114,15 @@ import { RING_DBG, cssOf } from '../debug/DebugPalette';
  * thinning: survivors widen by S (see `widen` in grassMaterial), which is the
  * same 1/sqrt(density) compensation applied to a constant instead of a curve.
  *
- * ?grassscale=N overrides on any preset (sweep knob). Desktop = preset=high = 1
- * = the shipped geometry, byte for byte.
+ * All grass axes resolve through Quality.ts (?grassscale legacy alias and
+ * ?q.grassScale both work). Desktop = preset=high = the shipped geometry,
+ * byte for byte.
  */
-function grassScale(search: string = window.location.search): number {
-  const q = new URLSearchParams(search);
-  const raw = q.get('grassscale');
-  if (raw !== null) {
-    const n = Number(raw);
-    // must divide 3072 into an integer grid; 1..8 covers every useful step
-    if (Number.isFinite(n) && n >= 1 && n <= 8 && 3072 % n === 0) return n;
-  }
-  return (q.get('preset') ?? 'high') === 'min' ? 2 : 1;
-}
-
-const G_SCALE = grassScale();
+const Q = quality();
+const G_SCALE = Q.grassScale;
 const GRASS_GRID = 3072 / G_SCALE;
 const GRASS_CELL = 0.105 * G_SCALE; // ±161 m ring at every scale, ~90/S² slots/m²
-const GRASS_R = 155;
+const GRASS_R = Q.grassRadius;
 const G_NEAR = 30;
 const G_MID = 70;
 /** crossfade half-width — cull overlap and material fade MUST share it */
@@ -170,9 +162,12 @@ const DEB_CAPS = [24576, 49152, 49152, 32768, 65536];
 // far super-tuft layer (g3, feedback 2.8): its own COARSE toroidal grid —
 // the fine grid physically ends at ±161 m. Wide merged tufts carry the
 // meadow silhouette 150→265 m; beyond that the terrain splat owns it.
+// FAR_R0 tracks a shortened fine ring so no bald gap opens between the
+// fine band's dissolve and the super-tuft fade-in (identity at default:
+// GRASS_R 155 keeps the shipped 150).
 const FAR_GRID = 768;
 const FAR_CELL = 0.7; // ±269 m ring, ~2 slots/m²
-const FAR_R0 = 150;
+const FAR_R0 = Math.min(150, GRASS_R - 5);
 const FAR_R = 265;
 const FAR_CAP = 196608;
 
@@ -938,7 +933,11 @@ export class GroundRing {
     // ---------------- draws -------------------------------------------------------
     const draws: { geo: BufferGeometry; mat: MeshStandardNodeMaterial; g: number }[] = [];
 
-    const grassGeos = [bladeClump(5, 4), bladeClump(3, 2), tuftGeometry()];
+    const grassGeos = [
+      bladeClump(Q.grassBladesNear, Q.grassSegsNear),
+      bladeClump(Q.grassBladesMid, Q.grassSegsMid),
+      tuftGeometry(),
+    ];
     const grassFades: [number | null, number | null][] = [
       [null, G_NEAR],
       [G_NEAR, G_MID],
@@ -959,7 +958,7 @@ export class GroundRing {
 
     // far super-tufts: one draw on the coarse list, wide cards, full
     // terrain-normal shading (mode 'far' in grassMaterial)
-    {
+    if (Q.grassFarLayer) {
       const bindF: RingBind = {
         cells,
         heights,
@@ -973,6 +972,7 @@ export class GroundRing {
     }
 
     const rng = this.seed.rng('groundring/geo');
+    if (Q.debris) {
     const debrisGeos: BufferGeometry[] = [
       buildRock('cobble', rng.fork('cobble'), 2).geometry,
       buildRock('cobble', rng.fork('pebble'), 1).geometry,
@@ -1061,6 +1061,7 @@ export class GroundRing {
         g: rb.g,
       });
     }
+    } // end if (Q.debris)
 
     const D = draws.length;
     const indirectData = new Uint32Array(D * 5);
@@ -1136,7 +1137,12 @@ export class GroundRing {
     })().compute(D);
     indirectK.setName('ringIndirect');
 
-    this.kernels = [clearK, grassK, debrisK, farK, indirectK];
+    // debris/far culls only run when their draws exist — a skipped pool's
+    // counters stay 0 and its indirect slots are never read
+    this.kernels = [clearK, grassK];
+    if (Q.debris) this.kernels.push(debrisK);
+    if (Q.grassFarLayer) this.kernels.push(farK);
+    this.kernels.push(indirectK);
   }
 
   /** blade/tuft material — color matched to the terrain grass palette */

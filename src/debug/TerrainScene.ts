@@ -28,6 +28,7 @@ import { WaterSurface } from '../world/WaterSurface';
 import { PostStack } from '../render/PostStack';
 import { setupSunShadows } from '../render/ShadowSetup';
 import { Clouds } from '../sky/Clouds';
+import { quality } from '../core/Quality';
 import { SunSky } from '../sky/SunSky';
 import { WeatherState } from '../sky/Weather';
 import type { WorldContext } from './Scenes';
@@ -107,6 +108,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   const ablate = new Set(
     (new URLSearchParams(window.location.search).get('ablate') ?? '').split(','),
   );
+  const Q = quality();
 
   // irradiance probe field (Phase 3 GI; canopy-aware since Phase 5 —
   // ?ablate=canopygi rebuilds the bare-heightfield field for A/B)
@@ -123,7 +125,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   // Phase 6 caustics: per-frame analytic bake + module context — MUST be
   // set before any material factory runs (terrain tiles, rocks, debris all
   // self-apply at build time). ?ablate=caustics to A/B, ?caustk=N to tune.
-  if (!ablate.has('caustics')) {
+  if (!ablate.has('caustics') && Q.caustics) {
     const bake = new CausticsBake();
     const ck = Number(new URLSearchParams(window.location.search).get('caustk') ?? NaN);
     if (Number.isFinite(ck)) bake.focusK.value = ck;
@@ -223,21 +225,29 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
     }
   }
 
-  // volumetric clouds (noise bake + sun-shadow map)
-  ctx.progress(0.97, 'sky: baking cloud noise');
-  const clouds = new Clouds(sunSky.atmosphere);
-  await clouds.init(engine.renderer);
-  // weather motion (Pillar F): drift on WORLD time so ?freeze=1 shots stay
-  // deterministic; the drifted shadow map re-bakes itself every ~2.5 s
-  let lastWt = 0;
-  engine.onUpdate((_dt, wt) => {
-    clouds.tick(engine.renderer, wt - lastWt);
-    lastWt = wt;
-  });
+  // volumetric clouds (noise bake + sun-shadow map). Quality can drop the
+  // whole layer (min preset): every consumer below tolerates null.
+  let clouds: Clouds | null = null;
+  if (Q.clouds) {
+    ctx.progress(0.97, 'sky: baking cloud noise');
+    const cl = new Clouds(sunSky.atmosphere);
+    await cl.init(engine.renderer);
+    // weather motion (Pillar F): drift on WORLD time so ?freeze=1 shots stay
+    // deterministic; the drifted shadow map re-bakes itself every ~2.5 s
+    let lastWt = 0;
+    engine.onUpdate((_dt, wt) => {
+      cl.tick(engine.renderer, wt - lastWt);
+      lastWt = wt;
+    });
+    clouds = cl;
+  }
 
   // 4-cascade CSM + PCSS contact hardening; cloud shadows gate the sun term
-  const shadowRig = setupSunShadows(sunSky.sun, engine.camera, (wxz) =>
-    clouds.shadowAt(wxz),
+  const cl0 = clouds;
+  const shadowRig = setupSunShadows(
+    sunSky.sun,
+    engine.camera,
+    cl0 ? (wxz): ReturnType<Clouds['shadowAt']> => cl0.shadowAt(wxz) : undefined,
   );
   // cascade cameras drive the per-cascade caster cull in Forests
   forestsRef?.setCSM(shadowRig.csm ?? null);
@@ -249,7 +259,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   };
 
   // GPU particles: snow/pollen/leaves riding the wind (?ablate=particles)
-  if (view !== 'split' && !ablate.has('particles')) {
+  if (view !== 'split' && !ablate.has('particles') && Q.particleCount > 0) {
     const parts = new Particles(hf, canopyTex, ablate.has('gi') ? null : gi);
     engine.scene.add(parts.mesh);
     engine.onUpdate((dt) => parts.update(engine.renderer, engine.camera, dt));
@@ -258,7 +268,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
 
   // froxel volumetrics: canopy shafts + valley fog (?ablate=froxels, ?fog=N)
   let froxels: Froxels | null = null;
-  if (!ablate.has('froxels')) {
+  if (!ablate.has('froxels') && Q.froxels) {
     froxels = new Froxels(hf, sunSky.atmosphere, canopyTex, clouds);
     const fq = Number(new URLSearchParams(window.location.search).get('fog') ?? NaN);
     if (Number.isFinite(fq)) froxels.fogK.value = fq;
@@ -283,14 +293,14 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
   ctx.hooks.setTimeOfDay = (t: number) => {
     void (async () => {
       await sunSky.setTimeOfDay(t);
-      await clouds.refreshShadow(engine.renderer);
+      if (clouds) await clouds.refreshShadow(engine.renderer);
       gi.invalidate();
       post.setTimeOfDay(t);
     })();
   };
   window.addEventListener('keydown', (e) => {
     if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
-      void clouds.refreshShadow(engine.renderer);
+      if (clouds) void clouds.refreshShadow(engine.renderer);
       post.setTimeOfDay(sunSky.timeOfDay);
     }
   });

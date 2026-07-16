@@ -76,6 +76,9 @@ export interface LaasHooks {
   /** opens the in-world OptionsMenu (weather/ToD/bike/keys) — set once the
    *  world scene builds it; the pause-menu's "Settings" button calls this */
   openSettings: (() => void) | null;
+  /** opens the full graphics settings screen (SettingsMenu, quality axes) —
+   *  reachable from both the splash machine settings and the in-world menu */
+  openGraphicsSettings: (() => void) | null;
 }
 
 declare global {
@@ -102,6 +105,7 @@ export function initHooks(): LaasHooks {
     settle: null,
     flyCamEnabled: null,
     openSettings: null,
+    openGraphicsSettings: null,
   };
   window.__laas = hooks;
   return hooks;

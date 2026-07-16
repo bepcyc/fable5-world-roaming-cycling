@@ -1,6 +1,6 @@
 /** URL parameter parsing — every run is fully described by its URL. */
 
-export type QualityPreset = 'min' | 'low' | 'high' | 'ultra';
+export type QualityPreset = 'min' | 'low' | 'mid' | 'high' | 'ultra';
 
 export interface LaasParams {
   /** world seed — reproduces the entire world */
@@ -62,7 +62,9 @@ export function parseParams(search: string = window.location.search): LaasParams
   const q = new URLSearchParams(search);
   const presetRaw = q.get('preset') ?? 'high';
   const preset: QualityPreset =
-    presetRaw === 'min' || presetRaw === 'low' || presetRaw === 'ultra' ? presetRaw : 'high';
+    presetRaw === 'min' || presetRaw === 'low' || presetRaw === 'mid' || presetRaw === 'ultra'
+      ? presetRaw
+      : 'high';
   const shotN = num(q.get('shot'), 0);
   return {
     seed: Math.floor(num(q.get('seed'), 1)) >>> 0,

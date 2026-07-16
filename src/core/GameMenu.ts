@@ -38,7 +38,7 @@ export function shouldBypass(params: LaasParams): boolean {
   return false;
 }
 
-const PRESETS: QualityPreset[] = ['low', 'high', 'ultra'];
+const PRESETS: QualityPreset[] = ['min', 'low', 'mid', 'high', 'ultra'];
 // Labels come from I18n, which is the only file allowed to hold non-Latin
 // text. A language picker names each language in its OWN language, so 'ru'
 // must name itself in Cyrillic — that string therefore lives in the dictionary.
@@ -214,6 +214,14 @@ export class GameMenu {
       card.addEventListener('click', () => this.applyPreset(p));
       presetRow.appendChild(card);
     }
+    // full per-axis graphics screen (SettingsMenu) — sits under the preset
+    // row; presets stay the one-click path, this is the god-mode door
+    const gfx = document.createElement('div');
+    gfx.className = 'msettings-card-item';
+    gfx.style.gridColumn = '1 / -1';
+    gfx.textContent = t('settings.title') + ' …';
+    gfx.addEventListener('click', () => this.hooks.openGraphicsSettings?.());
+    presetRow.appendChild(gfx);
 
     const max = hardwareThreads();
     const current = (() => {
