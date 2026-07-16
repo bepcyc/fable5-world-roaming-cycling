@@ -39,8 +39,16 @@ import { launchWebGPUReal, LAAS_ORIGIN } from './launch-gpu';
 const BUBBLE_X = 2.0;
 /** Necked below this fraction of declared width = a thread, not a lane. */
 const THIN_X = 0.5;
-/** Gate: share of stations allowed to be anomalous, per seed. */
-const MAX_ANOMALY_PCT = 5;
+/** Gate: generated roads may not contain known shape anomalies. */
+const MAX_ANOMALY_PCT = 0;
+
+const MIN_WIDTH_M: Readonly<Record<string, number>> = {
+  asphalt: 1.5,
+  'gravel-fine': 1.0,
+  'gravel-coarse': 1.0,
+  'dirt-road': 0.5,
+  singletrack: 0.5,
+};
 
 interface Args {
   [k: string]: string | boolean;
@@ -63,6 +71,7 @@ const str = (v: string | boolean | undefined): string | undefined =>
   typeof v === 'string' ? v : undefined;
 
 interface Station {
+  pointIndex: number;
   x: number;
   z: number;
   measuredW: number;
@@ -72,6 +81,8 @@ interface Station {
   edgeStepM: number;
   crossSlopePct: number;
   wetTread: number;
+  turnDeg: number;
+  selfNearM: number;
 }
 interface SeedResult {
   seed: number;
@@ -111,8 +122,9 @@ async function measureSeed(seed: number, cls: string, preset: string): Promise<S
     // road-class surface ids (SurfaceMatrix.ts): Asphalt 10, GravelFine 11,
     // GravelCoarse 12, DirtRoad 13, Singletrack 14 — GravelRiver(5) is NOT a
     // road, it is the riverbed class the carve must not dissolve into.
-    var ROAD_IDS = { 10: 1, 11: 1, 12: 1, 13: 1, 14: 1 };
+    var SURFACE_IDS = { asphalt: 10, 'gravel-fine': 11, 'gravel-coarse': 12, 'dirt-road': 13, singletrack: 14 };
     var CLS = ${JSON.stringify(cls)};
+    var TARGET_ID = SURFACE_IDS[CLS];
     // RoadRoute.cls is a RoadClassSpec OBJECT (RoadNetwork.ts:116-120), not a
     // string. Guessing through r.cls || r.klass || r.type picked the object,
     // String()'d it to [object Object], matched nothing, and reported "no
@@ -128,6 +140,7 @@ async function measureSeed(seed: number, cls: string, preset: string): Promise<S
     }
     var pick = routes.slice().sort(function (a, b) { return (b.pts ? b.pts.length : 0) - (a.pts ? a.pts.length : 0); })[0];
     var pts = pick.pts || [];
+    var otherRoutes = roads.routes.filter(function (r) { return r !== pick; });
     // Same trap as the class lookup above, and this file fell into it twice:
     // halfWidth is declared on RoadClassSpec (RoadNetwork.ts:38), reached as
     // route.cls.halfWidth. Probing for a field by trying names until one is
@@ -148,6 +161,36 @@ async function measureSeed(seed: number, cls: string, preset: string): Promise<S
       var dx = bx - ax, dz = bz - az;
       var L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
       var nx = -dz, nz = dx;
+      var inX = px - ax, inZ = pz - az, outX = bx - px, outZ = bz - pz;
+      var turnDeg = Math.acos(Math.max(-1, Math.min(1,
+        (inX * outX + inZ * outZ) / ((Math.hypot(inX, inZ) * Math.hypot(outX, outZ)) || 1)))) * 180 / Math.PI;
+      var selfNearM = 1e9;
+      for (var sj = 0; sj < pts.length - 1; sj++) {
+        if (sj >= i - 3 && sj <= i + 2) continue;
+        var su = pts[sj], sv = pts[sj + 1];
+        var sux = su.x != null ? su.x : su[0], suz = su.z != null ? su.z : su[1];
+        var svx = sv.x != null ? sv.x : sv[0], svz = sv.z != null ? sv.z : sv[1];
+        var sex = svx - sux, sez = svz - suz, se2 = sex * sex + sez * sez || 1;
+        var st = Math.max(0, Math.min(1, ((px - sux) * sex + (pz - suz) * sez) / se2));
+        selfNearM = Math.min(selfNearM, Math.hypot(px - (sux + sex * st), pz - (suz + sez * st)));
+      }
+
+      // A transect through a real junction measures the union of two road
+      // axes, not the width of this road. Exclude the shared footprint; the
+      // general road gate separately checks junction height/conformance.
+      var atJunction = otherRoutes.some(function (r) {
+        var q = r.pts || [], reach = halfW + (r.cls ? r.cls.halfWidth : 0) + 2;
+        for (var j = 0; j < q.length - 1; j++) {
+          var u = q[j], v = q[j + 1];
+          var ux = u.x != null ? u.x : u[0], uz = u.z != null ? u.z : u[1];
+          var vx = v.x != null ? v.x : v[0], vz = v.z != null ? v.z : v[1];
+          var ex = vx - ux, ez = vz - uz, e2 = ex * ex + ez * ez || 1;
+          var t = Math.max(0, Math.min(1, ((px - ux) * ex + (pz - uz) * ez) / e2));
+          if (Math.hypot(px - (ux + ex * t), pz - (uz + ez * t)) <= reach) return true;
+        }
+        return false;
+      });
+      if (atJunction) continue;
 
       // cut far enough out to catch a blob: ±6x the declared half-width
       var span = halfW * 6, ds = 0.2;
@@ -156,15 +199,17 @@ async function measureSeed(seed: number, cls: string, preset: string): Promise<S
         var g = probe(px + nx * s, pz + nz * s);
         cut.push({ s: s, h: g.ground, w: g.water, sid: g.surfaceId });
       }
-      // measured width = the CONTIGUOUS road-class run through s=0
+      // measured width = the CONTIGUOUS target-class run through s=0.
+      // Counting every road id hid lower-class overwrites through asphalt.
       var mid = Math.round(span / ds);
       var lo = mid, hi = mid;
-      if (!ROAD_IDS[cut[mid].sid]) { lo = mid; hi = mid; }
+      var measuredW = 0;
+      if (cut[mid].sid !== TARGET_ID) { lo = mid; hi = mid; }
       else {
-        while (lo > 0 && ROAD_IDS[cut[lo - 1].sid]) lo--;
-        while (hi < cut.length - 1 && ROAD_IDS[cut[hi + 1].sid]) hi++;
+        while (lo > 0 && cut[lo - 1].sid === TARGET_ID) lo--;
+        while (hi < cut.length - 1 && cut[hi + 1].sid === TARGET_ID) hi++;
+        measuredW = (hi - lo) * ds;
       }
-      var measuredW = (hi - lo) * ds;
 
       var tread = cut.filter(function (c) { return Math.abs(c.s) <= halfW; });
       var th = tread.map(function (c) { return c.h; });
@@ -176,9 +221,10 @@ async function measureSeed(seed: number, cls: string, preset: string): Promise<S
       var cross = ((at(halfW).h - at(-halfW).h) / (2 * halfW)) * 100;
       var wet = tread.filter(function (c) { return c.w > c.h; }).length;
 
-      out.push({ x: +px.toFixed(1), z: +pz.toFixed(1), measuredW: +measuredW.toFixed(2),
+      out.push({ pointIndex: i, x: +px.toFixed(1), z: +pz.toFixed(1), measuredW: +measuredW.toFixed(2),
         treadFlatnessMm: +(pp * 1000).toFixed(0), edgeStepM: +edge.toFixed(3),
-        crossSlopePct: +cross.toFixed(1), wetTread: wet });
+        crossSlopePct: +cross.toFixed(1), wetTread: wet,
+        turnDeg: +turnDeg.toFixed(1), selfNearM: +selfNearM.toFixed(1) });
     }
     return JSON.stringify({ halfWidth: halfW, stations: out });
   })()`;
@@ -190,11 +236,21 @@ async function measureSeed(seed: number, cls: string, preset: string): Promise<S
 
   const halfW = d['halfWidth'] as number;
   const declaredW = halfW * 2;
+  const minimumW = MIN_WIDTH_M[cls] ?? 0.5;
+  // The CPU surface map is 1 m/texel. A sub-2 m trail can gain up to one
+  // texel on either side at diagonal/curved stations even though the baked
+  // visual field remains continuous at its declared width.
+  const bubbleRatio = Math.max(BUBBLE_X, (declaredW + 2) / declaredW);
   const stations: Station[] = (d['stations'] as Record<string, number>[]).map((s) => {
     const ratio = (s['measuredW'] as number) / declaredW;
     const kind: Station['kind'] =
-      ratio >= BUBBLE_X ? 'bubble' : ratio <= THIN_X ? 'thinning' : 'ok';
+      ratio >= bubbleRatio || ratio <= THIN_X || (s['measuredW'] as number) < minimumW
+        ? ratio >= bubbleRatio
+          ? 'bubble'
+          : 'thinning'
+        : 'ok';
     return {
+      pointIndex: s['pointIndex'] as number,
       x: s['x'] as number,
       z: s['z'] as number,
       measuredW: s['measuredW'] as number,
@@ -204,6 +260,8 @@ async function measureSeed(seed: number, cls: string, preset: string): Promise<S
       edgeStepM: s['edgeStepM'] as number,
       crossSlopePct: s['crossSlopePct'] as number,
       wetTread: s['wetTread'] as number,
+      turnDeg: s['turnDeg'] as number,
+      selfNearM: s['selfNearM'] as number,
     };
   });
   const bubbles = stations.filter((s) => s.kind === 'bubble').length;
@@ -228,9 +286,12 @@ async function main(): Promise<void> {
   const results: SeedResult[] = [];
   for (const seed of seeds) results.push(await measureSeed(seed, cls, preset));
 
+  const declaredW = results[0]?.declaredW ?? 1;
+  const effectiveBubbleX = Math.max(BUBBLE_X, (declaredW + 2) / declaredW);
   console.log(`\n╔═══ ROAD SHAPE «${cls}» — GATE ═══`);
-  console.log(`║ declared roadbed width: ${results[0]?.declaredW.toFixed(1)} m`);
-  console.log(`║ bubble: width ≥ ${BUBBLE_X}× declared | thinning: ≤ ${THIN_X}×`);
+  console.log(`║ declared roadbed width: ${declaredW.toFixed(1)} m`);
+  console.log(`║ bubble: width ≥ ${effectiveBubbleX.toFixed(2)}× declared | thinning: ≤ ${THIN_X}×`);
+  console.log(`║ absolute minimum: ${MIN_WIDTH_M[cls] ?? 0.5} m`);
   console.log(`║ budget: ≤ ${MAX_ANOMALY_PCT}% stations per seed\n`);
   let failed = 0;
   for (const r of results) {
@@ -245,7 +306,7 @@ async function main(): Promise<void> {
       .slice(0, 4);
     for (const w of worst) {
       console.log(
-        `      ${w.kind.padEnd(11)} x=${w.x} z=${w.z}  width ${w.measuredW} m (${w.ratio}× declared)  flatness ${w.treadFlatnessMm}mm  edge step ${w.edgeStepM}m  water ${w.wetTread}`,
+        `      ${w.kind.padEnd(11)} i=${w.pointIndex} x=${w.x} z=${w.z}  width ${w.measuredW} m (${w.ratio}× declared)  turn ${w.turnDeg}° selfNear ${w.selfNearM}m  flatness ${w.treadFlatnessMm}mm  edge step ${w.edgeStepM}m  water ${w.wetTread}`,
       );
     }
   }

@@ -386,6 +386,14 @@ export class Heightfield {
       }
     }
     const center = sm[gz * res + gx] ?? SurfaceId.Soil;
+    const isRoad = (id: number): boolean =>
+      id >= SurfaceId.Asphalt && id <= SurfaceId.Singletrack;
+    // A singletrack is intentionally one texel wide. The natural-surface
+    // 3x3 vote erased that exact center texel under the rider and sometimes
+    // expanded it beside the trail, so physics reported rock/soil while the
+    // baked road field still painted a narrow tread. Road ownership is
+    // already stable and deterministic: preserve the exact stamped texel.
+    if (isRoad(center)) return center;
     let best = center;
     let bestN = counts[center] ?? 0;
     for (let id = 0; id < counts.length; id++) {
@@ -395,7 +403,7 @@ export class Heightfield {
         bestN = n;
       }
     }
-    return best;
+    return isRoad(best) ? center : best;
   }
 
   /** central-difference slope (rise/run) from the CPU height mirror — the

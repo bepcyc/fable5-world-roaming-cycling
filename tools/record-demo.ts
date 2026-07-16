@@ -11,7 +11,7 @@
  *
  * Usage:
  *   npx tsx tools/record-demo.ts [--dur 20] [--res 1920x1080] [--seed 1] [--T 11]
- *     [--route <name>] [--edge <id>] [--s <m>] [--dir 1|-1]
+ *     [--cls asphalt|gravel-fine] [--route <name>] [--edge <id>] [--s <m>] [--dir 1|-1]
  *
  * Spawn overrides (exact-replay support): --edge pins the edge by id (beats
  * --route; a pinned edge is exempt from the MIN_EDGE_LEN filter), --route
@@ -60,6 +60,7 @@ interface Cli {
   height: number;
   seed: number;
   t: number;
+  cls?: 'asphalt' | 'gravel-fine';
   /** spawn overrides — replay a demo at the exact same place */
   route?: string;
   edge?: number;
@@ -86,12 +87,17 @@ function parseCli(argv: string[]): Cli {
   if (dirN !== undefined && dirN !== 1 && dirN !== -1) {
     throw new Error(`bad --dir "${dirN}" (expected 1 or -1)`);
   }
+  const cls = get('--cls');
+  if (cls !== undefined && cls !== 'asphalt' && cls !== 'gravel-fine') {
+    throw new Error(`bad --cls "${cls}" (expected asphalt or gravel-fine)`);
+  }
   return {
     dur: Number(get('--dur') ?? 20),
     width: Number(m[1]),
     height: Number(m[2]),
     seed: Number(get('--seed') ?? 1),
     t: Number(get('--T') ?? 11),
+    cls: cls as 'asphalt' | 'gravel-fine' | undefined,
     route: get('--route'),
     edge: num('--edge'),
     s: num('--s'),
@@ -166,6 +172,7 @@ function chooseSpawn(data: RoadData, cli: Cli): SpawnChoice {
     { clsName: 'asphalt', edges: data.asphalt },
     { clsName: 'gravel-fine', edges: data.gravelFine },
   ];
+  if (cli.cls !== undefined) pools = pools.filter((p) => p.clsName === cli.cls);
 
   let clsName: 'asphalt' | 'gravel-fine';
   let edge: EdgeInfo;

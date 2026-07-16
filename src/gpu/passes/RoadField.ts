@@ -81,7 +81,7 @@ export interface RoadSampleBaked {
 interface SegBuffers {
   segsA: StorageBufferNode<'vec4'>; // ax, az, bx, bz
   segsB: StorageBufferNode<'vec4'>; // y0, y1, halfW, surfIdF
-  segsC: StorageBufferNode<'vec4'>; // bank0, bank1, dispScale, fordF
+  segsC: StorageBufferNode<'vec4'>; // bank0, bank1, stable road key, fordF
   starts: StorageBufferNode<'uint'>; // bucket start offsets (BUCKET_N²+1)
   list: StorageBufferNode<'uint'>; // flattened segment indices
   nSeg: number;
@@ -92,7 +92,7 @@ export class RoadField {
   private readonly seg: SegBuffers;
   /** baked signed lateral (ROAD_FIELD_RES², f32) */
   latBuf: FloatBuffer | null = null;
-  /** baked per-texel meta of the nearest segment (halfW, surfId, disp, ford) */
+  /** baked nearest-segment meta (halfW, surfId, unsigned dist, roadKey*2+ford) */
   metaBuf: StorageBufferNode<'vec4'> | null = null;
 
   constructor(net: RoadNetwork) {
@@ -110,7 +110,7 @@ export class RoadField {
     segs.forEach((s, i) => {
       a.set([s.ax, s.az, s.bx, s.bz], i * 4);
       b.set([s.y0, s.y1, s.cls.halfWidth, s.cls.surfaceId], i * 4);
-      c.set([s.bank0, s.bank1, s.cls.dispScale, s.ford ? 1 : 0], i * 4);
+      c.set([s.bank0, s.bank1, s.roadIndex + 1, s.ford ? 1 : 0], i * 4);
     });
 
     // bucket grid: segment index lists per 32 m cell (within BUCKET_R reach)
@@ -169,8 +169,8 @@ export class RoadField {
     profile: NF;
     halfW: NF;
     surfIdF: NF;
-    dispScale: NF;
     ford: NF;
+    roadKey: NF;
   } {
     const { segsA, segsB, segsC, starts, list } = this.seg;
     const cx = clamp(p.x.div(WORLD_SIZE).add(0.5).mul(BUCKET_N).floor(), 0, BUCKET_N - 1).toInt();
@@ -198,13 +198,31 @@ export class RoadField {
       const t = p.sub(A.xy).dot(ab).div(len2).saturate();
       const dv = p.sub(A.xy.add(ab.mul(t)));
       const d = dv.length();
+      const SB = segsB.element(si) as unknown as NV4;
+      const bestB = segsB.element(bestSeg) as unknown as NV4;
+      const candidateInside = d.lessThan(SB.z);
+      const bestInside = bestD.lessThan(bestB.z);
+      // Inside overlapping surfaced corridors, the engineered hierarchy is
+      // stable: asphalt owns gravel, gravel owns dirt, and dirt owns trail
+      // (road SurfaceIds are ordered in that hierarchy). Pure nearest-
+      // segment ownership let a crossing trail punch a zero-width stripe
+      // through an asphalt road. Outside every roadbed, distance stays the
+      // normal nearest-segment field.
+      const wins = candidateInside
+        .and(bestInside.not())
+        .or(
+          candidateInside.and(bestInside).and(
+            SB.w.lessThan(bestB.w).or(SB.w.equal(bestB.w).and(d.lessThan(bestD))),
+          ),
+        )
+        .or(candidateInside.not().and(bestInside.not()).and(d.lessThan(bestD)));
       // segment endpoints of the same polyline are ~14 m apart — treat
       // candidates whose foot points are near as "the same road"
       const bq = segsA.element(bestSeg) as unknown as NV4;
       const bFoot = bq.xy.add(bq.zw.sub(bq.xy).mul(bestT));
       const foot = A.xy.add(ab.mul(t));
       const sameRoad = foot.sub(bFoot).length().lessThan(10);
-      If(d.lessThan(bestD), () => {
+      If(wins, () => {
         If(has.greaterThan(0.5).and(sameRoad.not()), () => {
           nextD.assign(bestD);
           nextT.assign(bestT);
@@ -250,8 +268,8 @@ export class RoadField {
       profile,
       halfW,
       surfIdF,
-      dispScale: C.z,
       ford: C.w,
+      roadKey: C.z,
     };
   }
 
@@ -298,7 +316,7 @@ export class RoadField {
       const p = vec2(float(x).add(0.5), float(y).add(0.5)).div(FR).sub(0.5).mul(WORLD_SIZE);
       if (this.seg.nSeg === 0) {
         lat.element(i).assign(ROAD_FAR);
-        meta.element(i).assign(vec4(0, 0, 0, 0));
+        meta.element(i).assign(vec4(0, 0, ROAD_FAR, 0));
         return;
       }
       const r = this.evalExact(p);
@@ -312,7 +330,10 @@ export class RoadField {
       meta
         .element(i)
         .assign(
-          ok.select(vec4(r.halfW, r.surfIdF, r.dispScale, r.ford), vec4(0, 0, 0, 0)),
+          ok.select(
+            vec4(r.halfW, r.surfIdF, r.dist, r.roadKey.mul(2).add(r.ford)),
+            vec4(0, 0, ROAD_FAR, 0),
+          ),
         );
     })().compute(FR * FR);
     kernel.setName('roadFieldBake');
@@ -366,12 +387,41 @@ export class RoadField {
     if (!latB || !metaB) throw new Error('RoadField.bake() must run first');
     const FR = ROAD_FIELD_RES;
     const uv = clamp(p.div(WORLD_SIZE).add(0.5), 0, 1);
-    const lat = bilerpFloatBuffer(latB, FR, uvToGrid(uv, FR));
+    const grid = uvToGrid(uv, FR);
+    const lat = bilerpFloatBuffer(latB, FR, grid);
     const g = uv.mul(FR);
     const gx = clamp(g.x.floor(), 0, FR - 1).toInt();
     const gy = clamp(g.y.floor(), 0, FR - 1).toInt();
     const meta = metaB.element(gy.mul(FR).add(gx)) as unknown as NV4;
-    const dist = lat.abs();
+    // A signed field preserves a sub-texel trail center, but signs from two
+    // different roads are unrelated. Interpolating across that ownership
+    // boundary used to cancel to zero and paint phantom hairline roads over
+    // the terrain between them. Only interpolate signs when all four source
+    // texels belong to the same road; otherwise use the nearest texel's exact
+    // unsigned distance, corrected by the maximum change to this query.
+    const gc = clamp(grid, 0, FR - 1);
+    const i0 = gc.floor();
+    const x0 = i0.x.toInt();
+    const y0 = i0.y.toInt();
+    const x1 = clamp(i0.x.add(1), 0, FR - 1).toInt();
+    const y1 = clamp(i0.y.add(1), 0, FR - 1).toInt();
+    const code00 = (metaB.element(y0.mul(FR).add(x0)) as unknown as NV4).w;
+    const code10 = (metaB.element(y0.mul(FR).add(x1)) as unknown as NV4).w;
+    const code01 = (metaB.element(y1.mul(FR).add(x0)) as unknown as NV4).w;
+    const code11 = (metaB.element(y1.mul(FR).add(x1)) as unknown as NV4).w;
+    const routeOf = (code: NF): NF => code.div(2).floor();
+    const routeKey = routeOf(meta.w);
+    const coherent = routeKey
+      .greaterThan(0)
+      .and(routeOf(code00).equal(routeKey))
+      .and(routeOf(code10).equal(routeKey))
+      .and(routeOf(code01).equal(routeKey))
+      .and(routeOf(code11).equal(routeKey));
+    const nearestGrid = vec2(gx, gy);
+    const unsignedFallback = meta.z
+      .sub(gc.sub(nearestGrid).length().mul(WORLD_SIZE / FR))
+      .max(0);
+    const dist = coherent.select(lat.abs(), unsignedFallback);
     const halfW = meta.x;
     const edgeK = smoothstep(halfW.add(0.35), halfW.sub(0.35), dist).mul(
       halfW.greaterThan(0.01).select(float(1), float(0)),
@@ -381,8 +431,8 @@ export class RoadField {
       dist,
       halfW,
       surfIdF: meta.y,
-      dispScale: meta.z,
-      ford: meta.w,
+      dispScale: dispScaleOf(meta.y),
+      ford: meta.w.sub(routeKey.mul(2)),
       edgeK,
     };
   }
@@ -469,6 +519,18 @@ function crownOf(surfIdF: NF): NF {
       .greaterThan(c.surfaceId - 0.5)
       .and(surfIdF.lessThan(c.surfaceId + 0.5))
       .select(float(c.crownSlope), e) as NF;
+  }
+  return e;
+}
+
+/** per-class terrain micro-displacement survival. */
+function dispScaleOf(surfIdF: NF): NF {
+  let e: NF = float(0);
+  for (const c of ROAD_CLASSES) {
+    e = surfIdF
+      .greaterThan(c.surfaceId - 0.5)
+      .and(surfIdF.lessThan(c.surfaceId + 0.5))
+      .select(float(c.dispScale), e) as NF;
   }
   return e;
 }

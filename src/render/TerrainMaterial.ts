@@ -538,8 +538,13 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     // wheel tracks: two compaction bands where tires actually run
     const track = smoothstep(0.16, 0.02, latN.sub(0.55).abs());
     const sid = rs.surfIdF;
+    // Surface ids are discrete, but the baked GPU field can deliver values on
+    // class boundaries after filtering/precision loss. Quantize once before
+    // every material test so a road core can never fall through all classes
+    // and render as a black or foreign-surface strip.
+    const sidI = sid.add(0.5).floor().clamp(0, SurfaceId.COUNT - 1);
     const is = (id: SurfaceId): NF =>
-      sid.greaterThan(id - 0.5).and(sid.lessThan(id + 0.5)).select(float(1), float(0));
+      sidI.equal(float(id)).select(float(1), float(0));
     // asphalt: weathered mountain blacktop, faint patchwork, tire-polished bands
     const asphalt = mix(vec3(0.062, 0.062, 0.066), vec3(0.095, 0.093, 0.094), val(3.1, 0.19, 0.53))
       .mul(macroMix.mul(0.2).add(0.9))
@@ -559,7 +564,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
       .add(vec3(0.07, 0.068, 0.06).mul(speck))
       .sub(vec3(0.05, 0.05, 0.045).mul(speckD));
     // graded dirt: compacted soil, darker ruts, grassy center strip
-    const rut = smoothstep(0.18, 0.04, latN.sub(0.55).abs());
+    const rut = smoothstep(0.2, 0.045, latN.sub(0.55).abs());
     let dirt = mix(soil, vec3(0.295, 0.245, 0.175), float(0.6))
       .mul(float(1).sub(rut.mul(0.18)));
     dirt = mix(dirt, grassCol.mul(0.85), smoothstep(0.3, 0.08, latN).mul(0.45).mul(grassW.add(0.3).min(1)));
@@ -670,6 +675,32 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     const wetRoad = wetRain.max(wetLocal.mul(rs.ford)).mul(snowW.oneMinus());
     const wetK = wetRoad.mul(is(SurfaceId.Asphalt).mul(0.35).add(0.45));
     roadCol = roadCol.mul(wetK.oneMinus());
+    // Rain used to turn dirt roads into uniformly darker hardpack. Give wet
+    // dirt its own spatial response: saturated wheel ruts plus broad, recessed
+    // waterlogged patches. This is albedo/normal/roughness only, so the stamped
+    // road profile remains rideable and cannot become a bumpy height surface.
+    const isDirt = is(SurfaceId.DirtRoad);
+    // Restore the full weather wetness for mud. wetRoad is deliberately
+    // attenuated for generic pavement darkening, but saturated soil needs the
+    // full after-rain signal to remain legible beyond the immediate foreground.
+    const mudWet = wetRoad.mul(1.4).min(1).mul(isDirt);
+    const roadMudT = texture(inp.noiseA, wxz.div(1.15 * PERIOD_FBM).add(vec2(0.21, 0.73)));
+    const roadMudPatch = smoothstep(0.46, 0.7, roadMudT.y);
+    const roadMudLens = smoothstep(0.58, 0.72, roadMudT.y)
+      .mul(rut.mul(0.65).add(0.35));
+    const roadMudK = mudWet
+      .mul(roadMudPatch.mul(0.1).add(rut.mul(0.08)).add(0.86))
+      .clamp(0, 0.96);
+    const saturatedSoil = mix(vec3(0.105, 0.052, 0.018), vec3(0.048, 0.025, 0.012), roadMudPatch)
+      .mul(rut.mul(0.28).oneMinus());
+    roadCol = mix(roadCol, saturatedSoil, roadMudK);
+    const roadMudG = roadMudT.zw.div(1.15)
+      .mul(roadMudLens.mul(roadMudLens.oneMinus()).mul(4))
+      .mul(-0.035)
+      .mul(mudWet)
+      .mul(core);
+    mudG = mudG.add(roadMudG);
+    treadK = treadK.mul(mudWet.mul(0.78).oneMinus());
     wetEff = mix(wetEff, wetRoad, core);
     col = mix(col, roadCol, core);
     // worn dusty verge between the surfaced edge and the wild ground
@@ -690,6 +721,11 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
       .sub(patch.mul(0.08))
       .clamp(0.5, 0.85);
     roadRough = mix(mix(float(0.88), float(0.78), isFine), aspRough, isAsp);
+    roadRough = mix(
+      roadRough,
+      float(0.36),
+      mudWet.mul(roadMudLens.mul(0.7).add(rut.mul(0.2)).add(0.1)).clamp(0, 0.9),
+    );
 
     // surface-debug palette by road-stamp class. surfIdF arrives FRACTIONAL
     // here (measured ≈13.5–14.6 on defect corridors) — landing on the ±0.5
@@ -697,7 +733,6 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     // core reads black. Round to the nearest class id and clamp to the valid
     // range, then match exactly — no core can fall through. Debug-only: the
     // natural `is()` above is untouched.
-    const sidI = sid.add(0.5).floor().clamp(0, SurfaceId.COUNT - 1);
     const isDbg = (id: SurfaceId): NF =>
       sidI.equal(float(id)).select(float(1), float(0));
     const sidCol = (id: SurfaceId, c: readonly number[]): NV3 => palette(c).mul(isDbg(id));
