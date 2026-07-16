@@ -241,6 +241,25 @@ toward the meadow tone + мuted umbel white; criterion frost-cam band < 3%.
   realism law on seeds 1-8 then merge the road package as ONE relayout (R2),
   trefoil head visibility + palette-exact bit-exactness (F2).
 
+## Road package status (2026-07-17 night, R3+R4)
+
+Branch `worktree-agent-abdea6d7d5f60e975` HEAD `25bb95f` (rebase-ready on
+a1020f6+; contains R3 392eecb + R4 exemption). Facts:
+- Owner law #2 (sustained grade >18%/10m) SOLVED: 31/19/23 -> 0/0/0 on seeds
+  1/2/3 (singletrack maxGrade 0.17 — the fix R2's salvage had LOST; R3's
+  doc claim of "0 violations" was false and is corrected in-branch).
+- Anti-zigzag generator pass (buildRoute) cleared asphalt wiggle; seed-1
+  10 -> 2 chains.
+- R4 shipped a PER-VERTEX water/junction clamp exemption (never by route
+  name): south-shore-gravel correctly exempt (89% junction), min-radius
+  floor eps cleared seed-2. MEASUREMENT DISPROVED R3's "all residuals are
+  clamped" premise: seed-1 link-3 and seed-2 valley-highway are 0%w/0%j
+  open-terrain wiggles — GENUINE reds, generator-side chord-straighten
+  needed (R5 scope). Faking the exemption was correctly refused.
+- NOT run on the branch: probe-roadshape/roadgates/deadends, gates:visual,
+  realism 5-8, SBS illustrations. Merge only after ALL of it is green —
+  one world relayout.
+
 ## Process law for every agent (cannot be dropped)
 
 - Own worktree (Agent isolation=worktree), own LAAS_PORT, own dev server:
