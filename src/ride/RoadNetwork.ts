@@ -89,7 +89,7 @@ export const ROAD_CLASSES: readonly RoadClassSpec[] = [
     surfaceId: SurfaceId.Singletrack,
     name: 'singletrack',
     halfWidth: 0.55, // 1.1 m worn tread (IMBA bench-cut 0.6–0.9 m + verge)
-    maxGrade: 0.2, // IMBA: >18–20% sustained = hike-a-bike; ramps only
+    maxGrade: 0.17, // owner 18/10 law: class-limit clamp rides at 17% over long stretches, must sit under 18% (IMBA max 15% + margin); see docs/ROAD_REALISM_GATES.md
     bankMax: 0.03,
     crownSlope: 0,
     dispScale: 0.35, // alpine p.1: yield the tread to the scattered grit (see gravel-coarse)
