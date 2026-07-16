@@ -326,20 +326,22 @@ export function flowerMaterial(petal: {
 }): MeshStandardNodeMaterial {
   const mat = new MeshStandardNodeMaterial();
   const d = vdata();
-  const stem = vec3(0.12, 0.28, 0.07);
-  const center = vec3(0.72, 0.48, 0.08);
+  // 2026-07-16 rollback of the codex anti-black hacks (7db9995): the black
+  // they fought was the grade NaN (fixed at the root in PostStack — c.max(0)),
+  // while emissive 0.72 self-light on top of full lighting BLEACHED every
+  // bloom field into the white/blue "frost" carpet at distance (owner: the
+  // frost never existed before that commit). Keep the slightly lifted stem
+  // albedo so shaded stems stay readable; drop the emissive fill and the
+  // AO opt-out, restore the vdata darkening range.
+  const stem = vec3(0.08, 0.18, 0.05);
+  const center = vec3(0.6, 0.4, 0.06);
   const petalC = vec3(petal.r, petal.g, petal.b);
   const centerK = smoothstep(0.12, 0.02, d.x.sub(0.5).abs());
   const petalK = smoothstep(0.85, 0.95, d.x);
   let albedo = mix(stem, center, centerK) as unknown as NV3;
   albedo = mix(albedo, petalC, petalK) as unknown as NV3;
-  mat.colorNode = albedo.mul(d.w.mul(0.15).add(0.85));
-  // Petals and hair-thin stems transmit skylight; a small color-preserving
-  // fill prevents DoubleSide back faces from collapsing to black while the
-  // standard BRDF still supplies shape and sun response.
-  mat.emissiveNode = albedo.mul(0.72);
-  mat.aoNode = float(1);
-  mat.roughness = 0.78;
+  mat.colorNode = albedo.mul(d.w.mul(0.4).add(0.6));
+  mat.roughness = 0.72;
   mat.metalness = 0;
   mat.side = DoubleSide;
   return mat;
