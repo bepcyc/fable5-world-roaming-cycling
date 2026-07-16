@@ -305,6 +305,63 @@ function reduce(times: number[]): Measurement {
   };
 }
 
+/* ---- GPU CLOCK LOTTERY (this box, measured 2026-07-16) --------------------
+ * At the mobile profile the RDNA2 desktop GPU idles at ~11% utilisation and
+ * amdgpu bounces sclk between 500 and 2575 MHz (5.15x) run to run: three
+ * clean same-code runs read gpuTotal 3.57 / 3.45 / 1.07 ms with IDENTICAL
+ * draws (608) — the 3.3x "win" was a boost-state, not a change. The same
+ * lottery the Adreno campaign hit, on the desktop twin. sysfs reads here are
+ * NON-destructive (unlike Adreno's gpubusy). Every run samples the clock
+ * through the measure window; compare runs at matched clock, or compare
+ * W = gpuMs x meanClockMHz. */
+const SCLK_PATH = '/sys/class/drm/card1/device/pp_dpm_sclk';
+const GPU_BUSY_PATH = '/sys/class/drm/card1/device/gpu_busy_percent';
+
+interface ClockSample {
+  samples: number;
+  meanMHz: number;
+  minMHz: number;
+  maxMHz: number;
+  meanBusyPct: number;
+}
+
+function readSclkMHz(): number {
+  try {
+    const m = /(\d+)Mhz \*/i.exec(readFileSync(SCLK_PATH, 'utf8'));
+    return m ? Number(m[1]) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function startClockSampler(): { stop(): ClockSample } {
+  const mhz: number[] = [];
+  const busy: number[] = [];
+  const iv = setInterval(() => {
+    const c = readSclkMHz();
+    if (c > 0) mhz.push(c);
+    try {
+      busy.push(Number(readFileSync(GPU_BUSY_PATH, 'utf8').trim()));
+    } catch {
+      /* absent on non-amdgpu — clock alone still records */
+    }
+  }, 250);
+  return {
+    stop(): ClockSample {
+      clearInterval(iv);
+      const mean = (xs: number[]): number =>
+        xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+      return {
+        samples: mhz.length,
+        meanMHz: Math.round(mean(mhz)),
+        minMHz: mhz.length ? Math.min(...mhz) : 0,
+        maxMHz: mhz.length ? Math.max(...mhz) : 0,
+        meanBusyPct: Math.round(mean(busy) * 10) / 10,
+      };
+    },
+  };
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const seed = Number(str(args['seed']) ?? 1);
@@ -426,7 +483,14 @@ async function main(): Promise<void> {
   );
 
   console.log(`[perf-mobile] measuring ${measureMs} ms…`);
+  const clockSampler = startClockSampler();
   const sample = (await page.evaluate(SAMPLER(measureMs))) as SampleOut;
+  const gpuClock = clockSampler.stop();
+  console.log(
+    `[perf-mobile] gpu clock during window: mean ${gpuClock.meanMHz} MHz ` +
+      `(${gpuClock.minMHz}..${gpuClock.maxMHz}, busy ${gpuClock.meanBusyPct}%) — ` +
+      `compare runs at MATCHED clock or compare gpuMs x MHz`,
+  );
   const m = reduce(sample.times);
   const gpu = gpuAvg(sample);
   const drawsS = series(sample.draws ?? []);
@@ -546,6 +610,11 @@ async function main(): Promise<void> {
     cpuUpdateMs,
     cpuSubmitMs,
     cpuFrac,
+    // the clock the window ran at — a raw gpuMs across different clocks is
+    // NOT a comparison (5.15x spread available); see the lottery note above
+    gpuClock,
+    // clock-normalized GPU work (arbitrary units, comparable across runs)
+    gpuWorkUnits: gpuClock.meanMHz > 0 ? Math.round(gpuTotalMs * gpuClock.meanMHz) : null,
     // primary campaign metric — see the CPU-WALLED gate
     gpuTotalMs,
     gpuRenderMs,
