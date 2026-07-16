@@ -12,6 +12,7 @@ import {
 import { Engine } from './core/Engine';
 import { FlyCamera } from './core/FlyCamera';
 import { GameMenu } from './core/GameMenu';
+import { SettingsMenu } from './core/SettingsMenu';
 import { applyStaticI18n } from './core/I18n';
 import { initHooks } from './core/Hooks';
 import { initImmersiveMobile } from './core/ImmersiveMobile';
@@ -64,6 +65,17 @@ async function boot(): Promise<void> {
   // of whether the user has clicked Start yet
   const gameMenu = new GameMenu(hooks, params);
   const bootUI = new BootUI(hooks, params);
+  // full graphics settings screen (quality axes; persists to localStorage,
+  // applies on reload). Lazy: built on first open, from splash or in-game.
+  let settingsMenu: SettingsMenu | null = null;
+  let engineForSettings: Engine | null = null;
+  hooks.openGraphicsSettings = () => {
+    settingsMenu ??= new SettingsMenu((s) => {
+      // live axes only — everything else applies on the restart it asks for
+      if (s.renderScale > 0) engineForSettings?.renderer.setPixelRatio(s.renderScale);
+    });
+    settingsMenu.show();
+  };
 
   bootUI.set(0.02, 'probing WebGPU');
   const diag = await probeWebGPU();
@@ -113,6 +125,7 @@ async function boot(): Promise<void> {
   bootUI.set(0.08, 'creating renderer');
   const engine = await Engine.create(params, hooks);
   gameMenu.bindEngine(engine);
+  engineForSettings = engine;
 
   // FlyCamera's update MUST register before any scene system: updateFns run
   // in registration order, and subsystems copy camera state in their own

@@ -172,6 +172,22 @@ export class OptionsMenu {
     title.appendChild(x);
     this.panel.appendChild(title);
 
+    // GRAPHICS — opens the full per-axis SettingsMenu (quality presets,
+    // advanced mode); applies on reload, so it floats fine over live play
+    const gfxRow = document.createElement('div');
+    gfxRow.className = 'opt-grid2';
+    const gfxBtn = card(
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="11" rx="1.6"/><path d="M9 19.5h6M12 16v3.5"/></svg>',
+      t('settings.title'),
+    );
+    gfxBtn.addEventListener('click', () => {
+      this.toggle(false);
+      this.hooks.openGraphicsSettings?.();
+    });
+    gfxBtn.style.gridColumn = '1 / -1';
+    gfxRow.appendChild(gfxBtn);
+    this.panel.appendChild(gfxRow);
+
     // WEATHER
     this.panel.appendChild(h(t('opt.weather')));
     const wxRow = document.createElement('div');
