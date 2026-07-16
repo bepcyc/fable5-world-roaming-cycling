@@ -74,7 +74,7 @@ async function main(): Promise<void> {
     if (!ok) pass = false;
   };
   const speedOf = (s: HudState): number =>
-    parseFloat(/SPEED\s*([\d.]+)\s*km\/h/.exec(s.text)?.[1] ?? '0');
+    parseFloat(/SPEED\s*([\d.]+)\s*km\/h/i.exec(s.text)?.[1] ?? '0');
 
   const base = `${LAAS_ORIGIN}/?scene=world&seed=1&T=11&hud=0&freeze=1`;
 
