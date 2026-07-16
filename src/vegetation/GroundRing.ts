@@ -32,6 +32,7 @@ import type { DataTexture, PerspectiveCamera } from 'three';
 import {
   IndirectStorageBufferAttribute,
   IrradianceNode,
+  MeshPhysicalNodeMaterial,
   MeshStandardNodeMaterial,
   type Renderer,
   type StorageBufferNode,
@@ -102,6 +103,12 @@ const G_MID = 70;
 /** crossfade half-width — cull overlap and material fade MUST share it */
 const G_BAND = 12;
 const GRASS_CAPS = [524288, 1048576, 1835008]; // near/mid/far compact regions
+// silver-wash-cut (51e5d0d) missed grass: MeshStandardNodeMaterial hardcodes
+// dielectric F0 0.04, so Schlick saturates at glancing sun and paints the
+// sward with the sky sheen — after the sky/IBL went blue (65a1a68) the far
+// band reads as a pale blue frost carpet. Switching to a physical material
+// with a scaled specularIntensity tames that sheen back to green.
+const GRASS_SPEC = 0.25;
 
 /**
  * Continuous distance thinning, conserved by blade widening (1/√thin in the
@@ -1021,7 +1028,12 @@ export class GroundRing {
     tuft: boolean,
     far = false,
   ): MeshStandardNodeMaterial {
-    const mat = new MeshStandardNodeMaterial();
+    // physical variant for specularIntensity (silver-wash-cut): a plain
+    // standard material bakes F0 0.04 and glazes the sward blue under the
+    // post-65a1a68 sky. Same PhysicalLightingModel, no extra cost with no
+    // physical features enabled.
+    const mat = new MeshPhysicalNodeMaterial();
+    mat.specularIntensity = GRASS_SPEC;
     const { wc, y, wpos } = fetchRing(bind);
     const h2 = cellHash2(wc, bind.salt ^ 0x9191);
     // patch-level (≈1.6 m) dryness/hue so meadows read as drifts, not noise
