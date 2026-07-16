@@ -968,7 +968,11 @@ export class GroundRing {
         salt: salt ^ 0x6f21,
       };
       const matF = this.grassMaterial(bindF, [null, null], true, true);
-      this.patchGI(matF);
+      // ?tuftdbg=nogi — skip the probe-GI lightmap on the far tufts only
+      // (frost bisection: isolates patchGI's sky irradiance contribution)
+      if (new URLSearchParams(window.location.search).get('tuftdbg') !== 'nogi') {
+        this.patchGI(matF);
+      }
       draws.push({ geo: tuftGeometry(0.21), mat: matF, g: 8 });
     }
 
@@ -1137,6 +1141,15 @@ export class GroundRing {
     // physical features enabled.
     const mat = new MeshPhysicalNodeMaterial();
     mat.specularIntensity = GRASS_SPEC;
+    // ?tuftdbg=albedo|bladen|noglow|nospec — far super-tuft frost bisection
+    // (front F): 'albedo' pins a constant fresh-green albedo (albedo vs
+    // lighting), 'bladen' keeps the near-band normal blend instead of upK=1
+    // (sky-facing-normal hypothesis), 'noglow' kills the translucency
+    // emissive, 'nospec' zeroes specularIntensity. Debug-only, far variant.
+    const tuftDbg = far
+      ? new URLSearchParams(window.location.search).get('tuftdbg')
+      : null;
+    if (tuftDbg === 'nospec') mat.specularIntensity = 0;
     const { wc, y, wpos } = fetchRing(bind);
     const h2 = cellHash2(wc, bind.salt ^ 0x9191);
     // patch-level (≈1.6 m) dryness/hue so meadows read as drifts, not noise
@@ -1228,7 +1241,7 @@ export class GroundRing {
         0,
       ) as unknown as NV4
     ).xyz.normalize();
-    const upK = far
+    const upK = far && tuftDbg !== 'bladen'
       ? (float(1) as NF)
       : smoothstep(8, 70, dist).mul(0.35).add(0.5);
     // VERTEX-stage shading hoist (Phase 7 perf): every term below varies at
@@ -1265,12 +1278,17 @@ export class GroundRing {
     let albedo = mix(fresh, dry, dryK) as unknown as NV3;
     albedo = albedo.mul(patch.y.sub(0.5).mul(0.3).add(1)) as unknown as NV3;
     albedo = mix(albedo, vec3(0.018, 0.052, 0.014), cov.mul(0.55)) as unknown as NV3;
+    if (tuftDbg === 'albedo') albedo = vec3(0.065, 0.148, 0.028) as unknown as NV3;
     mat.colorNode = varying(
       albedo as unknown as Parameters<typeof varying>[0],
     ) as unknown as typeof mat.colorNode;
-    mat.emissiveNode = varying(
-      grassTranslucency(albedo, t) as unknown as Parameters<typeof varying>[0],
-    ) as unknown as typeof mat.emissiveNode;
+    // tuftdbg 'noglow': kill the translucency emissive on the far tufts
+    // (frost bisection: is the white wash the back-lit transmission term?)
+    mat.emissiveNode = tuftDbg === 'noglow'
+      ? (vec3(0) as unknown as typeof mat.emissiveNode)
+      : (varying(
+          grassTranslucency(albedo, t) as unknown as Parameters<typeof varying>[0],
+        ) as unknown as typeof mat.emissiveNode);
     mat.aoNode = varying(
       smoothstep(0.0, 0.55, t).mul(0.55).add(0.45) as unknown as Parameters<typeof varying>[0],
     ) as unknown as typeof mat.aoNode;

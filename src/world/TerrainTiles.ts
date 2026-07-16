@@ -356,6 +356,11 @@ export class TerrainTiles {
       const gc = positionLocal.xz.add(0.5 + s).div(1 + 2 * s).mul(segs);
       // albedo scale is a cheap multiply — leave it as a plain blend
       mat.colorNode = (mat.colorNode as unknown as NV3).mul(u.oneMinus());
+      // specular kept firing on top of the palette emissive (albedo 0 does
+      // not silence the F0 sheen) — overlay pixels drifted off their
+      // DebugPalette constants and ?dbgexact=1 was never bit-exact. Gate the
+      // specular with the same live uniform as the albedo.
+      mat.specularIntensityNode = float(0.35).mul(u.oneMinus());
       // the EXPENSIVE part (palette + 2× fwidth wireframe) lives inside a
       // coherent If so the GPU skips it entirely when off. If MUST run inside a
       // Fn stack — calling it at material-assembly level throws (null stack).
@@ -439,6 +444,9 @@ export class TerrainTiles {
       const u = surfaceDbgU as unknown as NF;
       const baseEmis = (farMat.emissiveNode as NV3 | null) ?? vec3(0);
       farMat.colorNode = (farMat.colorNode as unknown as NV3).mul(u.oneMinus());
+      // same palette-exactness rule as the near tiles: no specular on top
+      // of the overlay emissive (see the near-tile overlay block above)
+      farMat.specularIntensityNode = float(0.35).mul(u.oneMinus());
       farMat.emissiveNode = Fn(() => {
         const e = (baseEmis as NV3).toVar();
         If(u.greaterThan(0.5), () => {

@@ -89,3 +89,25 @@ reset под нагрузкой. Хендлер шлёт `tele().crash()` и `fa
 - Нет тач-управления (сейчас клавиатура + pointer-lock).
 - Упаковка Android: план в `HANDOFF_APK.md` (вариант B — нативная оболочка +
   loopback + Chrome Custom Tab, т.к. WebGPU в Chrome, не в WebView).
+
+## Визуальные гейты (gates:visual)
+
+Единый раннер `npm run gates:visual` (`tools/gate-visual.ts`, честный порт
+через `LAAS_PORT`). Проверки:
+
+- `black-veg` — камеры p7/p4 (сид 1, T14), нижние 40% кадра: доля почти-чёрных
+  пикселей (max канал <= 22) < 0.25%.
+- `stand-solid` — стенд `?scene=gallery&flowerdbg=solid`: чёрное < 0.4% вне
+  текстовых плашек (строки 12..97%).
+- `ablate-sanity` — каждый ключ `?ablate=` (ao, bounce, contact, taa, mblur,
+  bloom, clouds, aerial, grade) обязан рендерить живой кадр: meanLum > 0.02.
+  Ловит убийство выхода поста навсегда (кейс ablate=bloom, чинено 366c48d).
+- `flower-frost` — камера инея (сид 1), полоса строк 3..33%: голубых пикселей
+  (hue 185-255, sat>=0.1, v>=0.45) < 3%.
+- `palette-exact` — спот-1 `?surfdbg=1&dbgexact=1`: >= 60% пикселей кадра в
+  +-4/255 от констант `linearToSrgb8(SURF_COL)` (src/debug/DebugPalette.ts).
+- `grass-blue` — делегирует существующий `tools/gate-grass-blue.ts`.
+
+Подмножество: `npx tsx tools/gate-visual.ts --only <имена через запятую>`.
+Кадры по умолчанию во временной папке; `--keep` кладёт в
+`shots/wip/gate-visual/`. Полный прогон ~15 бутов (>10 мин) — запускать в фоне.

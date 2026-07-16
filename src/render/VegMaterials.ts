@@ -339,6 +339,19 @@ export function flowerMaterial(petal: {
   const petalK = smoothstep(0.85, 0.95, d.x);
   let albedo = mix(stem, center, centerK) as unknown as NV3;
   albedo = mix(albedo, petalC, petalK) as unknown as NV3;
+  // Distance albedo fade (frost fix, root confirmed by main-thread bisection
+  // 2026-07-16): beyond ~40 m petals are sub-pixel and whole flower fields
+  // integrate to their average albedo — the near-white umbel petal turned
+  // sky-up by the 7db9995 rewind read as a blue-white rime carpet across
+  // every meadow. Near flowers keep full color; far fields settle into the
+  // meadow tone instead of white.
+  const camDist = positionWorld.sub(cameraPosition).length();
+  const meadowTone = vec3(0.16, 0.3, 0.1);
+  albedo = mix(
+    albedo,
+    meadowTone,
+    smoothstep(40, 120, camDist),
+  ) as unknown as NV3;
   mat.colorNode = albedo.mul(d.w.mul(0.15).add(0.85));
   // Petals and hair-thin stems transmit skylight; a small color-preserving
   // fill prevents DoubleSide back faces from collapsing to black while the

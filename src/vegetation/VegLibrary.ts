@@ -93,7 +93,11 @@ export interface VegLib {
 }
 
 const FLOWER_COLOR: Record<FlowerKind, { r: number; g: number; b: number }> = {
-  umbel: { r: 0.75, g: 0.75, b: 0.7 },
+  // umbel was (0.75,0.75,0.7) — a near-white albedo. After 7db9995 rewound
+  // the petals sky-up, whole umbel fields integrated to that white under
+  // the blue sky = the owner's "rime" carpet. Dimmed toward ivory-green;
+  // the flowerMaterial distance fade handles the far-field read.
+  umbel: { r: 0.62, g: 0.64, b: 0.52 },
   bell: { r: 0.28, g: 0.14, b: 0.5 },
   daisy: { r: 0.85, g: 0.72, b: 0.12 },
   // alpine verge miniatures (ref-01/03): golden trefoil + purple-magenta thyme

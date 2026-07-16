@@ -169,7 +169,7 @@ export async function buildGalleryScene(ctx: WorldContext): Promise<void> {
     const colors: Readonly<Record<FlowerKind, { r: number; g: number; b: number }>> = {
       trefoil: { r: 0.92, g: 0.66, b: 0.06 },
       daisy: { r: 0.85, g: 0.72, b: 0.12 },
-      umbel: { r: 0.75, g: 0.75, b: 0.7 },
+      umbel: { r: 0.62, g: 0.64, b: 0.52 },
       bell: { r: 0.28, g: 0.14, b: 0.5 },
       thyme: { r: 0.5, g: 0.17, b: 0.5 },
     };
