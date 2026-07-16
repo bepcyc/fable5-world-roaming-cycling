@@ -143,6 +143,40 @@ dominant owner-visible defect (codex-terra scored the baseline frames 6/10,
 4/10, 3/10 — "tightly spaced abrupt zigzags with sharp angular corners…
 pasted-on feel").
 
+## After the generator fixes (verified 2026-07-16, fresh runs)
+
+Full gate package re-run after the anti-zigzag pass + singletrack maxGrade
+0.20 → 0.17 (all runs by the succeeding agent on the merged tree, not
+inherited JSONs):
+
+| gate | seed 1 | seed 2 | seed 3 |
+|---|---|---|---|
+| probe-roadshape (asphalt bubbles/thinning) | 0/0 PASS | 0/0 PASS | 0/0 PASS |
+| probe-roadgates | PASS (no anomalies) | PASS | PASS |
+| probe-deadends | PASS | PASS | PASS |
+| probe-roadrealism | **0 violations** | **0 violations** | **0 violations** |
+
+Realism metrics after fix (seeds 1/2/3): every class holds `longest>18% =
+0 m`; singletrack maxGrade rides at the new 17.0% limit; min radii 5.1 m+
+(singletrack) / 6.4 m+ (asphalt) — all above the law's floors.
+
+Violation counts, before → after (same seeds, world re-layouts by design):
+
+| kind | seed 1 | seed 2 | seed 3 |
+|---|---|---|---|
+| wiggle | 15 → 0 | 8 → 0 | 10 → 0 |
+| sustained-grade | 19 → 0 | 19 → 0 (worst was 376 m @ 20%) | 23 → 0 |
+| min-radius | 0 → 0 | 2 → 0 | 1 → 0 |
+| cross-slope | 0 → 0 | 0 → 0 | 0 → 0 |
+
+Unseen-seed sweep (5/6/7/8, `--report`): **0 violations on all four** —
+34.3–39.0 km of roads per seed, `longest>18% = 0 m` in every class, min
+radii ≥ 5.2 m, cross-slope ≤ 10.5%. Seed 6's honest ridge-follow S-curve
+(mean bend ~15°) stays legal via `minChainMean` — the sweep that predated
+that clause flagged it; the final law does not. One seed-3 ridge-dirt chain
+is grade-exempt as serpentine tacking (`WIGGLE_GRADE_EXEMPT_GATE`), by
+design.
+
 ## Sources
 
 1. Climbfinder — Stelvio Prato: https://climbfinder.com/en/climbs/passe-dello-stelvio
