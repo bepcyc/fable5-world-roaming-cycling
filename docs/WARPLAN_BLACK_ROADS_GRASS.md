@@ -208,6 +208,19 @@ BAND after A's clamp lands — the overlay palette colors are fully saturated,
 so the band may be the same NaN mechanism (untested hypothesis; the earlier
 ablate=ao test does NOT rule grade out).
 
+## Frost bisection verdict (2026-07-16 ~14:20, main thread)
+
+Owner clue: frost never existed before the codex commit 7db9995. Three-point
+proof at one camera (seed 1 far-meadow band, bluish share): pre-codex
+7db9995^ = 0.83% (no frost), today = 21.40%, full material rollback = 21.64%
+(unchanged). Root: the petal REWIND in 7db9995 — near-white umbel petals
+(FLOWER_COLOR 0.75,0.75,0.7) used to face DOWN (dark, invisible fields) and
+now face the SKY: white albedo in full light at 60-150 m = frost carpet.
+flowerMaterial is innocent; its codex hacks (emissive 0.72 / aoNode=1 /
+flattened darkening) are retired in 7b98e65 (they fought the grade-NaN black,
+already fixed at the root). Cure owned by Front F: distance albedo fade
+toward the meadow tone + мuted umbel white; criterion frost-cam band < 3%.
+
 ## Process law for every agent (cannot be dropped)
 
 - Own worktree (Agent isolation=worktree), own LAAS_PORT, own dev server:
