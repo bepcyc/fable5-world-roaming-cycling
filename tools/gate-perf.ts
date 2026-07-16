@@ -23,10 +23,16 @@
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-// Budgets in gpuWorkUnits (ms x MHz). Placeholders refined by the campaign:
-// see the ablation table in docs/PERF_QUALITY_AXES.md.
-const MIN_MAX_W = 2600; // min preset ceiling (clean base ~2000-2170 + 3x noise)
-const ULTRA_MIN_W = 2600; // ultra floor — must exceed the min ceiling
+// Budgets in gpuWorkUnits (ms x MHz), set from the 2026-07-16 measured
+// values (docs/PERF_QUALITY_AXES.md): assembled min = 1148/1238/1533 at the
+// mobile profile; ultra @1080p = 14921 (high = 6544). Headroom >= 30%.
+const MIN_MAX_W = 2000; // min ceiling — a regression that fattens min trips here
+const ULTRA_MIN_W = 9000; // ultra floor — gutting ultra toward high trips here
+
+// Per-preset spot y: each preset generates its own terrain (heightRes), so
+// the ground at the campaign xz differs; the harness drift gate demands the
+// exact eye height. Measured 2026-07-16.
+const ULTRA_CAM = '-870,187.015,862,1.69,0.1';
 
 interface Row {
   label: string;
@@ -63,7 +69,7 @@ function main(): void {
   if (!minOk) failed = true;
 
   if (!skipUltra) {
-    const ultra = run('gate-ultra', '--preset ultra --w 1920 --h 1080 --dpr 1');
+    const ultra = run('gate-ultra', `--preset ultra --w 1920 --h 1080 --dpr 1 --cam ${ULTRA_CAM}`);
     if (!ultra.meterValid || ultra.machine.contended) {
       throw new Error('gate-ultra measurement invalid — rerun');
     }

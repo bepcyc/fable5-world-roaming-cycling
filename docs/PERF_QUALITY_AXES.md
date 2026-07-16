@@ -91,7 +91,9 @@ per-pass structure at matched clocks + the tablet's measured ranking.
 | notaa | 3.290 | 621 | 63.4 | 2043 | 606 | dither fades shred visibly. kept ON |
 | minoroff (particles+caustics+bounce) | 2.963 | 603 | 57.9 | 1787 | 606 | caustics+bounce off TAKEN; particles 16k kept |
 
-## Assembled min preset — result (same code, control via q-params)
+## Presets measured (desktop, clean, clock-recorded)
+
+
 
 | | old min | new min | delta |
 |---|---|---|---|
@@ -107,3 +109,18 @@ veg fill 53%, froxels 3%, GI 2.4%): the desktop -57% GPU / -45% cpu.submit
 should compound with the phone's GPU-bound regime, but the 41.9 ms
 clock-independent floor from PERF_CPU_WALL_RESULTS.md is untouched by any
 of this and still caps the tablet below ~24 fps until attributed on-device.
+
+## high vs ultra @1920x1080 dpr1 (own spot y per preset)
+
+| preset | gpuMs | MHz | busy% | W | draws | note |
+|---|---|---|---|---|---|---|
+| high | 3.325 | 1968 | 75.2 | 6544 | 714 | shipped steady-state, untouched |
+| ultra | 6.404 | 2330 | 80.7 | 14921 | 674 | x2.28 GPU work; hero trees + 7x5 blades + 4096 shadows + 48-step clouds; codex-terra: RIGHT richer, 2/10 margin |
+
+Before this campaign ultra was byte-identical to high per frame (presets
+only touched world-gen).
+
+## gates:perf (green, 2026-07-16)
+
+min W=947 <= 2000 PASS; ultra W=13785 >= 9000 PASS. Metric is
+clock-normalized; invalid measurements are hard errors, not fails.
