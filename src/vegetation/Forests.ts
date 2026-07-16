@@ -36,7 +36,6 @@
 import {
   BufferAttribute,
   BufferGeometry,
-  Color,
   Group,
   IcosahedronGeometry,
   Mesh,
@@ -80,6 +79,7 @@ import {
 } from 'three/tsl';
 import type { Heightfield } from '../world/Heightfield';
 import { prepassMode } from '../core/Params';
+import { VEG_DBG, cssOf } from '../debug/DebugPalette';
 import { hash12 } from '../gpu/noise/NoiseTSL';
 import type { ProbeGI } from '../gpu/passes/ProbeGI';
 import { canopyAt, type ScatterLayer, type ScatterResult } from '../gpu/passes/Scatter';
@@ -131,8 +131,8 @@ function installClassDebugLegend(): void {
     'columns:2', 'column-gap:14px',
   ].join(';');
   el.innerHTML = '<b>VegClass draw id</b><br>' + Object.entries(VEG_CLASS_NAMES).map(([id, name]) => {
-    const hue = (Number(id) * 47) % 360;
-    return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:hsl(${hue} 95% 55%);border:1px solid #000"></span>cls=${id} ${name}`;
+    const c = VEG_DBG[Number(id)] ?? [0.5, 0.5, 0.5];
+    return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:${cssOf(c)};border:1px solid #000"></span>cls=${id} ${name}`;
   }).join('<br>');
   document.body.appendChild(el);
 }
@@ -598,11 +598,14 @@ export class Forests {
           // ?clsdbg=1 — flat-color every draw by VegClass (artifact triage:
           // "which pool is that?"); keeps alpha cutouts so silhouettes read
           if (classDebug) {
-            const hue = (pool.cls * 47) % 360;
-            const cdbg = new Color().setHSL(hue / 360, 0.95, 0.55);
+            // DebugPalette flat color as PURE emissive (albedo black): the
+            // pixel is the palette constant regardless of sun/shadow/GI, so
+            // ?dbgexact=1 frames match the palette bit-exactly. Alpha cutouts
+            // are preserved so silhouettes still read.
+            const cdbg = VEG_DBG[pool.cls] ?? [0.5, 0.5, 0.5];
             const op = mat.opacityNode as unknown as NF | null;
-            mat.colorNode = vec4(vec3(cdbg.r, cdbg.g, cdbg.b), 1);
-            mat.emissiveNode = vec3(cdbg.r, cdbg.g, cdbg.b).mul(0.65);
+            mat.colorNode = vec4(vec3(0.0, 0.0, 0.0), 1);
+            mat.emissiveNode = vec3(cdbg[0], cdbg[1], cdbg[2]);
             if (op) mat.opacityNode = op;
           }
           addDraw(part.geo, mat, g, part.tris);

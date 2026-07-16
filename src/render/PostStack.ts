@@ -76,7 +76,12 @@ export class PostStack {
     const ablate = new Set((q.get('ablate') ?? '').split(','));
     // debug probes need raw values — tone mapping would garble them
     const skyveldbg = q.get('skyveldbg') !== null && q.get('skyveldbg') !== '';
-    renderer.toneMapping = cloudview || skyveldbg ? NoToneMapping : AgXToneMapping;
+    // ?dbgexact=1 — palette-exact overlay debugging: output the raw scene
+    // color (no TAA/AO/bloom/aerial/grade/tonemap), so an emissive debug
+    // overlay pixel equals its DebugPalette constant exactly (one sRGB
+    // present-transform away). Owner verdict 2026-07-16: legends must not lie.
+    const dbgExact = q.get('dbgexact') === '1';
+    renderer.toneMapping = cloudview || skyveldbg || dbgExact ? NoToneMapping : AgXToneMapping;
     renderer.toneMappingExposure = 1.0;
     const frameU = runiform(0);
     // The post quad pass binds its own orthographic camera: `cameraPosition`,
@@ -706,6 +711,7 @@ export class PostStack {
     // AO/TRAA/bloom/exposure/grade), default = full chain
     this.post.outputNode =
       skyVelDbgView !== null ? skyVelDbgView
+      : dbgExact ? (beauty.rgb as unknown as NV3)
       : cloudview === '9' ? vec3(1, 0, 0)
       : cloudview !== null && cloudview !== '' ? aerialNode
       : gradedOut;

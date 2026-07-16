@@ -363,7 +363,13 @@ export class TerrainTiles {
         const e = (baseEmis as NV3).toVar();
         If(u.greaterThan(0.5), () => {
           const edge = polyWire(gc);
-          e.assign(mix(shading.surfaceDebugNode, vec3(0.015), edge.mul(0.85)));
+          // Wire target is a DARKENED CLASS COLOR, not a near-black constant:
+          // on edge-on faces fwidth explodes and the wire fills the whole
+          // fragment (Front B diagnosis 2026-07-16) — with a black target
+          // that painted steep roads/banks solid black and defeated the
+          // legend. Hue survives full saturation; black stays reserved for
+          // real fall-through/NaN defects.
+          e.assign(mix(shading.surfaceDebugNode, shading.surfaceDebugNode.mul(0.3), edge.mul(0.85)));
         });
         return e;
       })();

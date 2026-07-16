@@ -95,6 +95,7 @@ import { buildFlower } from './Understory';
 import type { WorldSeed } from '../core/Seed';
 import { prepassMode } from '../core/Params';
 import { runiform } from '../gpu/RenderUniform';
+import { RING_DBG, cssOf } from '../debug/DebugPalette';
 
 /**
  * Grass slot-density divisor. The cull dispatches GRASS_GRID² threads EVERY
@@ -208,13 +209,9 @@ const RING_DEBUG_GROUPS = [
   'road-grit',
 ] as const;
 
-const RING_DEBUG_COLORS: readonly (readonly [number, number, number])[] = [
-  [0.92, 0.08, 0.08], [0.95, 0.42, 0.04], [0.95, 0.9, 0.05],
-  [0.05, 0.75, 0.9], [0.04, 0.3, 0.95], [0.85, 0.06, 0.8],
-  [0.55, 0.15, 0.85], [0.9, 0.9, 0.9], [0.08, 0.85, 0.25],
-  [0.95, 0.95, 0.95], [0.45, 0.48, 0.52], [0.95, 0.78, 0.02],
-  [0.62, 0.12, 0.95], [0.02, 0.85, 0.68],
-];
+// Colors live in DebugPalette (single engine+tools source, anti-nature
+// hues, no near-white/near-black entries). See docs 2026-07-16 verdict.
+const RING_DEBUG_COLORS = RING_DBG;
 
 function installRingDebugLegend(filter: number | null): void {
   if (document.getElementById('ringdbg-legend')) return;
@@ -229,7 +226,7 @@ function installRingDebugLegend(filter: number | null): void {
   const rows = RING_DEBUG_GROUPS.map((name, g) => {
     if (filter !== null && filter !== g) return '';
     const c = RING_DEBUG_COLORS[g] as readonly [number, number, number];
-    const rgb = `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
+    const rgb = cssOf(c);
     return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:${rgb};border:1px solid #000"></span>g=${g} ${name}`;
   }).filter(Boolean);
   el.innerHTML = `<b>GroundRing draw id</b><br>${rows.join('<br>')}`;
@@ -1079,11 +1076,11 @@ export class GroundRing {
       if (ringDebugOn) {
         const c = RING_DEBUG_COLORS[spec.g] as readonly [number, number, number];
         const debugColor = vec3(c[0], c[1], c[2]);
-        spec.mat.colorNode = debugColor;
-        // Emissive makes ownership colors independent of sunlight, shadow,
-        // normals and AO. A black fragment in this mode is therefore from a
-        // different draw/depth failure, not merely dark lighting.
-        spec.mat.emissiveNode = debugColor.mul(0.65);
+        spec.mat.colorNode = vec3(0.0, 0.0, 0.0);
+        // PURE emissive ownership color: independent of sun/shadow/normals/AO
+        // and bit-exact against DebugPalette under ?dbgexact=1. A black fragment
+        // in this mode is a draw/depth failure by construction.
+        spec.mat.emissiveNode = debugColor;
         spec.mat.roughness = 1;
       }
       const mesh = new Mesh(geo, spec.mat);
