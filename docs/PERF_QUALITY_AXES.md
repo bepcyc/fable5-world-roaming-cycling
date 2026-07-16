@@ -64,12 +64,46 @@ angles. Handed to the coordinator.
 - AO half-res attachment r8unorm (`red: true`) instead of rgba16f — the
   path existed, never wired; visually identical (A/B'd), free bandwidth.
 
-## Ablation table (clean, mutex era, clock-recorded)
+## Ablation table (clean, mutex era, clock-recorded, single runs)
 
-Baseline and per-axis rows land here as the batteries complete. Metric:
-per-pass GPU ms at matched clock, or gpuWorkUnits; fps is a regression
-guard only (CPU-walled box).
+Metric notes: gpuWorkUnits = ms x mean-window-MHz is only comparable when
+the busy% is similar — conditions that REMOVE a lot of load let the clock
+idle-boost and inflate W (noclouds@999MHz is the poster child). Judge by
+per-pass structure at matched clocks + the tablet's measured ranking.
 
-| condition | gpuTotalMs | meanMHz | workUnits | draws | key passes moved |
-|---|---|---|---|---|---|
-| (rows appended as measured) | | | | | |
+| condition | gpuMs | MHz | busy% | W | draws | verdict |
+|---|---|---|---|---|---|---|
+| cbase2-r1 (shipped min) | 3.652 | 593 | 59.5 | 2165 | 608 | reference |
+| cbase2-r2 | 3.577 | 556 | 56.3 | 1989 | 608 | reference |
+| casc2 (2 cascades) | 2.832 | 739 | 62.5 | 2093 | 541 | shadow passes 546->412 Wu; cpu.submit 33->20ms. TAKEN |
+| casc1 | 2.101 | 967 | 64.7 | 2032 | 454 | ->349 Wu; visual floor risk. not taken |
+| nocasters | 2.191 | 765 | 64.7 | 1676 | 282 | draws -54%! biggest single axis; kills tree shadows. not taken (cascades=2 already halves caster draws) |
+| grass4 (S=4) | 3.456 | 534 | 55.9 | 1846 | 608 | -11% W; tablet said S>2 saturates. not taken |
+| bladeslow 3x2/2x1 | 3.461 | 709 | 55.5 | 2454 | 608 | noise here; vertex win on tablet. TAKEN |
+| nofar | 3.606 | 758 | 56.0 | 2733 | 608 | farTuftCull ~0.05ms only; silhouette cheap. TAKEN anyway (fill on tablet) |
+| ring06 (trees x0.6) | 3.359 | 535 | 54.2 | 1797 | 608 | -14% W. TAKEN |
+| nofroxels | 3.680 | 527 | 46.7 | 1939 | 608 | froxel passes -0.46ms (=12% of GPU) gone clean. TAKEN |
+| noclouds | 3.101 | 999 | 63.8 | 3098* | 608 | sky EMPTY; clouds ~0.1ms in half.mrt here. NOT taken; march 16 + LUT 384 instead |
+| gi1024 | 3.929 | 560 | 48.6 | 2200 | 608 | probeGather IDENTICAL at matched clock (latency-bound on 40 CU); will pay on 4-6 CU phone. TAKEN |
+| nodebris | 2.970 | 671 | 60.2 | 1993 | 608 | debris pools cheap; keep the richness. not taken |
+| noao | 2.740 | 814 | 62.5 | 2231 | 608 | grounding loss; kept ON at min |
+| nobloom | 2.893 | 704 | 65.1 | 2037 | 596 | frame renders fine now (fix validated). kept ON |
+| notaa | 3.290 | 621 | 63.4 | 2043 | 606 | dither fades shred visibly. kept ON |
+| minoroff (particles+caustics+bounce) | 2.963 | 603 | 57.9 | 1787 | 606 | caustics+bounce off TAKEN; particles 16k kept |
+
+## Assembled min preset — result (same code, control via q-params)
+
+| | old min | new min | delta |
+|---|---|---|---|
+| gpuTotalMs (median of 3) | 3.58-3.65 | **1.544 / 1.600 / 1.553** | **-57%** |
+| workUnits | 1989-2165 | 1238 / 1533 / 1148 | ~-40% |
+| draws (window mean) | 608 | 454 | -25% |
+| cpu.submit ms | 24-34 | 12.4-18.7 | ~-45% |
+| picture (codex-terra, T=9 SBS) | — | **9/10** "essentially matched" | |
+
+Tablet extrapolation (NOT measured on device — tablet unavailable): the
+axes taken are exactly the tablet's measured heavy hitters (shadows #1-2,
+veg fill 53%, froxels 3%, GI 2.4%): the desktop -57% GPU / -45% cpu.submit
+should compound with the phone's GPU-bound regime, but the 41.9 ms
+clock-independent floor from PERF_CPU_WALL_RESULTS.md is untouched by any
+of this and still caps the tablet below ~24 fps until attributed on-device.
