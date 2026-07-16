@@ -47,11 +47,22 @@ export function installPositionInvariance(renderer: WebGPURenderer): void {
   if (proto.__laasInvariant === true) return;
   proto.__laasInvariant = true;
   const orig = proto._getWGSLVertexCode;
+  let warned = false;
   proto._getWGSLVertexCode = function (this: unknown, d: unknown): string {
-    return orig.call(this, d).replace(
+    const code = orig.call(this, d);
+    const patched = code.replace(
       '@builtin( position ) builtinClipSpace',
       '@invariant @builtin( position ) builtinClipSpace',
     );
+    // The marker is an exact string from three's WGSL emitter: a silent
+    // no-op here disables depth invariance for EVERY pipeline and the
+    // prepass EQUAL trick starts dropping fragments world-wide (frost).
+    if (patched === code && !warned) {
+      warned = true;
+      // eslint-disable-next-line no-console
+      console.warn('[laas] position-invariance marker NOT FOUND - prepass EQUAL is unsafe');
+    }
+    return patched;
   };
 }
 
@@ -84,9 +95,14 @@ export function depthPrepassTwin(mesh: Mesh, nodes: PrepassNodes): Mesh {
   if (nodes.opacityNode !== undefined) {
     ms.opacityNode = nodes.opacityNode;
     m.alphaTest = nodes.alphaTest ?? 0.5;
-    // alpha = colorNode.a × opacity — pin a=1 so the test sees the cutout
-    ms.colorNode = vec4(0, 0, 0, 1);
   }
+  // alpha = colorNode.a × opacity — pin a=1 so the alpha test still sees the
+  // cutout. rgb MUST be pinned too: colorWrite=false does not reach every
+  // MRT attachment on the WebGPU backend, and the twin's default shading
+  // leaked pale sky-lit speckle into the scene at the dither-fade band —
+  // the owner's "frost" (bisected 2026-07-16: prepass=0 kills it, every
+  // material/visibility toggle does not).
+  ms.colorNode = vec4(0, 0, 0, 1);
   m.side = nodes.side;
   m.colorWrite = false;
   m.depthWrite = true;

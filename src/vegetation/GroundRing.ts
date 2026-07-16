@@ -1094,7 +1094,22 @@ export class GroundRing {
       // default OFF on preset=min — TBDR early-Z already does this job and the
       // twins cost 24% of GPU work (see prepassMode()).
       const noPrepass = prepassMode() === 'off';
-      if (!noPrepass && (spec.g <= 2 || spec.g === 8)) {
+      // RING-GRASS TWINS ARE RETIRED (owner frost bug, bisected 2026-07-16).
+      // The depth twin and the color pass disagree on some fragments of
+      // blades once they thin toward sub-pixel: the twin z-writes blades the
+      // color pass never draws, the orphan depth blocks the terrain behind,
+      // and the hole clears to SKY - TAA smears those sky pixels into the
+      // white-blue "frost" carpet across every meadow band. Measured at the
+      // frost camera (bluish share of the band crop, locked exposure):
+      // all twins 30.78% / g2+g8 excluded 25.41% / forest-only twins 25.34%
+      // (forest cards are innocent) / no ring twins 0.31%. Even the near
+      // rings paint the far band, so the whole family goes until the
+      // depth/color discard parity is ACTUALLY bit-stable; tree-card twins
+      // in Forests stay (proven clean). Perf: grass prepass was already
+      // default-off on min; the Quality axes can re-enable per-preset after
+      // a real fix.
+      const ringTwins = false;
+      if (ringTwins && !noPrepass && spec.g <= 1) {
         const matS = spec.mat as unknown as { positionNode: unknown; maskNode: unknown };
         this.prepassGroup.add(
           depthPrepassTwin(mesh, {
@@ -1271,8 +1286,17 @@ export class GroundRing {
     mat.emissiveNode = varying(
       grassTranslucency(albedo, t) as unknown as Parameters<typeof varying>[0],
     ) as unknown as typeof mat.emissiveNode;
+    // Indirect (IBL sky dome + probes) is gated by canopy SKY VISIBILITY on
+    // top of the blade-height ramp: crowns above a tuft occlude the dome, so
+    // shaded interiors read deep green instead of a pale sky-blue "frost"
+    // (crop-metric bisect 2026-07-16 — sky irradiance on fully-exposed tips
+    // was the last standing term; sunlit meadows have cov=0 and are
+    // untouched). 0.85 mirrors the albedo shade term above.
     mat.aoNode = varying(
-      smoothstep(0.0, 0.55, t).mul(0.55).add(0.45) as unknown as Parameters<typeof varying>[0],
+      smoothstep(0.0, 0.55, t)
+        .mul(0.55)
+        .add(0.45)
+        .mul(float(1).sub(cov.mul(0.85))) as unknown as Parameters<typeof varying>[0],
     ) as unknown as typeof mat.aoNode;
     mat.roughness = 0.88;
     mat.metalness = 0;
