@@ -31,3 +31,5 @@ shots/*
 assets/
 # stray screenshot from a shell redirect typo
 /-background
+# runtime log written by tools/debug-telemetry-server.ts (?debug=1 phone channel)
+telemetry.jsonl
