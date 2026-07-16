@@ -390,6 +390,31 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
         g.quad(a0, b0, b1, a1);
       }
     } else {
+      // trefoil: the sparse floret quads below are 5-7 mm each — sub-pixel
+      // from the riding camera (8-20 m), so whole verge colonies vanished in
+      // the normal render while ringonly=11 showed a dense carpet. A solid
+      // 8-tri octahedron core gives every head a contiguous gold silhouette
+      // from ANY view direction; florets stay on top as near-field texture.
+      if (kind === 'trefoil') {
+        const r = s * 0.75;
+        const yTop = g.vertex(cx, cy + r, cz, 0, 1, 0, 0.5, 1, 1, 0, 0, 1);
+        const yBot = g.vertex(cx, cy - r * 0.6, cz, 0, -1, 0, 0.5, 0, 1, 0, 0, 1);
+        const eq: number[] = [];
+        for (let i = 0; i < 4; i++) {
+          const az = (i / 4) * Math.PI * 2 + 0.4;
+          const ex = Math.cos(az);
+          const ez = Math.sin(az);
+          eq.push(g.vertex(cx + ex * r, cy, cz + ez * r, ex, 0, ez, 0.5, 0.5, 1, 0, 0, 1));
+        }
+        for (let i = 0; i < 4; i++) {
+          const a = eq[i] as number;
+          const b = eq[(i + 1) % 4] as number;
+          // outward winding (checked by cross product): DoubleSide flips the
+          // authored normal on back faces, so inward winding = dark heads
+          g.tri(yTop, b, a);
+          g.tri(yBot, a, b);
+        }
+      }
       // umbel: cluster of tiny 4-petal florets on a dome
       const florets = 12 + rng.int(8);
       for (let i = 0; i < florets; i++) {

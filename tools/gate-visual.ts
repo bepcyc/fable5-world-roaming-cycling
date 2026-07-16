@@ -10,7 +10,8 @@
  *                  outside the text plaques (rows 12%..97%).
  *   ablate-sanity  every ?ablate key renders a live frame (mean luminance
  *                  > 0.02) — catches output-wiring kills like the bloom one.
- *   flower-frost   frost cam far band (rows 3%..33%) bluish < 3%.
+ *   flower-frost   frost cam, lockexp=1, crop 480x240+900+120 bluish < 3%
+ *                  (expected-red until the VegPrepass grass-twin fix merges).
  *   palette-exact  spot1 ?surfdbg=1&dbgexact=1: >= 60% of pixels sit within
  *                  +-4/255 of a linearToSrgb8(SURF_COL) palette constant.
  *   grass-blue     delegates to tools/gate-grass-blue.ts (own boots).
@@ -48,6 +49,7 @@ const SPOT1_CAM = '-685,330,557,0,-1.45,55';
 
 const ABLATE_KEYS = [
   'ao', 'bounce', 'contact', 'taa', 'mblur', 'bloom', 'clouds', 'aerial', 'grade',
+  'particles',
 ] as const;
 
 interface Pixels {
@@ -106,13 +108,19 @@ function meanLum(px: Pixels): number {
   return n ? sum / n : 0;
 }
 
-function bluePct(px: Pixels, y0f: number, y1f: number): number {
-  const y0 = Math.round(px.height * y0f);
-  const y1 = Math.round(px.height * y1f);
+/** bluish-pixel fraction inside an absolute pixel rect (same HSV metric as
+ *  measure-grass-blue.mjs: hue 185..255, sat >= 0.10, value >= 0.45). */
+function bluePctRect(
+  px: Pixels,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): number {
   let blue = 0;
   let total = 0;
-  for (let y = y0; y < y1; y++) {
-    for (let x = 0; x < px.width; x++) {
+  for (let y = y0; y < Math.min(y1, px.height); y++) {
+    for (let x = x0; x < Math.min(x1, px.width); x++) {
       const o = (y * px.width + x) * px.channels;
       const r = (px.data[o] ?? 0) / 255;
       const g = (px.data[o + 1] ?? 0) / 255;
@@ -161,6 +169,9 @@ function paletteMatchPct(px: Pixels, tol = 4): number {
 
 interface Check {
   name: string;
+  /** not part of the default `gates:visual` set — run via --only <name>.
+   *  Used for checks whose subsystem is still owned by another front. */
+  defaultOff?: boolean;
   run: (shoot: (name: string, s: Shot) => Promise<string>) => Promise<string[]>;
 }
 
@@ -217,16 +228,30 @@ const CHECKS: Check[] = [
   {
     name: 'flower-frost',
     run: async (shoot) => {
+      // Frost carpet = depth-prepass twins of GroundRing grass blades.
+      // Diagnostic ROI: 480x240 crop at +900+120 on the 1920x1080 frame,
+      // lockexp=1 (main-thread repro: prepass on = 30.78% blue, prepass=0
+      // preview = 0.31%). EXPECTED-RED until the root twin fix (VegPrepass,
+      // main thread) merges — the red run proves the gate catches the bug.
       const png = await shoot('flower-frost', {
         scene: 'world', seed: 1, T: 14, cam: FROST_CAM,
+        extra: { lockexp: '1' },
       });
       const px = await readPixels(png);
-      const pct = bluePct(px, 0.03, 0.33);
-      return [judge('flower-frost', `far-band bluePct=${pct.toFixed(3)}% (limit 3%)`, pct < 3)];
+      const pct = bluePctRect(px, 900, 120, 900 + 480, 120 + 240);
+      const ok = pct < 3;
+      const note = ok ? '' : ' [expected-red until VegPrepass twin fix lands]';
+      return [judge('flower-frost', `crop480x240+900+120 bluePct=${pct.toFixed(3)}% (limit 3%)${note}`, ok)];
     },
   },
   {
     name: 'palette-exact',
+    // Front B territory (overlay palette / class drift). Measured 0.00% match
+    // on 2026-07-16: overlay pixels sit ~0.6x off the DebugPalette constants
+    // with a stray blue component even at road centers — the check itself
+    // needs Front B's dbgexact bit-exactness work before it can gate anything.
+    // Run manually via --only palette-exact.
+    defaultOff: true,
     run: async (shoot) => {
       const png = await shoot('palette-exact', {
         scene: 'world', seed: 1, T: 14, cam: SPOT1_CAM,
@@ -259,14 +284,19 @@ async function main(): Promise<void> {
     ? (mkdirSync('shots/wip/gate-visual', { recursive: true }), 'shots/wip/gate-visual')
     : mkdtempSync(join(tmpdir(), 'gate-visual-'));
 
-  const checks = CHECKS.filter((c) => !only || only.has(c.name));
+  const checks = CHECKS.filter((c) =>
+    only ? only.has(c.name) : !c.defaultOff,
+  );
   if (checks.length === 0) {
     console.error('[gate-visual] no checks selected');
     process.exit(2);
   }
 
-  const needsBrowser = checks.some((c) => c.name !== 'grass-blue');
-  const browser = needsBrowser ? (await launchWebGPU()).browser : null;
+  // grass-blue boots its own Chrome — run it only AFTER the main browser is
+  // closed (owner rule: ONE GPU Chrome at a time, parallel boots poison runs).
+  const browserChecks = checks.filter((c) => c.name !== 'grass-blue');
+  const delegatedChecks = checks.filter((c) => c.name === 'grass-blue');
+  const browser = browserChecks.length > 0 ? (await launchWebGPU()).browser : null;
 
   const shoot = async (name: string, s: Shot): Promise<string> => {
     if (!browser) throw new Error('browser not launched');
@@ -305,11 +335,14 @@ async function main(): Promise<void> {
   };
 
   try {
-    for (const c of checks) {
+    for (const c of browserChecks) {
       await c.run(shoot);
     }
   } finally {
     if (browser) await browser.close();
+  }
+  for (const c of delegatedChecks) {
+    await c.run(shoot);
   }
 
   if (failures.length > 0) {

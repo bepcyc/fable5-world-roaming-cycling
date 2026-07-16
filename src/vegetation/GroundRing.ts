@@ -1057,7 +1057,11 @@ export class GroundRing {
         cell: DEB_CELL,
         salt: salt ^ 0x5dd5,
       };
-      this.debrisTransform(mat, bindF, 1, 0, 34);
+      // scaleK 1.2: the 0.55..1.45 debris size roll shrank most blooms below
+      // sub-pixel from the riding camera; shifting the range to 0.66..1.74
+      // keeps variation while the median head clears the 3-4 px visibility
+      // floor at 8-15 m (solid octa core added in buildFlower does the rest).
+      this.debrisTransform(mat, bindF, 1.2, 0, 34);
       this.patchGI(mat);
       draws.push({
         geo: buildFlower(rb.kind, this.seed.rng(`groundring/bloom/${rb.kind}`)),
