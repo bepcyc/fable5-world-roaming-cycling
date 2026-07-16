@@ -184,6 +184,51 @@ const RF_CAP = 16384; // per bloom kind (raised for colony-clustered blooms)
 // accept it replaces as the bulk (now ~0.55 of soft-track cells).
 const GT_CAP = 49152; // road grit
 
+const RING_DEBUG_GROUPS = [
+  'grass-near',
+  'grass-mid',
+  'grass-far',
+  'stream-cobble',
+  'stream-pebble',
+  'twig',
+  'bark-chip',
+  'litter',
+  'grass-super-far',
+  'road-cobble',
+  'road-pebble',
+  'road-trefoil',
+  'road-thyme',
+  'road-grit',
+] as const;
+
+const RING_DEBUG_COLORS: readonly (readonly [number, number, number])[] = [
+  [0.92, 0.08, 0.08], [0.95, 0.42, 0.04], [0.95, 0.9, 0.05],
+  [0.05, 0.75, 0.9], [0.04, 0.3, 0.95], [0.85, 0.06, 0.8],
+  [0.55, 0.15, 0.85], [0.9, 0.9, 0.9], [0.08, 0.85, 0.25],
+  [0.95, 0.95, 0.95], [0.45, 0.48, 0.52], [0.95, 0.78, 0.02],
+  [0.62, 0.12, 0.95], [0.02, 0.85, 0.68],
+];
+
+function installRingDebugLegend(filter: number | null): void {
+  if (document.getElementById('ringdbg-legend')) return;
+  const el = document.createElement('div');
+  el.id = 'ringdbg-legend';
+  el.style.cssText = [
+    'position:fixed', 'top:10px', 'right:10px', 'z-index:1300',
+    'color:#eef4ef', 'background:#080c0acc', 'padding:8px 10px',
+    'font:11px/1.45 ui-monospace,Menlo,monospace',
+    'border:1px solid #39453e', 'border-radius:4px', 'pointer-events:none',
+  ].join(';');
+  const rows = RING_DEBUG_GROUPS.map((name, g) => {
+    if (filter !== null && filter !== g) return '';
+    const c = RING_DEBUG_COLORS[g] as readonly [number, number, number];
+    const rgb = `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
+    return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:${rgb};border:1px solid #000"></span>g=${g} ${name}`;
+  }).filter(Boolean);
+  el.innerHTML = `<b>GroundRing draw id</b><br>${rows.join('<br>')}`;
+  document.body.appendChild(el);
+}
+
 interface RingBind {
   cells: StorageBufferNode<'uint'>;
   heights: StorageBufferNode<'float'>;
@@ -408,6 +453,18 @@ export class GroundRing {
 
   init(beechAtlas: DataTexture | null): void {
     this.group.add(this.prepassGroup);
+    const ringDebugRaw = new URLSearchParams(window.location.search).get('ringdbg');
+    const ringDebugOn = ringDebugRaw !== null;
+    const ringDebugNumber = Number(ringDebugRaw);
+    const ringDebugGroup = ringDebugRaw !== null && ringDebugRaw !== 'groups' && Number.isInteger(ringDebugNumber)
+      ? Math.min(Math.max(ringDebugNumber, 0), RING_DEBUG_GROUPS.length - 1)
+      : null;
+    const ringOnlyNumber = Number(new URLSearchParams(window.location.search).get('ringonly'));
+    const ringOnlyGroup = Number.isInteger(ringOnlyNumber)
+      ? Math.min(Math.max(ringOnlyNumber, 0), RING_DEBUG_GROUPS.length - 1)
+      : null;
+    const visibleGroup = ringOnlyGroup ?? ringDebugGroup;
+    if (ringDebugOn) installRingDebugLegend(ringDebugGroup);
     const hf = this.hf;
     const salt = this.seed.sub('groundring') & 0x7fffffff;
     const camU = this.camU;
@@ -1012,7 +1069,18 @@ export class GroundRing {
       indirectData[d * 5] = geo.index ? geo.index.count : geo.attributes.position?.count ?? 0;
       drawGroups[d] = spec.g;
       geo.setIndirect(indirectAttr, d * 20);
+      if (ringDebugOn) {
+        const c = RING_DEBUG_COLORS[spec.g] as readonly [number, number, number];
+        const debugColor = vec3(c[0], c[1], c[2]);
+        spec.mat.colorNode = debugColor;
+        // Emissive makes ownership colors independent of sunlight, shadow,
+        // normals and AO. A black fragment in this mode is therefore from a
+        // different draw/depth failure, not merely dark lighting.
+        spec.mat.emissiveNode = debugColor.mul(0.65);
+        spec.mat.roughness = 1;
+      }
       const mesh = new Mesh(geo, spec.mat);
+      if (visibleGroup !== null && spec.g !== visibleGroup) mesh.visible = false;
       mesh.frustumCulled = false;
       mesh.castShadow = false;
       mesh.receiveShadow = true;

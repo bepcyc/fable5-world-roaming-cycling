@@ -111,6 +111,32 @@ const CAP_UNDER = 4096;
 const CAP_EX_R1 = 1024;
 const CAP_EX_R2 = 2048;
 
+const VEG_CLASS_NAMES: Readonly<Record<number, string>> = {
+  0: 'spruce', 1: 'pine', 2: 'beech', 3: 'birch', 4: 'karst-gnarl', 5: 'snag',
+  8: 'hazel', 9: 'pink-bush', 10: 'juniper', 11: 'fern',
+  12: 'flower-umbel', 13: 'flower-bell', 14: 'flower-daisy',
+  16: 'log', 17: 'stump', 18: 'boulder', 19: 'slab',
+  20: 'stone-large', 21: 'stone-medium', 22: 'stone-small', 23: 'branch',
+};
+
+function installClassDebugLegend(): void {
+  if (document.getElementById('clsdbg-legend')) return;
+  const el = document.createElement('div');
+  el.id = 'clsdbg-legend';
+  el.style.cssText = [
+    'position:fixed', 'top:10px', 'left:210px', 'z-index:1300',
+    'color:#eef4ef', 'background:#080c0acc', 'padding:8px 10px',
+    'font:11px/1.45 ui-monospace,Menlo,monospace',
+    'border:1px solid #39453e', 'border-radius:4px', 'pointer-events:none',
+    'columns:2', 'column-gap:14px',
+  ].join(';');
+  el.innerHTML = '<b>VegClass draw id</b><br>' + Object.entries(VEG_CLASS_NAMES).map(([id, name]) => {
+    const hue = (Number(id) * 47) % 360;
+    return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:hsl(${hue} 95% 55%);border:1px solid #000"></span>cls=${id} ${name}`;
+  }).join('<br>');
+  document.body.appendChild(el);
+}
+
 const MAIN_GROUPS = 170;
 /**
  * Per-cascade caster groups: trees r1/r2 (48) + hero r0 (24) + extras/stones
@@ -316,6 +342,15 @@ export class Forests {
   }
 
   init(renderer: Renderer): void {
+    const query = new URLSearchParams(window.location.search);
+    const classDebug = query.get('clsdbg') === '1';
+    const classOnly = query.get('clsonly');
+    const classFilter = classOnly === 'flowers'
+      ? new Set([12, 13, 14])
+      : classOnly !== null && Number.isInteger(Number(classOnly))
+        ? new Set([Number(classOnly)])
+        : null;
+    if (classDebug) installClassDebugLegend();
     void renderer;
     this.group.add(this.prepassGroup);
     const lib = this.lib;
@@ -487,6 +522,7 @@ export class Forests {
     };
 
     for (const pool of lib.pools) {
+      if (classFilter && !classFilter.has(pool.cls)) continue;
       const layer = layerOf(pool.cls);
       const rings: { ring: 0 | 1 | 2; parts: typeof pool.r1 }[] = [];
       if (pool.r0) rings.push({ ring: 0, parts: pool.r0 });
@@ -561,11 +597,12 @@ export class Forests {
           this.patchGI(mat);
           // ?clsdbg=1 — flat-color every draw by VegClass (artifact triage:
           // "which pool is that?"); keeps alpha cutouts so silhouettes read
-          if (new URLSearchParams(window.location.search).get('clsdbg') === '1') {
+          if (classDebug) {
             const hue = (pool.cls * 47) % 360;
             const cdbg = new Color().setHSL(hue / 360, 0.95, 0.55);
             const op = mat.opacityNode as unknown as NF | null;
             mat.colorNode = vec4(vec3(cdbg.r, cdbg.g, cdbg.b), 1);
+            mat.emissiveNode = vec3(cdbg.r, cdbg.g, cdbg.b).mul(0.65);
             if (op) mat.opacityNode = op;
           }
           addDraw(part.geo, mat, g, part.tris);
