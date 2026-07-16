@@ -221,6 +221,26 @@ flattened darkening) are retired in 7b98e65 (they fought the grade-NaN black,
 already fixed at the root). Cure owned by Front F: distance albedo fade
 toward the meadow tone + мuted umbel white; criterion frost-cam band < 3%.
 
+## Closing ledger (2026-07-16 evening)
+
+- FROST SOLVED AT THE ROOT (0275d5e): the carrier was never flowers or any
+  material — GroundRing grass depth-prepass twins z-wrote blade fragments
+  the color pass dissolved toward sub-pixel; orphan depths punched holes to
+  SKY and TAA smeared them into the carpet. Ring twins retired (forest card
+  twins proven innocent, 0.00 contribution); band 30.78% -> 0.27%.
+  Full decomposition + hunt landmines in the frost-mechanism-forever memory.
+  The earlier "petal rewind / white albedo" verdict in this file is
+  SUPERSEDED - flowers innocent (7db9995 measures clean at 0.87%).
+- Front P merged (369def9): Quality axes, Settings, gates:perf green.
+- gates:visual GREEN 15/15 (fc17f8b) + dead-frame liveness guard (700b92e)
+  after the gate itself false-passed on a crashed capture.
+- Session limits killed agent waves twice (15:0x, 18:0x; reset 20:10);
+  every worktree salvage-committed: T edb9551+a2bdbf1 (+stash tag
+  salvage-turnpicker-new-bikerig), R 0392565, R2 f0ef8f5, F 3fc6570,
+  F2 cbe4c4c. Successor briefs: finish turnpicker validation (T), validate
+  realism law on seeds 1-8 then merge the road package as ONE relayout (R2),
+  trefoil head visibility + palette-exact bit-exactness (F2).
+
 ## Process law for every agent (cannot be dropped)
 
 - Own worktree (Agent isolation=worktree), own LAAS_PORT, own dev server:
