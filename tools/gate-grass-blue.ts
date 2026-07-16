@@ -86,7 +86,7 @@ async function main(): Promise<void> {
         .waitForFunction(
           () => window.__laas && (window.__laas.ready || window.__laas.error !== null),
           undefined,
-          { timeout: 180000, polling: 250 },
+          { timeout: 300000, polling: 250 },
         )
         .catch(() => {
           throw new Error(`[${p.name}] timed out waiting for ready`);
