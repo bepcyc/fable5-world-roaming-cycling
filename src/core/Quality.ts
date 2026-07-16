@@ -163,9 +163,38 @@ const HIGH: QualitySettings = {
  * min/ultra with a measured ablation per axis — see docs/PERF_* notes.
  */
 const PRESETS: Record<QualityPreset, QualitySettings> = {
+  /**
+   * min — assembled from the measured ablation battery (2026-07-16, clean
+   * mutex-era runs, docs/PERF_QUALITY_AXES.md): SWITCHES OFF rather than
+   * shrinks. Kept ON deliberately: clouds (sky goes empty for ~0.1 ms),
+   * TAA (dither crossfades shred without temporal history), veg shadow
+   * casters (the world flattens; cascades 2 already halves caster draws),
+   * AO (grounding), bloom (fixed: no longer blacks the frame), debris
+   * (near-field richness, measured cheap).
+   */
   min: {
     ...HIGH,
     grassScale: 2,
+    grassBladesNear: 3,
+    grassSegsNear: 2,
+    grassBladesMid: 2,
+    grassSegsMid: 1,
+    grassRadius: 120,
+    grassFarLayer: false,
+    treeRingScale: 0.6,
+    shadowCascades: 2,
+    shadowMapSize: 1024,
+    shadowMaxFar: 1600,
+    contactShadows: false,
+    froxels: false,
+    froxelScale: 2,
+    cloudMarchSteps: 16,
+    cloudShadowRes: 384,
+    caustics: false,
+    giProbesPerFrame: 1024,
+    particleCount: 16384,
+    bounce: false,
+    motionBlur: false,
     heightRes: 1024,
     simRes: 512,
     erosionIters: 150,
@@ -173,6 +202,15 @@ const PRESETS: Record<QualityPreset, QualitySettings> = {
   },
   low: {
     ...HIGH,
+    grassScale: 2,
+    treeRingScale: 0.8,
+    shadowCascades: 3,
+    contactShadows: false,
+    froxelScale: 2,
+    cloudMarchSteps: 24,
+    giProbesPerFrame: 2048,
+    particleCount: 65536,
+    bounce: false,
     heightRes: 2048,
     simRes: 1024,
     erosionIters: 500,
@@ -186,8 +224,26 @@ const PRESETS: Record<QualityPreset, QualitySettings> = {
     tileVerts: 49,
   },
   high: HIGH,
+  /**
+   * ultra — spends budget on axes that are actually visible: lusher near
+   * carpet, farther tree rings, sharper+farther shadows, denser cloud
+   * march, faster GI convergence, more particles, more AO samples.
+   */
   ultra: {
     ...HIGH,
+    grassBladesNear: 7,
+    grassSegsNear: 5,
+    grassBladesMid: 4,
+    grassSegsMid: 2,
+    grassRadius: 200,
+    treeRingScale: 1.35,
+    shadowMapSize: 4096,
+    shadowMaxFar: 4800,
+    cloudMarchSteps: 48,
+    cloudShadowRes: 1024,
+    giProbesPerFrame: 6144,
+    particleCount: 262144,
+    aoSamples: 12,
     heightRes: 4096,
     simRes: 2048,
     erosionIters: 900,
