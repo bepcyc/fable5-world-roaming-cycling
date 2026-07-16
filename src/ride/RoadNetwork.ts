@@ -26,6 +26,7 @@ import { runWorkerJobs } from '../core/Threads';
 import type { MacroParams } from '../world/MacroMap';
 import { LAKE_LEVEL, TREELINE, WORLD_SIZE } from '../world/WorldConst';
 import { computeRoadGridBand, type RoadGridJob } from './RoadGridWorker';
+import { realismLaw } from './RoadRealismLaw';
 import { traceScenicContours, type ScenicPolyline } from './ScenicContours';
 import { CLASSIFY, SurfaceId } from './SurfaceMatrix';
 
@@ -89,7 +90,11 @@ export const ROAD_CLASSES: readonly RoadClassSpec[] = [
     surfaceId: SurfaceId.Singletrack,
     name: 'singletrack',
     halfWidth: 0.55, // 1.1 m worn tread (IMBA bench-cut 0.6–0.9 m + verge)
-    maxGrade: 0.2, // IMBA: >18–20% sustained = hike-a-bike; ramps only
+    // IMBA/BLM: >15% pitches only for ~10-15 m, 18-20%+ sustained =
+    // hike-a-bike. The old 0.2 let the profile clamp ride 20% for 100-400 m
+    // (owner realism law: >18% held >10 m = red, probe-roadrealism) — 0.17
+    // keeps the whole clamped profile under the hike-a-bike line.
+    maxGrade: 0.17,
     bankMax: 0.03,
     crownSlope: 0,
     dispScale: 0.35, // alpine p.1: yield the tread to the scattered grit (see gravel-coarse)
@@ -1316,6 +1321,316 @@ export class RoadNetwork {
       }
       const asphalt = spec.surfaceId === SurfaceId.Asphalt;
       relaxProjectedKinks(sharp, asphalt ? 6 : 3, asphalt ? 16 : 10, !asphalt);
+
+      // ---- anti-zigzag pass (owner realism law #1, tools/probe-roadrealism) --
+      // High-frequency alternating small bends survive the shaping passes
+      // when chordSafe pinned them during DP/turn-spacing (water, level
+      // conflicts, earthworks) or when snap-backs/splices/curvature repairs
+      // re-introduced them; Chaikin only rounds them into a "wiggle" no road
+      // engineer builds (US DOT: no broken-back/reverse curves without a
+      // real tangent). Detector = probe-roadrealism, thresholds shared via
+      // RoadRealismLaw. Relax the whole chain span first; a chain the relax
+      // cannot flatten gets its small-bend apexes dropped one by one where
+      // the bridging chord stays legal (never two adjacent — the ≤2×
+      // RESAMPLE_M chord keeps the centerline gap law intact).
+      const wig = realismLaw(spec.surfaceId).wiggle;
+      const signedTurnDeg = (i: number): number => {
+        const a = poly[i - 1] as number[];
+        const b = poly[i] as number[];
+        const c = poly[i + 1] as number[];
+        const d1x = (b[0] as number) - (a[0] as number);
+        const d1z = (b[1] as number) - (a[1] as number);
+        const d2x = (c[0] as number) - (b[0] as number);
+        const d2z = (c[1] as number) - (b[1] as number);
+        const dot = d1x * d2x + d1z * d2z;
+        const crs = d1x * d2z - d1z * d2x;
+        const l = Math.hypot(d1x, d1z) * Math.hypot(d2x, d2z) || 1;
+        const ang = (Math.acos(Math.min(Math.max(dot / l, -1), 1)) * 180) / Math.PI;
+        return crs >= 0 ? ang : -ang;
+      };
+      interface ZigBend {
+        sign: number;
+        totalDeg: number;
+        i0: number;
+        i1: number;
+        apexI: number;
+        apexS: number;
+      }
+      const zigChains = (): ZigBend[][] => {
+        const sAcc: number[] = [0];
+        for (let i = 1; i < poly.length; i++) {
+          const a = poly[i - 1] as number[];
+          const b = poly[i] as number[];
+          sAcc.push(
+            (sAcc[i - 1] as number) +
+              Math.hypot((b[0] as number) - (a[0] as number), (b[1] as number) - (a[1] as number)),
+          );
+        }
+        const bends: ZigBend[] = [];
+        let cur: ZigBend | null = null;
+        let apexAbs = 0;
+        for (let i = 1; i < poly.length - 1; i++) {
+          const t = signedTurnDeg(i);
+          if (Math.abs(t) < wig.noiseDeg) continue;
+          const sign = t >= 0 ? 1 : -1;
+          if (cur && cur.sign === sign && i - cur.i1 <= 2) {
+            cur.totalDeg += Math.abs(t);
+            cur.i1 = i;
+            if (Math.abs(t) > apexAbs) {
+              apexAbs = Math.abs(t);
+              cur.apexI = i;
+              cur.apexS = sAcc[i] as number;
+            }
+          } else {
+            if (cur) bends.push(cur);
+            cur = { sign, totalDeg: Math.abs(t), i0: i, i1: i, apexI: i, apexS: sAcc[i] as number };
+            apexAbs = Math.abs(t);
+          }
+        }
+        if (cur) bends.push(cur);
+        const events = bends.filter((b) => b.totalDeg >= wig.minBendDeg);
+        const chains: ZigBend[][] = [];
+        let chain: ZigBend[] = [];
+        const flush = (): void => {
+          if (chain.length >= wig.minBends) {
+            const mean = chain.reduce((a, b) => a + b.totalDeg, 0) / chain.length;
+            if (mean >= wig.minChainMeanDeg) chains.push(chain);
+          }
+          chain = [];
+        };
+        for (const b of events) {
+          if (b.totalDeg > wig.maxBendDeg) {
+            flush();
+            continue; // honest corner/serpentine — never part of a zigzag
+          }
+          const prev = chain[chain.length - 1];
+          if (prev && prev.sign !== b.sign && b.apexS - prev.apexS <= wig.maxApexSpacingM) {
+            chain.push(b);
+          } else {
+            flush();
+            chain.push(b);
+          }
+        }
+        flush();
+        return chains;
+      };
+      const chordLegalLoose = (A: number[], B: number[]): boolean => {
+        const steps = Math.max(
+          2,
+          Math.ceil(
+            Math.hypot((B[0] as number) - (A[0] as number), (B[1] as number) - (A[1] as number)) / 4,
+          ),
+        );
+        for (let j = 0; j <= steps; j++) {
+          const t = j / steps;
+          const x = (A[0] as number) + ((B[0] as number) - (A[0] as number)) * t;
+          const z = (A[1] as number) + ((B[1] as number) - (A[1] as number)) * t;
+          if (wAt(x, z) - hAt(x, z) > CAUSEWAY_MAX_DEPTH_M || levelConflict(x, z)) return false;
+        }
+        return true;
+      };
+      // Long chords left by the drop/merge repairs below break the
+      // centerline gap law (probe-roadgates: pt chord ≤ 30 m) — after all
+      // repairs, re-subdivide any over-long segment with collinear
+      // midpoints (turn = 0: no wiggle/radius/turn metric changes).
+      const resubdivideLongChords = (): void => {
+        const out: number[][] = [poly[0] as number[]];
+        for (let i = 1; i < poly.length; i++) {
+          const a = poly[i - 1] as number[];
+          const b = poly[i] as number[];
+          const seg = Math.hypot(
+            (b[0] as number) - (a[0] as number),
+            (b[1] as number) - (a[1] as number),
+          );
+          const parts = Math.max(1, Math.ceil(seg / (RESAMPLE_M * 1.6)));
+          for (let k = 1; k < parts; k++) {
+            const t = k / parts;
+            out.push([
+              (a[0] as number) + ((b[0] as number) - (a[0] as number)) * t,
+              (a[1] as number) + ((b[1] as number) - (a[1] as number)) * t,
+            ]);
+          }
+          out.push(b);
+        }
+        poly = out;
+      };
+
+      // ---- residual fold repair (probe-roadrealism min-radius) ---------------
+      // A vertex sharper than the class curvature law after the relax above
+      // is a lattice fold the line search could not move (legality-pinned).
+      // Drop it where the bridging chord is legal; where even that chord is
+      // blocked, merge the fold with a neighbour vertex (enforceTurnSpacing's
+      // obstacle trick) so the pair collapses onto legal chords. Runs BEFORE
+      // the anti-zigzag cleanup: dropped-vertex seams may leave small
+      // alternating bends, and the zigzag passes below are the ones licensed
+      // to smooth those (first landing taught this the hard way — fold drops
+      // AFTER the zigzag cleanup re-seeded fresh wiggle chains).
+      {
+        const limDeg = (finalTurnLimit * 180) / Math.PI;
+        for (let round = 0; round < 3; round++) {
+          let changed = false;
+          const drop = new Set<number>();
+          let last = -10;
+          for (let i = 1; i <= poly.length - 2; i++) {
+            if (Math.abs(signedTurnDeg(i)) <= limDeg) continue;
+            if (i - last < 3) continue;
+            const a = poly[i - 1] as number[];
+            const c = poly[i + 1] as number[];
+            const ok = asphalt ? chordSafe(a, c, spec.maxGrade) : chordLegalLoose(a, c);
+            if (!ok) continue;
+            drop.add(i);
+            last = i;
+          }
+          if (drop.size > 0) {
+            console.warn(
+              `[roads] ${name}: dropped ${drop.size} residual fold(s) over the curvature law`,
+            );
+            poly = poly.filter((_, i) => !drop.has(i));
+            changed = true;
+          }
+          // pair-merge fallback for folds whose bridging chord is blocked
+          for (let i = 2; i <= poly.length - 3; i++) {
+            if (Math.abs(signedTurnDeg(i)) <= limDeg) continue;
+            let merged = false;
+            for (const [j, k] of [
+              [i, i + 1],
+              [i - 1, i],
+            ] as const) {
+              const A = poly[j] as number[];
+              const B = poly[k] as number[];
+              for (const t of [0.5, 0.35, 0.65]) {
+                const mid = [
+                  (A[0] as number) * (1 - t) + (B[0] as number) * t,
+                  (A[1] as number) * (1 - t) + (B[1] as number) * t,
+                ];
+                const L = poly[j - 1] as number[];
+                const R = poly[k + 1] as number[];
+                const okL = asphalt ? chordSafe(L, mid, spec.maxGrade) : chordLegalLoose(L, mid);
+                const okR = asphalt ? chordSafe(mid, R, spec.maxGrade) : chordLegalLoose(mid, R);
+                if (!okL || !okR) continue;
+                poly.splice(j, 2, mid);
+                merged = true;
+                changed = true;
+                break;
+              }
+              if (merged) break;
+            }
+            if (merged) {
+              console.warn(`[roads] ${name}: pair-merged a legality-pinned fold`);
+            }
+          }
+          if (!changed) break;
+        }
+      }
+      for (let round = 0; round < 4; round++) {
+        const chains = zigChains();
+        if (chains.length === 0) break;
+        const moved = new Set<number>();
+        for (const c of chains) {
+          for (let i = (c[0] as ZigBend).i0; i <= (c[c.length - 1] as ZigBend).i1; i++) {
+            moved.add(i);
+          }
+        }
+        relaxProjectedKinks(moved, asphalt ? 6 : 3, asphalt ? 16 : 10, !asphalt);
+      }
+      {
+        for (let round = 0; round < 3; round++) {
+          const chains = zigChains();
+          if (chains.length === 0) break;
+          const drop = new Set<number>();
+          let lastDrop = -10;
+          for (const c of chains) {
+            for (const b of c) {
+              const i = b.apexI;
+              if (i - lastDrop < 3 || i <= 1 || i >= poly.length - 2) continue;
+              const a = poly[i - 1] as number[];
+              const d = poly[i + 1] as number[];
+              const ok = asphalt ? chordSafe(a, d, spec.maxGrade) : chordLegalLoose(a, d);
+              if (!ok) continue;
+              drop.add(i);
+              lastDrop = i;
+            }
+          }
+          if (drop.size === 0) break;
+          console.warn(
+            `[roads] ${name}: anti-zigzag dropped ${drop.size} bend apex(es) after relax stalled`,
+          );
+          poly = poly.filter((_, i) => !drop.has(i));
+          const seams = zigChains();
+          if (seams.length > 0) {
+            const moved = new Set<number>();
+            for (const c of seams) {
+              for (let i = (c[0] as ZigBend).i0; i <= (c[c.length - 1] as ZigBend).i1; i++) {
+                moved.add(i);
+              }
+            }
+            relaxProjectedKinks(moved, asphalt ? 6 : 3, 8, !asphalt);
+          }
+        }
+      }
+      // Detection must run on the FINAL vertex grid: the drop/merge repairs
+      // leave ~28 m spacing where one 55-degree corner is a chain-breaking
+      // "honest bend", while the same curve on the subdivided 14-22 m grid
+      // splits into two 25-30 degree bends that DO chain (found: seed-1
+      // link-3 — generator saw no chain pre-subdivision, the gate saw one
+      // post-subdivision). Subdivide first, then run the convergent pass.
+      resubdivideLongChords();
+      // Last resort — chains that survived every relax/merge round get
+      // projected onto their bracketing chord where that chord is legal:
+      // collinear points have no alternation left, so this pass CONVERGES
+      // instead of capping out (round-cap survivors kept leaking one chain
+      // per re-laid network). Monotonic t keeps segments forward-going.
+      for (let round = 0; round < 2; round++) {
+        const chains = zigChains();
+        if (chains.length === 0) break;
+        let straightened = 0;
+        for (const c of chains) {
+          const i0 = Math.max((c[0] as ZigBend).i0, 1);
+          const i1 = Math.min((c[c.length - 1] as ZigBend).i1, poly.length - 2);
+          if (i1 <= i0) continue;
+          const A = poly[i0 - 1] as number[];
+          const B = poly[i1 + 1] as number[];
+          // chordSafe for EVERY class here (not the loose water/level
+          // check): the chord across grade-forced serpentine tacking fails
+          // the net-grade/cut-fill law by construction, so legit tacks are
+          // physically protected, while flat jitter straightens away. This
+          // replaced a raw-terrain grade exemption that diverged from the
+          // gate's final-profile measurement (seed-1 link-3: raw terrain
+          // said steep, the built profile rode 5.7%).
+          const okChord = chordSafe(A, B, spec.maxGrade);
+          if (!okChord) continue;
+          const abx = (B[0] as number) - (A[0] as number);
+          const abz = (B[1] as number) - (A[1] as number);
+          const len2 = abx * abx + abz * abz || 1;
+          const len = Math.sqrt(len2);
+          let tPrev = 0;
+          for (let i = i0; i <= i1; i++) {
+            const pnt = poly[i] as number[];
+            let t = Math.min(
+              Math.max(
+                (((pnt[0] as number) - (A[0] as number)) * abx +
+                  ((pnt[1] as number) - (A[1] as number)) * abz) /
+                  len2,
+                0,
+              ),
+              1,
+            );
+            t = Math.min(Math.max(t, tPrev + 4 / len), 1);
+            tPrev = t;
+            pnt[0] = (A[0] as number) + abx * t;
+            pnt[1] = (A[1] as number) + abz * t;
+          }
+          straightened++;
+        }
+        if (straightened > 0) {
+          console.warn(
+            `[roads] ${name}: chord-straightened ${straightened} stubborn zigzag chain(s)`,
+          );
+        } else {
+          break; // remaining chains are all chord-blocked — no progress possible
+        }
+      }
+      resubdivideLongChords();
 
       const n = poly.length;
       const ys = new Float64Array(n);
