@@ -31,29 +31,9 @@ export function toggleSurfaceDbg(): boolean {
   return next;
 }
 
-/**
- * Per-class debug palette (bright, maximally separable hues). Emissive is
- * shown pre-tonemap, so values are kept < 1 to avoid clipping to white after
- * the post stack. Keep in sync with the legend in DebugOverlay.
- */
-export const SURF_COL = {
-  water: [0.85, 0.02, 0.02], // bright red (shallow / renderable water)
-  waterDeep: [0.5, 0.0, 0.12], // dark crimson (deep water — blocks everything)
-  asphalt: [0.95, 0.4, 0.0], // orange
-  gravelFine: [0.95, 0.85, 0.0], // yellow
-  gravelCoarse: [0.6, 0.5, 0.0], // olive/dark-yellow
-  gravelRiver: [0.75, 0.68, 0.15], // khaki (natural stream gravel)
-  dirtRoad: [0.6, 0.34, 0.12], // brown
-  singletrack: [0.9, 0.1, 0.7], // magenta
-  grass: [0.15, 0.8, 0.15], // green
-  forest: [0.04, 0.38, 0.08], // dark green
-  soil: [0.45, 0.3, 0.14], // tan/soil brown
-  scree: [0.7, 0.7, 0.74], // light gray
-  rock: [0.45, 0.47, 0.55], // blue-gray
-  snow: [0.92, 0.95, 1.0], // white
-  mud: [0.5, 0.12, 0.58], // purple
-  anomaly: [0.0, 0.95, 0.95], // bright cyan — road core whose class id is broken
-} as const;
+// Palette moved to src/debug/DebugPalette.ts (single source for engine +
+// node tools — exact pixel matching). Re-exported for existing importers.
+export { SURF_COL } from '../debug/DebugPalette';
 
 /** vec3 node from a palette tuple. */
 export const palette = (c: readonly number[]): NV3 =>
