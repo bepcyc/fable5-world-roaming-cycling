@@ -15,7 +15,8 @@
     "gates:grass": "tsx tools/gate-grass-blue.ts",
     "gates:perf": "tsx tools/gate-perf.ts",
     "gates:visual": "tsx tools/gate-visual.ts",
-    "gates:turnpicker": "tsx tools/probe-turnpicker.ts"
+    "gates:turnpicker": "tsx tools/probe-turnpicker.ts",
+    "gates:roads": "tsx tools/probe-roadshape.ts --seeds 1,2,3 && tsx tools/probe-roadgates.ts --seeds 1,2,3 && tsx tools/probe-deadends.ts --seeds 1,2,3 && tsx tools/probe-roadrealism.ts --seeds 1,2,3"
   },
   "dependencies": {
     "three": "0.184.0"
