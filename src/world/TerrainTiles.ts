@@ -356,6 +356,13 @@ export class TerrainTiles {
       const gc = positionLocal.xz.add(0.5 + s).div(1 + 2 * s).mul(segs);
       // albedo scale is a cheap multiply — leave it as a plain blend
       mat.colorNode = (mat.colorNode as unknown as NV3).mul(u.oneMinus());
+      // Kill the dielectric F0 sheen under the overlay: the debug color is a
+      // pure UNLIT emissive by construction, but the physical material's
+      // specularIntensity 0.35 still reflects the blue sky IBL (indirect) and
+      // the sun (direct) on top of the zeroed albedo — a stray blue cast that
+      // broke dbgexact palette bit-exactness. Gated to the live uniform so the
+      // natural render keeps its sheen.
+      mat.specularIntensityNode = float(0.35).mul(u.oneMinus());
       // the EXPENSIVE part (palette + 2× fwidth wireframe) lives inside a
       // coherent If so the GPU skips it entirely when off. If MUST run inside a
       // Fn stack — calling it at material-assembly level throws (null stack).
@@ -439,6 +446,8 @@ export class TerrainTiles {
       const u = surfaceDbgU as unknown as NF;
       const baseEmis = (farMat.emissiveNode as NV3 | null) ?? vec3(0);
       farMat.colorNode = (farMat.colorNode as unknown as NV3).mul(u.oneMinus());
+      // same dielectric-F0 kill as the near tiles (pure emissive overlay)
+      farMat.specularIntensityNode = float(0.35).mul(u.oneMinus());
       farMat.emissiveNode = Fn(() => {
         const e = (baseEmis as NV3).toVar();
         If(u.greaterThan(0.5), () => {

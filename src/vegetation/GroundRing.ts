@@ -1040,12 +1040,15 @@ export class GroundRing {
     // alpine p.3 — verge bloom pools (groups 11/12): tiny golden trefoil and
     // purple thyme cushions along soft-track shoulders. Colors mirror
     // VegLibrary's FLOWER_COLOR entries for the same kinds.
+    // trefoil is scaled up and given a longer fade so the golden heads clear
+    // the ~0.21 m ring grass and read from the saddle (verge blooms were fully
+    // hidden at p7/p4); thyme stays a low ground-hugging cushion.
     const roadBloom = [
-      { g: 11, kind: 'trefoil' as const, petal: { r: 0.92, g: 0.66, b: 0.06 } },
-      { g: 12, kind: 'thyme' as const, petal: { r: 0.5, g: 0.17, b: 0.5 } },
+      { g: 11, kind: 'trefoil' as const, petal: { r: 0.92, g: 0.66, b: 0.06 }, scaleK: 1.6, fadeR: 60, glow: 0.4 },
+      { g: 12, kind: 'thyme' as const, petal: { r: 0.5, g: 0.17, b: 0.5 }, scaleK: 1, fadeR: 34, glow: 0 },
     ];
     for (const rb of roadBloom) {
-      const mat = flowerMaterial(rb.petal);
+      const mat = flowerMaterial(rb.petal, rb.glow);
       const bindF: RingBind = {
         cells,
         heights,
@@ -1053,7 +1056,7 @@ export class GroundRing {
         cell: DEB_CELL,
         salt: salt ^ 0x5dd5,
       };
-      this.debrisTransform(mat, bindF, 1, 0, 34);
+      this.debrisTransform(mat, bindF, rb.scaleK, 0, rb.fadeR);
       this.patchGI(mat);
       draws.push({
         geo: buildFlower(rb.kind, this.seed.rng(`groundring/bloom/${rb.kind}`)),

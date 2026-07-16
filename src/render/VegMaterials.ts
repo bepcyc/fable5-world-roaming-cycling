@@ -319,11 +319,14 @@ export function deadwoodMaterial(
 /**
  * Flower shading by vdata.x part id: 0 stem/leaf, 0.5 flower center, 1 petal.
  */
-export function flowerMaterial(petal: {
-  r: number;
-  g: number;
-  b: number;
-}): MeshStandardNodeMaterial {
+export function flowerMaterial(
+  petal: {
+    r: number;
+    g: number;
+    b: number;
+  },
+  nearGlow = 0,
+): MeshStandardNodeMaterial {
   const mat = new MeshStandardNodeMaterial();
   const d = vdata();
   // 2026-07-16 rollback of the codex anti-black hacks (7db9995): the black
@@ -341,6 +344,16 @@ export function flowerMaterial(petal: {
   let albedo = mix(stem, center, centerK) as unknown as NV3;
   albedo = mix(albedo, petalC, petalK) as unknown as NV3;
   mat.colorNode = albedo.mul(d.w.mul(0.4).add(0.6));
+  if (nearGlow > 0) {
+    // near-only petal glow: verge heads read as gold even in forest shade,
+    // where the LIT petal muddies to olive. Faded to zero by ~34 m — far
+    // short of the 60 m+ meadow band where the retired emissive 0.72 baked
+    // the white "frost" carpet (0275d5e/7db9995), and petal-gated so stems
+    // and leaves stay matte. Colored (not white) so it can never bleach.
+    const dist = positionWorld.xz.sub(cameraPosition.xz).length();
+    const nearK = float(1).sub(smoothstep(30, 52, dist));
+    mat.emissiveNode = petalC.mul(nearGlow).mul(petalK).mul(nearK) as unknown as NV3;
+  }
   mat.roughness = 0.72;
   mat.metalness = 0;
   mat.side = DoubleSide;

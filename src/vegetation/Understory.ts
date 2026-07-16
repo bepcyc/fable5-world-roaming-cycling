@@ -291,7 +291,7 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
       : kind === 'thyme'
         ? 0.05 + rng.float() * 0.05 // ground-hugging cushion
         : kind === 'trefoil'
-          ? 0.12 + rng.float() * 0.08 // low herb stem
+          ? 0.22 + rng.float() * 0.1 // herb stem, raised to clear the ~0.21 m ring grass (verge heads were hidden)
           : 0.28 + rng.float() * 0.2;
   const sway = (rng.float() - 0.5) * 0.25;
   // stem: 2-segment thin strip pair (cross)
@@ -428,7 +428,7 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
       const hy = H + 0.01 + rng.float() * 0.03;
       const hz = top.z + Math.sin(az) * rr;
       stemLink(top.x, top.y, top.z, hx, hy, hz);
-      head(hx, hy, hz, 0.03 + rng.float() * 0.015);
+      head(hx, hy, hz, 0.05 + rng.float() * 0.022);
     }
   } else if (kind === 'thyme') {
     // low cushion: several tiny floret domes spread just above the ground

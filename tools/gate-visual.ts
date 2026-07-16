@@ -250,11 +250,22 @@ const CHECKS: Check[] = [
   },
   {
     name: 'palette-exact',
-    // Front B territory (overlay palette / class drift). Measured 0.00% match
-    // on 2026-07-16: overlay pixels sit ~0.6x off the DebugPalette constants
-    // with a stray blue component even at road centers — the check itself
-    // needs Front B's dbgexact bit-exactness work before it can gate anything.
-    // Run manually via --only palette-exact.
+    // Overlay palette bit-exactness. 2026-07-16: 0.00% match, ~0.6x-low + stray
+    // BLUE at road centers. 2026-07-17 (front F3): the blue is KILLED — the
+    // terrain overlay materials now zero their dielectric F0 sheen under the
+    // debug uniform (TerrainTiles specularIntensityNode = 0.35*(1-u)), so the
+    // sky-IBL/sun specular no longer tints the zeroed-albedo emissive. Colors
+    // read vivid + correct. STILL 0.00% exact, from TWO remaining causes:
+    //   (a) the NATURAL terrain surfDbg is a CONTINUOUS mix of class palettes
+    //       (soil->grass->forest->...), so a meadow pixel is mix(soil,grass,w)
+    //       — never a single constant unless one weight is exactly 1; only the
+    //       hard-assigned ROAD classes (sidCol) can be bit-exact;
+    //   (b) a uniform ~0.4x-linear darkening still sits on every overlay pixel
+    //       under dbgexact (measured on hard-class gravel road centers), NOT
+    //       specular — a residual lighting/exposure term on the emissive not
+    //       yet root-caused. Reaching >=60% needs a winner-take-all overlay
+    //       (argmax class -> exact constant) AND that darkening removed.
+    // Kept defaultOff until both land; run manually via --only palette-exact.
     defaultOff: true,
     run: async (shoot) => {
       const png = await shoot('palette-exact', {
