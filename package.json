@@ -14,7 +14,8 @@
     "battery": "tsx tools/battery.ts",
     "gates:grass": "tsx tools/gate-grass-blue.ts",
     "gates:perf": "tsx tools/gate-perf.ts",
-    "gates:visual": "tsx tools/gate-visual.ts"
+    "gates:visual": "tsx tools/gate-visual.ts",
+    "gates:turnpicker": "tsx tools/probe-turnpicker.ts"
   },
   "dependencies": {
     "three": "0.184.0"

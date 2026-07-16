@@ -9,7 +9,12 @@
  * Riding follows the road graph (Zwift principle): position advances along
  * RouteGraph edges from the fixed-timestep BikeSolver; at junctions the
  * rider CHOOSES (owner directive: on-screen "turn ahead" pick, not on
- * rails) with ←/→, default = straightest exit. Dead ends U-turn.
+ * rails) with ←/→ or a tap, options laid out left→right by real exit angle.
+ * The choice window CLOSES at a cutoff BEFORE the node (Zwift rule,
+ * docs/TURN_PICKER.md): the pick is frozen into a LockedTurn, late input is
+ * structurally impossible, and the crossing rides a continuity bridge — the
+ * pose NEVER jumps between the two edge polylines. Default = straightest
+ * exit. Dead ends U-turn.
  *
  * The solver runs ONLY on Engine.onFixedUpdate — never on frame dt — so
  * P1–P4 hold across ?dt sweeps. Camera: FlyCamera 'ride' mode (free
@@ -21,7 +26,8 @@ import type { Engine } from '../core/Engine';
 import type { FlyCamera, GroundProbe } from '../core/FlyCamera';
 import { t } from '../core/I18n';
 import { stepBike, type BikeMode, type SolverState } from './BikeSolver';
-import type { RouteGraph } from './RouteGraph';
+import type { RoadPoint } from './RoadNetwork';
+import { samplePolyline, type EdgeSample, type GraphArm, type RouteGraph } from './RouteGraph';
 import type { KeyboardPowerSource, SensorSource } from './Sensors';
 import { MODE_LIMITS, surfaceDef, surfaceName, type RideMode } from './SurfaceMatrix';
 
@@ -52,12 +58,31 @@ const APEX_MARGIN = 0.35; // m — keep this clear of the lane edge
 const APEX_WIN_S = 0.8; // seconds of speed for the apex smoothing window
 const APEX_RATE = 6; // exp-damp rate 1/s into the pose offset
 const MOUNT_MAX_DIST = 30; // m — nearest road within this or bike is refused
-const JUNCTION_BASE_M = 45; // chooser appears at max(this, v * 5.5) meters
+const JUNCTION_BASE_M = 45; // chooser appears at max(this, v * 5.5) m (+ node radius)
 const JUNCTION_LEAD_S = 5.5;
+// Zwift rule (docs/TURN_PICKER.md): the choice window CLOSES before the node.
+// v·1.2 s ≈ one steering reaction; the 8 m floor keeps walking-pace approaches
+// from choosing inside the apron; the node's physical radius is added on top
+// so the lock lands BEFORE the roads visibly split.
+const LOCK_BASE_M = 8; // m — cutoff floor
+const LOCK_LEAD_S = 1.2; // s — dynamic cutoff at speed
+// junction continuity bridge (no-teleport law): Bézier stitched between the
+// arrival edge's terminal point and the chosen exit's entry point
+const BRIDGE_MIN_M = 0.05; // m — below this the endpoints coincide, no bridge
+const BRIDGE_STEP_M = 2; // m — bridge polyline sampling step
+const ARM_CHORD_M = 12; // m — chord length for junction arm directions
 const NOTE_TTL_S = 2.6;
 const MODE_ORDER: readonly RideMode[] = ['hike', 'road', 'gravel', 'mtb'];
 
-export type Turn = 'left' | 'right' | 'straight' | 'sharp-left' | 'sharp-right' | 'u-turn';
+export type Turn =
+  | 'straight'
+  | 'slight-left'
+  | 'slight-right'
+  | 'left'
+  | 'right'
+  | 'sharp-left'
+  | 'sharp-right'
+  | 'u-turn';
 
 export interface JunctionOption {
   turn: Turn;
@@ -65,13 +90,36 @@ export interface JunctionOption {
   angle: number;
   cls: string;
   route: string;
-  arm: { edge: number; end: 0 | 1 };
+  arm: GraphArm;
 }
 
 export interface JunctionPreview {
+  /** node this preview belongs to (stale-guard for locks and walkers) */
+  nodeId: number;
+  /** edge the preview approaches the node on */
+  viaEdge: number;
   distM: number;
+  /** distance at which the choice locks (HUD + gate assert against this) */
+  lockM: number;
   options: JunctionOption[];
   selected: number;
+}
+
+/** a committed turn: frozen at the cutoff, consumed at the node crossing */
+interface LockedTurn {
+  nodeId: number;
+  viaEdge: number;
+  arm: GraphArm;
+  turn: Turn;
+  cls: string;
+  angle: number;
+}
+
+/** synthetic polyline stitched across a junction (docs/TURN_PICKER.md) */
+interface Bridge {
+  pts: RoadPoint[];
+  length: number;
+  s: number;
 }
 
 /** P5: first impassable point ahead along the default route */
@@ -104,6 +152,8 @@ export interface RideState {
   route: string;
   distM: number;
   junction: JunctionPreview | null;
+  /** committed turn (choice window closed, node not crossed yet) */
+  turnLocked: { turn: Turn; cls: string; angle: number; distM: number } | null;
   note: string | null;
   /** P5: nearest impassable point on the default route ahead (null = clear) */
   hazard: HazardAhead | null;
@@ -129,6 +179,10 @@ export class BikeRig {
   private ford = false;
   private distM = 0;
   private junction: JunctionPreview | null = null;
+  private locked: LockedTurn | null = null;
+  private bridge: Bridge | null = null;
+  /** node id → max distance from centroid to any arm endpoint (lazy) */
+  private nodeRadiusCache = new Map<number, number>();
   private note: string | null = null;
   private noteT = 0;
   private brake = false;
@@ -272,6 +326,14 @@ export class BikeRig {
       route: this.riding ? (this.graph.edges[this.edge]?.route ?? '') : '',
       distM: this.distM,
       junction: this.junction,
+      turnLocked: this.locked
+        ? {
+            turn: this.locked.turn,
+            cls: this.locked.cls,
+            angle: this.locked.angle,
+            distM: this.remainToNode(),
+          }
+        : null,
       note: this.note,
       hazard: this.hazard,
       bank: this.bank,
@@ -297,6 +359,9 @@ export class BikeRig {
     this.s = Math.min(Math.max(frac, 0), 1) * edge.length;
     this.dir = 1;
     this.solver = { v: 0, stalled: false };
+    this.junction = null;
+    this.locked = null;
+    this.bridge = null;
     if (this.mode === 'hike') this.mode = 'road';
     const sm = this.graph.sample(this.edge, this.s);
     const g = this.probe(sm.x, sm.z);
@@ -313,6 +378,8 @@ export class BikeRig {
     this.dir = dir;
     this.solver = { v: 0, stalled: false };
     this.junction = null;
+    this.locked = null;
+    this.bridge = null;
     if (this.mode === 'hike') this.mode = 'road';
     const sm = this.graph.sample(this.edge, this.s);
     const g = this.probe(sm.x, sm.z);
@@ -414,6 +481,8 @@ export class BikeRig {
     this.dir = fx * sm.tx + fz * sm.tz >= 0 ? 1 : -1;
     this.solver = { v: 0, stalled: false };
     this.junction = null;
+    this.locked = null;
+    this.bridge = null;
     this.mode = mode;
     const g = this.probe(sm.x, sm.z);
     this.seedPose(sm.x, g.ground + EYE_SADDLE, sm.z, this.heading(sm.tx, sm.tz));
@@ -430,6 +499,8 @@ export class BikeRig {
     if (this.mode === 'hike') return;
     this.mode = 'hike';
     this.junction = null;
+    this.locked = null;
+    this.bridge = null;
     this.hazard = null;
     this.solver = { v: 0, stalled: false };
     this.fly.setMode('walk');
@@ -460,9 +531,9 @@ export class BikeRig {
     if (!this.riding) return;
     const mode = this.mode as BikeMode;
 
-    const sm = this.graph.sample(this.edge, this.s);
+    const sm = this.curSample();
     const g = this.probe(sm.x, sm.z);
-    const grade = sm.grade * this.dir;
+    const grade = sm.grade; // curSample() is travel-framed
     const powerW = this.source?.read().powerW ?? 0;
 
     const out = stepBike(this.solver, {
@@ -487,11 +558,23 @@ export class BikeRig {
     };
     this.ford = sm.ford;
 
-    // advance along the edge; cross nodes with the picked (or default) exit
+    // advance along bridge/edge; cross nodes with the LOCKED (or default) exit
     let ds = out.v * dt;
     this.distM += ds;
-    let guard = 4;
+    let guard = 6;
     while (ds > 0 && guard-- > 0) {
+      // a junction bridge is consumed before the edge it leads into
+      if (this.bridge) {
+        const remainB = this.bridge.length - this.bridge.s;
+        if (ds < remainB) {
+          this.bridge.s += ds;
+          ds = 0;
+          break;
+        }
+        ds -= remainB;
+        this.bridge = null;
+        continue;
+      }
       const e = this.graph.edges[this.edge];
       if (!e) break;
       const remain = this.dir > 0 ? e.length - this.s : this.s;
@@ -510,19 +593,30 @@ export class BikeRig {
         this.solver.v *= 0.25;
         this.flash(t('ride.deadEndUturn'));
         this.junction = null;
+        this.locked = null;
         ds = 0;
         break;
       }
-      const opts = this.buildOptions(nodeId, e.id);
-      const chosen =
-        this.junction && this.junction.options.length === opts.length
-          ? (opts[this.junction.selected] ?? opts[0])
-          : this.defaultOption(opts);
-      const arm = (chosen as JunctionOption).arm;
+      // the exit was committed at the cutoff (LockedTurn). A node reached
+      // WITHOUT a lock (mount right next to it, several nodes in one step)
+      // takes the default; single continuations pass straight through.
+      const fromDir = this.dir;
+      let arm: GraphArm;
+      if (this.locked && this.locked.nodeId === nodeId && this.locked.viaEdge === e.id) {
+        arm = this.locked.arm;
+      } else if (exits.length === 1) {
+        arm = exits[0] as GraphArm;
+      } else {
+        arm = this.defaultOption(this.buildOptions(nodeId, e.id, fromDir)).arm;
+      }
+      this.locked = null;
+      this.junction = null;
       this.edge = arm.edge;
       this.dir = arm.end === 0 ? 1 : -1;
       this.s = this.dir > 0 ? 0 : (this.graph.edges[this.edge]?.length ?? 0);
-      this.junction = null;
+      // continuity: the two polylines do NOT share a point — ride a stitched
+      // bridge between them instead of snapping (no-teleport law)
+      this.bridge = this.buildBridge(e.id, fromDir, arm);
     }
 
     // junction preview for the chooser UI
@@ -539,17 +633,17 @@ export class BikeRig {
     // is already integrated). Heading = pure-pursuit toward a look-ahead
     // point; position = center-line + small apex offset; eye Y = suspended
     // over the (offset) carved surface; roll = a fraction of lean + bank.
-    const sm2 = this.graph.sample(this.edge, this.s);
+    const sm2 = this.curSample();
     const e2 = this.graph.edges[this.edge];
     const v = out.v;
-    const tangentHeading = this.heading(sm2.tx, sm2.tz);
+    const tangentHeading = Math.atan2(-sm2.tx, -sm2.tz);
 
     // B6 heading — pure pursuit. ?ridetraj=0 restores the exact legacy
     // tangent heading; low speed / imminent dead end falls back to tangent.
     let hdgErr = 0;
     if (this.trajOn && v >= 0.5) {
       const L = Math.max(TRAJ_LOOK_MIN, Math.min(v * this.lookS, TRAJ_LOOK_MAX));
-      const tgt = this.walkAhead(this.edge, this.s, this.dir, L);
+      const tgt = this.lookPoint(L);
       if (tgt.reached >= 2) {
         // bearing to target in the SAME frame as heading() (atan2(-x, -z))
         const bearing = Math.atan2(-(tgt.x - sm2.x), -(tgt.z - sm2.z));
@@ -582,7 +676,7 @@ export class BikeRig {
     this.yawRateSm += (dh / dt - this.yawRateSm) * (1 - Math.exp(-dt * RIDE_YAWRATE_RATE));
     const lean = Math.max(Math.min((v * this.yawRateSm) / G, 0.2), -0.2);
     const rollTarget = Math.max(
-      Math.min(this.rollLeanFrac * lean + this.rollBankK * sm2.bank * this.dir, ROLL_MAX),
+      Math.min(this.rollLeanFrac * lean + this.rollBankK * sm2.bank, ROLL_MAX),
       -ROLL_MAX,
     );
     this.rollSm += (rollTarget - this.rollSm) * (1 - Math.exp(-dt * ROLL_RATE));
@@ -594,9 +688,13 @@ export class BikeRig {
     // ?ridetraj=0 or ?rideapex=0 (offset relaxes/snaps to the center-line).
     if (this.trajOn && this.apexMax > 0 && v >= 0.5 && e2) {
       const W = Math.max(5, Math.min(v * APEX_WIN_S, 14));
-      const sBehind = Math.max(Math.min(this.s - W * this.dir, e2.length), 0);
-      const behind = this.graph.sample(this.edge, sBehind);
-      const ahead = this.walkAhead(this.edge, this.s, this.dir, W);
+      const behind = this.bridge
+        ? samplePolyline(this.bridge.pts, this.bridge.length, Math.max(this.bridge.s - W, 0))
+        : this.graph.sample(
+            this.edge,
+            Math.max(Math.min(this.s - W * this.dir, e2.length), 0),
+          );
+      const ahead = this.lookPoint(W);
       const avgX = (behind.x + sm2.x + ahead.x) / 3;
       const avgZ = (behind.z + sm2.z + ahead.z) / 3;
       let ox = avgX - sm2.x;
@@ -637,7 +735,7 @@ export class BikeRig {
     }
 
     // B4: expose the ridden bank so the cockpit sits on the banked surface
-    this.bank = sm2.bank * this.dir;
+    this.bank = sm2.bank;
 
     this.posePrev = this.poseCur;
     this.poseCur = { x: px, y: this.suspY, z: pz, heading: this.headingCur };
@@ -656,6 +754,41 @@ export class BikeRig {
     c['ride.eyeDevMm'] = Math.round((this.suspY - yRaw) * 1000);
     c['ride.offMm'] = Math.round(Math.hypot(this.offX, this.offZ) * 1000);
     c['ride.hdgErrMrad'] = Math.round(hdgErr * 1000);
+    // turn-picker lifecycle (tools/probe-turnpicker.ts asserts against these)
+    c['ride.junctionShown'] = this.junction ? 1 : 0;
+    c['ride.turnLocked'] = this.locked ? 1 : 0;
+    c['ride.bridge'] = this.bridge ? 1 : 0;
+  }
+
+  /** metres to the node ahead (bridge remainder included while stitching) */
+  private remainToNode(): number {
+    const e = this.graph.edges[this.edge];
+    if (!e) return 0;
+    const remain = this.dir > 0 ? e.length - this.s : this.s;
+    return remain + (this.bridge ? this.bridge.length - this.bridge.s : 0);
+  }
+
+  /** current sample in the TRAVEL frame (tangent/grade/bank along motion);
+   *  bridges are built in travel order, edge samples get dir applied */
+  private curSample(): EdgeSample {
+    if (this.bridge) return samplePolyline(this.bridge.pts, this.bridge.length, this.bridge.s);
+    const sm = this.graph.sample(this.edge, this.s);
+    if (this.dir > 0) return sm;
+    return { ...sm, grade: -sm.grade, bank: -sm.bank, tx: -sm.tx, tz: -sm.tz };
+  }
+
+  /** point `dist` metres down the committed route — bridge first, then edges */
+  private lookPoint(dist: number): { x: number; z: number; reached: number } {
+    if (this.bridge) {
+      const remainB = this.bridge.length - this.bridge.s;
+      if (dist <= remainB) {
+        const p = samplePolyline(this.bridge.pts, this.bridge.length, this.bridge.s + dist);
+        return { x: p.x, z: p.z, reached: dist };
+      }
+      const w = this.walkAhead(this.edge, this.s, this.dir, dist - remainB);
+      return { x: w.x, z: w.z, reached: remainB + w.reached };
+    }
+    return this.walkAhead(this.edge, this.s, this.dir, dist);
   }
 
   /**
@@ -671,7 +804,9 @@ export class BikeRig {
     let edge = this.edge;
     let s = this.s;
     let dir = this.dir;
-    let travelled = 0;
+    // while stitching across a junction the walk starts at the exit edge's
+    // entry; count the bridge remainder so distances measure from the bike
+    let travelled = this.bridge ? this.bridge.length - this.bridge.s : 0;
     let firstJunction = true;
     let guard = 96;
     while (travelled < look && guard-- > 0) {
@@ -697,14 +832,11 @@ export class BikeRig {
         const nodeId = dir > 0 ? e.b : e.a;
         const exits = this.graph.exits(nodeId, e.id);
         if (exits.length === 0) break; // dead end U-turns before any zone
-        let arm = null;
-        if (firstJunction && this.junction && exits.length >= 2) {
-          const opts = this.buildOptions(nodeId, e.id);
-          arm = opts[this.junction.selected]?.arm ?? null;
-        }
+        let arm: GraphArm | null = null;
+        if (firstJunction && exits.length >= 2) arm = this.plannedArm(nodeId, e.id);
         if (!arm) {
-          const inSm = this.graph.sample(e.id, dir > 0 ? e.length : 0);
-          arm = this.straightestExit(nodeId, e.id, inSm.tx * dir, inSm.tz * dir);
+          const inD = this.travelChord(e.id, dir as 1 | -1);
+          arm = this.straightestExit(nodeId, e.id, inD.x, inD.z);
         }
         if (!arm) break;
         firstJunction = false;
@@ -712,6 +844,18 @@ export class BikeRig {
         dir = arm.end === 0 ? 1 : -1;
         s = dir > 0 ? 0 : (this.graph.edges[edge]?.length ?? 0);
       }
+    }
+    return null;
+  }
+
+  /** the exit the rider is committed to (locked) or currently previewing —
+   *  matched against the approach so a stale plan never routes a walker */
+  private plannedArm(nodeId: number, viaEdge: number): GraphArm | null {
+    if (this.locked && this.locked.nodeId === nodeId && this.locked.viaEdge === viaEdge) {
+      return this.locked.arm;
+    }
+    if (this.junction && this.junction.nodeId === nodeId && this.junction.viaEdge === viaEdge) {
+      return this.junction.options[this.junction.selected]?.arm ?? null;
     }
     return null;
   }
@@ -760,14 +904,11 @@ export class BikeRig {
       const nodeId = dir > 0 ? e.b : e.a;
       const exits = this.graph.exits(nodeId, e.id);
       if (exits.length === 0) break; // dead end — stop, reached < dist
-      let arm: { edge: number; end: 0 | 1 } | null = null;
-      if (firstJunction && this.junction && exits.length >= 2) {
-        const opts = this.buildOptions(nodeId, e.id);
-        arm = opts[this.junction.selected]?.arm ?? null;
-      }
+      let arm: GraphArm | null = null;
+      if (firstJunction && exits.length >= 2) arm = this.plannedArm(nodeId, e.id);
       if (!arm) {
-        const inSm = this.graph.sample(e.id, dir > 0 ? e.length : 0);
-        arm = this.straightestExit(nodeId, e.id, inSm.tx * dir, inSm.tz * dir);
+        const inD = this.travelChord(e.id, dir);
+        arm = this.straightestExit(nodeId, e.id, inD.x, inD.z);
       }
       if (!arm) break;
       firstJunction = false;
@@ -783,43 +924,66 @@ export class BikeRig {
     arrivedEdge: number,
     inx: number,
     inz: number,
-  ): { edge: number; end: 0 | 1 } | null {
+  ): GraphArm | null {
     const exits = this.graph.exits(nodeId, arrivedEdge);
-    let best: { arm: { edge: number; end: 0 | 1 }; turn: number } | null = null;
+    let best: { arm: GraphArm; turn: number } | null = null;
     for (const arm of exits) {
-      const oe = this.graph.edges[arm.edge];
-      if (!oe) continue;
-      const sm = this.graph.sample(
-        oe.id,
-        arm.end === 0 ? Math.min(10, oe.length) : Math.max(oe.length - 10, 0),
+      const outD = this.armDir(arm);
+      const turn = Math.abs(
+        Math.atan2(inz * outD.x - inx * outD.z, inx * outD.x + inz * outD.z),
       );
-      const outDir = arm.end === 0 ? 1 : -1;
-      const ox = sm.tx * outDir;
-      const oz = sm.tz * outDir;
-      const turn = Math.abs(Math.atan2(inx * oz - inz * ox, inx * ox + inz * oz));
       if (!best || turn < best.turn) best = { arm, turn };
     }
     return best?.arm ?? null;
   }
 
-  private buildOptions(nodeId: number, arrivedEdge: number): JunctionOption[] {
+  /** unit travel direction over the LAST ~12 m of an edge (chord — junction
+   *  aprons wiggle, a chord reads the approach like a rider does) */
+  private travelChord(edgeId: number, dir: 1 | -1): { x: number; z: number } {
+    const e = this.graph.edges[edgeId];
+    if (!e) return { x: 0, z: -1 };
+    const sEnd = dir > 0 ? e.length : 0;
+    const sBack = dir > 0 ? Math.max(e.length - ARM_CHORD_M, 0) : Math.min(ARM_CHORD_M, e.length);
+    const a = this.graph.sample(edgeId, sBack);
+    const b = this.graph.sample(edgeId, sEnd);
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const m = Math.hypot(dx, dz);
+    if (m > 1e-6) return { x: dx / m, z: dz / m };
+    return { x: b.tx * dir, z: b.tz * dir };
+  }
+
+  /** unit travel direction of an arm LEAVING its node (first ~12 m chord) */
+  private armDir(arm: GraphArm): { x: number; z: number } {
+    const oe = this.graph.edges[arm.edge];
+    if (!oe) return { x: 0, z: -1 };
+    const p0 = (arm.end === 0 ? oe.pts[0] : oe.pts[oe.pts.length - 1]) as RoadPoint;
+    const sm = this.graph.sample(
+      oe.id,
+      arm.end === 0 ? Math.min(ARM_CHORD_M, oe.length) : Math.max(oe.length - ARM_CHORD_M, 0),
+    );
+    const dx = sm.x - p0.x;
+    const dz = sm.z - p0.z;
+    const m = Math.hypot(dx, dz);
+    if (m > 1e-6) return { x: dx / m, z: dz / m };
+    const outDir = arm.end === 0 ? 1 : -1;
+    return { x: sm.tx * outDir, z: sm.tz * outDir };
+  }
+
+  private buildOptions(nodeId: number, arrivedEdge: number, dir: 1 | -1): JunctionOption[] {
     const exits = this.graph.exits(nodeId, arrivedEdge);
-    // incoming heading at the node
-    const e = this.graph.edges[this.edge];
-    const inSm = e ? this.graph.sample(e.id, this.dir > 0 ? e.length : 0) : null;
-    const inx = inSm ? inSm.tx * this.dir : 0;
-    const inz = inSm ? inSm.tz * this.dir : 1;
+    const inD = this.travelChord(arrivedEdge, dir);
     const opts = exits.map((arm) => {
       const oe = this.graph.edges[arm.edge];
-      const sm = oe
-        ? this.graph.sample(oe.id, arm.end === 0 ? Math.min(10, oe.length) : Math.max(oe.length - 10, 0))
-        : null;
-      const outDir = arm.end === 0 ? 1 : -1;
-      const ox = sm ? sm.tx * outDir : 0;
-      const oz = sm ? sm.tz * outDir : 1;
-      // signed angle in the XZ plane (+ = left turn for -z forward frames)
-      const cross = inx * oz - inz * ox;
-      const dot = inx * ox + inz * oz;
+      const outD = this.armDir(arm);
+      // signed XZ angle from the incoming to the exit direction. three.js
+      // frame (x right, z south, y up): positive rotation about +y = LEFT.
+      // Proof case: heading north in=(0,−1), exit east out=(1,0) is a RIGHT
+      // turn → cross=−1 → −90°. (The old code had this cross NEGATED, which
+      // mirrored every label AND the card order — the owner's "left renders
+      // right of straight".)
+      const cross = inD.z * outD.x - inD.x * outD.z;
+      const dot = inD.x * outD.x + inD.z * outD.z;
       const angle = Math.atan2(cross, dot);
       return {
         turn: classifyTurn(angle),
@@ -829,7 +993,7 @@ export class BikeRig {
         arm,
       } satisfies JunctionOption;
     });
-    // left → right ordering for the chooser
+    // left → right, exactly as the roads fan out (+angle = left)
     opts.sort((a, b) => b.angle - a.angle);
     return opts;
   }
@@ -840,26 +1004,161 @@ export class BikeRig {
     return best;
   }
 
+  /** physical spread of a junction cluster: max distance from the node
+   *  centroid to any arm's node-side endpoint (0 = tight join, ~15 m for
+   *  lattice-snapped connectors). The show/lock distances add this so the
+   *  choice closes BEFORE the roads visibly split. */
+  private nodeRadius(nodeId: number): number {
+    const cached = this.nodeRadiusCache.get(nodeId);
+    if (cached !== undefined) return cached;
+    const n = this.graph.nodes[nodeId];
+    let r = 0;
+    if (n) {
+      for (const arm of n.arms) {
+        const oe = this.graph.edges[arm.edge];
+        const p = oe
+          ? ((arm.end === 0 ? oe.pts[0] : oe.pts[oe.pts.length - 1]) as RoadPoint)
+          : undefined;
+        if (p) r = Math.max(r, Math.hypot(p.x - n.x, p.z - n.z));
+      }
+    }
+    this.nodeRadiusCache.set(nodeId, r);
+    return r;
+  }
+
+  /**
+   * Continuity bridge across a junction (docs/TURN_PICKER.md): the arrival
+   * edge's terminal point and the chosen exit's entry point are DIFFERENT
+   * world points (a RouteGraph node is a ≤15 m cluster, not a shared
+   * vertex). The old mover snapped between them — the owner's "teleport".
+   * Stitch a cubic Bézier instead (end tangents = travel chords) and ride
+   * it; the junction apron under it is carved road surface anyway.
+   */
+  private buildBridge(fromEdge: number, fromDir: 1 | -1, arm: GraphArm): Bridge | null {
+    const fe = this.graph.edges[fromEdge];
+    const te = this.graph.edges[arm.edge];
+    if (!fe || !te) return null;
+    const pA = (fromDir > 0 ? fe.pts[fe.pts.length - 1] : fe.pts[0]) as RoadPoint | undefined;
+    const pB = (arm.end === 0 ? te.pts[0] : te.pts[te.pts.length - 1]) as RoadPoint | undefined;
+    if (!pA || !pB) return null;
+    const gap = Math.hypot(pB.x - pA.x, pB.z - pA.z);
+    if (gap < BRIDGE_MIN_M) return null;
+    const tA = this.travelChord(fromEdge, fromDir);
+    const tB = this.armDir(arm);
+    const k = gap / 3;
+    const p1x = pA.x + tA.x * k;
+    const p1z = pA.z + tA.z * k;
+    const p2x = pB.x - tB.x * k;
+    const p2z = pB.z - tB.z * k;
+    const toDir: 1 | -1 = arm.end === 0 ? 1 : -1;
+    // bridge points are TRAVEL-framed (curSample returns them unmodified)
+    const bankA = pA.bank * fromDir;
+    const bankB = pB.bank * toDir;
+    const n = Math.min(Math.max(Math.ceil(gap / BRIDGE_STEP_M) + 1, 3), 32);
+    const pts: RoadPoint[] = [];
+    let sAcc = 0;
+    let lx = 0;
+    let lz = 0;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const u = 1 - t;
+      const x = u * u * u * pA.x + 3 * u * u * t * p1x + 3 * u * t * t * p2x + t * t * t * pB.x;
+      const z = u * u * u * pA.z + 3 * u * u * t * p1z + 3 * u * t * t * p2z + t * t * t * pB.z;
+      const ease = t * t * (3 - 2 * t);
+      if (i > 0) sAcc += Math.hypot(x - lx, z - lz);
+      lx = x;
+      lz = z;
+      pts.push({
+        x,
+        z,
+        y: pA.y + (pB.y - pA.y) * ease,
+        bank: bankA + (bankB - bankA) * ease,
+        ford: false,
+        s: sAcc,
+      });
+    }
+    return { pts, length: sAcc, s: 0 };
+  }
+
+  /**
+   * Junction choice lifecycle (docs/TURN_PICKER.md). Per fixed step:
+   *   remain > show                → no preview
+   *   lock < remain ≤ show         → preview open, ←/→ / tap re-selects
+   *   remain ≤ lock                → freeze the selection into LockedTurn;
+   *                                  the preview dies, so late picks have
+   *                                  nothing to mutate (structurally closed)
+   * `remain` includes an active bridge; both thresholds add the node's
+   * physical radius so the window closes before the roads visibly split.
+   */
   private updateJunctionPreview(): void {
     const e = this.graph.edges[this.edge];
     if (!e) {
       this.junction = null;
+      this.locked = null;
       return;
     }
-    const remain = this.dir > 0 ? e.length - this.s : this.s;
-    const lead = Math.max(JUNCTION_BASE_M, this.solver.v * JUNCTION_LEAD_S);
     const nodeId = this.dir > 0 ? e.b : e.a;
+    // stale guards: a lock/preview made for another approach never applies
+    if (this.locked && (this.locked.nodeId !== nodeId || this.locked.viaEdge !== this.edge)) {
+      this.locked = null;
+    }
+    if (
+      this.junction &&
+      (this.junction.nodeId !== nodeId || this.junction.viaEdge !== this.edge)
+    ) {
+      this.junction = null;
+    }
     const exits = this.graph.exits(nodeId, e.id);
-    if (remain > lead || exits.length < 2) {
-      if (this.junction && (remain > lead || exits.length < 2)) this.junction = null;
+    if (exits.length < 2) {
+      this.junction = null;
       return;
     }
-    if (!this.junction) {
-      const options = this.buildOptions(nodeId, e.id);
+    if (this.locked) {
+      this.junction = null; // committed — the window stays closed
+      return;
+    }
+    const remain = this.remainToNode();
+    const v = this.solver.v;
+    const nodeR = this.nodeRadius(nodeId);
+    const lockAt = Math.max(LOCK_BASE_M, v * LOCK_LEAD_S) + nodeR;
+    const showAt = Math.max(JUNCTION_BASE_M, v * JUNCTION_LEAD_S) + nodeR;
+    if (remain <= lockAt) {
+      // cutoff: freeze the current selection (or the default if the window
+      // never opened — e.g. mounted right next to the node)
+      const options = this.junction?.options ?? this.buildOptions(nodeId, e.id, this.dir);
       const def = this.defaultOption(options);
-      this.junction = { distM: remain, options, selected: options.indexOf(def) };
+      const chosen = this.junction
+        ? (options[this.junction.selected] ?? def)
+        : def;
+      this.locked = {
+        nodeId,
+        viaEdge: this.edge,
+        arm: chosen.arm,
+        turn: chosen.turn,
+        cls: chosen.cls,
+        angle: chosen.angle,
+      };
+      this.junction = null;
+      return;
+    }
+    if (remain <= showAt) {
+      if (!this.junction) {
+        const options = this.buildOptions(nodeId, e.id, this.dir);
+        const def = this.defaultOption(options);
+        this.junction = {
+          nodeId,
+          viaEdge: this.edge,
+          distM: remain,
+          lockM: lockAt,
+          options,
+          selected: options.indexOf(def),
+        };
+      } else {
+        this.junction.distM = remain;
+        this.junction.lockM = lockAt;
+      }
     } else {
-      this.junction.distM = remain;
+      this.junction = null;
     }
   }
 
@@ -869,14 +1168,15 @@ export class BikeRig {
   }
 }
 
+/** |angle| buckets, each side-signed: <14° straight, 14–38° slight,
+ *  38–100° normal, 100–150° sharp, ≥150° U-turn (+ = left) */
 function classifyTurn(angle: number): Turn {
-  const a = angle;
-  const deg = (a * 180) / Math.PI;
-  if (deg > 135) return 'u-turn';
-  if (deg > 55) return 'sharp-left';
-  if (deg > 18) return 'left';
-  if (deg < -135) return 'u-turn';
-  if (deg < -55) return 'sharp-right';
-  if (deg < -18) return 'right';
-  return 'straight';
+  const deg = (angle * 180) / Math.PI;
+  const a = Math.abs(deg);
+  if (a >= 150) return 'u-turn';
+  if (a < 14) return 'straight';
+  const side = deg > 0 ? 'left' : 'right';
+  if (a >= 100) return `sharp-${side}` as Turn;
+  if (a < 38) return `slight-${side}` as Turn;
+  return side;
 }
