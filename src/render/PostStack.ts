@@ -574,8 +574,14 @@ export class PostStack {
     }
 
     // --- bloom -----------------------------------------------------------------------
+    // ?ablate=bloom must not kill the frame: the mblur tap above samples the
+    // TRAA resolve texture RAW (texture(src.value)), so the TRAA pass node
+    // used to be held in the graph ONLY through bloom(taaed). Dropping bloom
+    // dropped the TRAA pass itself — nothing rendered it, its resolve target
+    // stayed empty and the whole frame collapsed to black. The zero-weight
+    // add keeps the pass registered (and rendering) without any bloom light.
     const withBloom = ablate.has('bloom')
-      ? taaedRgb
+      ? taaedRgb.add((taaed as unknown as NV4).rgb.mul(0))
       : taaedRgb.add((bloom(taaed, 0.28, 0.45, 1.5) as unknown as NV4).rgb);
 
     // --- auto exposure (GPU-only feedback) ----------------------------------------------
