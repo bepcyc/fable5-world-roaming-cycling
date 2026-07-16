@@ -324,7 +324,13 @@ export function flowerMaterial(petal: {
   g: number;
   b: number;
 }): MeshStandardNodeMaterial {
-  const mat = new MeshStandardNodeMaterial();
+  // Physical variant for specularIntensity (silver-wash-cut, the same
+  // treatment grass/foliage already got): plain standard bakes F0 0.04 and
+  // under the post-65a1a68 blue sky the glancing-angle sheen bleached whole
+  // verge-bloom carpets into a frosty cream-white mat — trefoil stems read
+  // as white straw, far umbel fields as blue rime.
+  const mat = new MeshPhysicalNodeMaterial();
+  mat.specularIntensity = 0.25;
   const d = vdata();
   const stem = vec3(0.12, 0.28, 0.07);
   const center = vec3(0.72, 0.48, 0.08);
@@ -336,8 +342,10 @@ export function flowerMaterial(petal: {
   mat.colorNode = albedo.mul(d.w.mul(0.15).add(0.85));
   // Petals and hair-thin stems transmit skylight; a small color-preserving
   // fill prevents DoubleSide back faces from collapsing to black while the
-  // standard BRDF still supplies shape and sun response.
-  mat.emissiveNode = albedo.mul(0.72);
+  // standard BRDF still supplies shape and sun response. 0.72 stacked ~1.7x
+  // albedo on top of full lighting and bleached every petal toward white —
+  // 0.35 keeps the back-face fill while the actual petal hue survives.
+  mat.emissiveNode = albedo.mul(0.35);
   mat.aoNode = float(1);
   mat.roughness = 0.78;
   mat.metalness = 0;
