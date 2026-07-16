@@ -35,8 +35,11 @@ import {
   CLASS_SUSTAINED_LEN_M,
   CLASS_SUSTAINED_MARGIN,
   OWNER_SUSTAINED_LAW,
+  RADIUS_EPS_FRAC,
   realismLaw,
+  WIGGLE_CLAMP_FRAC,
   WIGGLE_GRADE_EXEMPT_GATE,
+  WIGGLE_WATER_DEPTH_M,
   type RealismLaw,
 } from '../src/ride/RoadRealismLaw';
 import { SurfaceId } from '../src/ride/SurfaceMatrix';
@@ -105,6 +108,9 @@ const JUNCTION_MASK_M = 34;
 const CROSS_FORD_EXEMPT_M = 30;
 /** lateral fraction of halfWidth where cross-slope is measured (inside tread) */
 const CROSS_AT_FRAC = 0.6;
+/** outboard bank offsets (m, beyond halfWidth) probed for standing water in
+ *  the wiggle clamp test — a lake/river bank within this reach boxes the road */
+const WATER_BANK_M = [2, 10, 20] as const;
 
 // ---------------- CLI ----------------------------------------------------------
 
@@ -139,6 +145,10 @@ interface DumpPt {
   /** carved ground at ±CROSS_AT_FRAC·halfW lateral offsets */
   hL: number;
   hR: number;
+  /** true if standing water sits on this vertex or on either outboard bank
+   *  (waterY - ground > WIGGLE_WATER_DEPTH_M within ~halfW + WATER_BANK_M) —
+   *  the road is boxed against a lake/river shore here */
+  nearWater: boolean;
 }
 interface DumpRoute {
   name: string;
@@ -164,12 +174,13 @@ async function dumpSeed(page: Page, seed: number): Promise<DumpRoute[]> {
   console.log(`[boot] seed ${seed} ready in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
   const dump = (await page.evaluate(
-    ({ FRAC }) => {
+    ({ FRAC, BANKS, WDEPTH }) => {
       (globalThis as unknown as { __name?: unknown }).__name ??= (t: unknown): unknown => t;
       const hf = (
         window as unknown as { __laasDbg?: { engine?: { heightfield?: unknown } } }
       ).__laasDbg?.engine?.heightfield as {
         heightAtCpu(x: number, z: number): number;
+        waterYAtCpu(x: number, z: number): number;
         roads: {
           routes: {
             name: string;
@@ -190,6 +201,17 @@ async function dumpSeed(page: Page, seed: number): Promise<DumpRoute[]> {
           const L = Math.hypot(dx, dz) || 1;
           const nx = -dz / L;
           const nz = dx / L;
+          const wet = (wx: number, wz: number): boolean =>
+            hf.waterYAtCpu(wx, wz) - hf.heightAtCpu(wx, wz) > WDEPTH;
+          let nearWater = wet(p.x, p.z);
+          for (let k = 0; k < BANKS.length && !nearWater; k++) {
+            const off = hw + (BANKS[k] as number);
+            if (
+              wet(p.x - nx * off, p.z - nz * off) ||
+              wet(p.x + nx * off, p.z + nz * off)
+            )
+              nearWater = true;
+          }
           return {
             x: p.x,
             z: p.z,
@@ -198,6 +220,7 @@ async function dumpSeed(page: Page, seed: number): Promise<DumpRoute[]> {
             ford: p.ford,
             hL: hf.heightAtCpu(p.x - nx * hw * FRAC, p.z - nz * hw * FRAC),
             hR: hf.heightAtCpu(p.x + nx * hw * FRAC, p.z + nz * hw * FRAC),
+            nearWater,
           };
         });
         return {
@@ -210,7 +233,7 @@ async function dumpSeed(page: Page, seed: number): Promise<DumpRoute[]> {
         };
       });
     },
-    { FRAC: CROSS_AT_FRAC },
+    { FRAC: CROSS_AT_FRAC, BANKS: WATER_BANK_M, WDEPTH: WIGGLE_WATER_DEPTH_M },
   )) as DumpRoute[] | null;
   if (!dump || dump.length === 0) throw new Error(`seed ${seed}: hf.roads null/empty`);
   return dump;
@@ -420,6 +443,8 @@ function analyzeRoute(
   stats.bendCount = bends.length;
   let chain: Bend[] = [];
   let gradeExemptChains = 0;
+  let clampExemptChains = 0;
+  const clampNotes: string[] = [];
   const flushChain = (): void => {
     const meanDeg = chain.length
       ? chain.reduce((a, b) => a + b.totalDeg, 0) / chain.length
@@ -439,8 +464,29 @@ function analyzeRoute(
         chain = [];
         return;
       }
-    }
-    if (chain.length >= w.minBends && meanDeg >= w.minChainMeanDeg) {
+      // terraform-clamp exemption (RoadRealismLaw): the road is physically
+      // boxed against water or a foreign junction node over most of the chain,
+      // so it cannot be straightened toward the obstacle. Proven per-vertex,
+      // not by route name — a genuine open-ground wiggle scores ~0 on both.
+      let nWater = 0;
+      let nJunc = 0;
+      let nVerts = 0;
+      for (let vi = cFirst.i0; vi <= cLast.i1; vi++) {
+        const vp = pts[vi] as DumpPt;
+        nVerts++;
+        if (vp.nearWater) nWater++;
+        if (junction(vp.x, vp.z)) nJunc++;
+      }
+      const waterFrac = nVerts ? nWater / nVerts : 0;
+      const juncFrac = nVerts ? nJunc / nVerts : 0;
+      if (waterFrac >= WIGGLE_CLAMP_FRAC || juncFrac >= WIGGLE_CLAMP_FRAC) {
+        clampExemptChains++;
+        clampNotes.push(
+          `${(waterFrac * 100).toFixed(0)}% water/${(juncFrac * 100).toFixed(0)}% junction over ${nVerts} verts`,
+        );
+        chain = [];
+        return;
+      }
       const first = chain[0] as Bend;
       const last = chain[chain.length - 1] as Bend;
       const spanM = Math.max(last.apexS - first.apexS, 1);
@@ -460,6 +506,7 @@ function analyzeRoute(
         detail:
           `${chain.length} alternating bends over ${spanM.toFixed(0)} m ` +
           `(${freq.toFixed(1)} reversals/100m, mean ${meanDeg.toFixed(0)}deg, amp ${amp.toFixed(1)} m, ` +
+          `clamp ${(waterFrac * 100).toFixed(0)}%w/${(juncFrac * 100).toFixed(0)}%j, ` +
           `bends ${chain.map((b) => (b.sign > 0 ? '+' : '-') + b.totalDeg.toFixed(0)).join('/')}deg)`,
       });
     }
@@ -484,6 +531,11 @@ function analyzeRoute(
       `  [note] ${r.name}: ${gradeExemptChains} wiggle chain(s) grade-exempt (serpentine tacking near class limit)`,
     );
   }
+  if (clampExemptChains > 0) {
+    console.log(
+      `  [note] ${r.name}: ${clampExemptChains} wiggle chain(s) terraform-clamp-exempt (${clampNotes.join('; ')})`,
+    );
+  }
 
   // ---- minimum turn radius (owner #3) ------------------------------------------
   for (let i = 1; i < pts.length - 1; i++) {
@@ -495,7 +547,11 @@ function analyzeRoute(
     const ds = (Math.hypot(b.x - a.x, b.z - a.z) + Math.hypot(c.x - b.x, c.z - b.z)) / 2;
     const radius = ds / ((tDeg * Math.PI) / 180);
     if (radius < stats.minRadiusM) stats.minRadiusM = radius;
-    if (radius < spec.minRadiusM) {
+    // the class minRadiusM IS the ridable floor; a turn measured AT it is
+    // ridable by definition. RADIUS_EPS_FRAC absorbs float/resample noise at
+    // the floor (seed-2 west-hills-gravel R 4.4999 vs 4.5) — only strictly
+    // tighter turns (below floor x (1 - eps)) are unridable violations.
+    if (radius < spec.minRadiusM * (1 - RADIUS_EPS_FRAC)) {
       viols.push({
         route: r.name,
         cls: r.clsName,

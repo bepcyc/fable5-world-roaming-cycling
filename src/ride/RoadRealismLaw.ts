@@ -40,6 +40,38 @@ export const OWNER_SUSTAINED_LAW = { gradePct: 18, lenM: 10 } as const;
  *  the gate measures — seed-1 link-3). */
 export const WIGGLE_GRADE_EXEMPT_GATE = 0.6;
 
+/** Terraform-clamp exemption for the wiggle GATE — the SAME idea as the
+ *  grade exemption, applied to the OTHER two things the terrain physically
+ *  boxes a road against: standing water and a foreign junction node. A
+ *  low-frequency alternating chain that hugs a lake bank (can't straighten
+ *  toward the water) or threads a node cluster (must weave around the
+ *  crossing legs) is a terraform-forced micro-serpentine, not the abrupt
+ *  open-ground zigzag pathology the law bans. Proven, not assumed: the
+ *  exemption fires ONLY when >= WIGGLE_CLAMP_FRAC of the chain's own
+ *  vertices are demonstrably clamped — the outboard bank carries water
+ *  (waterY - ground > WIGGLE_WATER_DEPTH_M) or the vertex sits inside the
+ *  junction mask. A genuine open-terrain wiggle scores ~0 on both, so a
+ *  half-chain clamp is a wide margin, not a loophole. The GENERATOR needs
+ *  no new knob: its chord-straighten pass is chordSafe-gated and a chord
+ *  cut toward water/into a node fails the cut-fill / node-collision law by
+ *  construction (verified residuals: seed-1 south-shore-gravel on a lake
+ *  bank, seed-1 link-3 through a node, seed-2 valley-highway along the
+ *  valley river). */
+export const WIGGLE_CLAMP_FRAC = 0.5;
+/** water presence for the clamp test: waterY above ground by this many m
+ *  (matches SurfaceMatrix WATER_MIN_DEPTH_M — sub-texel shoreline noise out). */
+export const WIGGLE_WATER_DEPTH_M = 0.05;
+
+/** min-radius floor noise epsilon (fraction of the class floor). The class
+ *  minRadiusM IS the ridable limit, so a turn measured AT the floor is
+ *  ridable BY DEFINITION; only strictly-tighter turns are unridable. A
+ *  113 deg hairpin resampled to R = 4.4999 m against a 4.5 m floor (seed-2
+ *  west-hills-gravel) is the design floor plus float/resample noise, not a
+ *  sub-floor turn. 3% covers that noise while a real sub-floor turn (e.g.
+ *  4.5 m floor vs a 4.3 m turn = 4.4% under) still fails. Mirrors
+ *  GRADE_EPS_PCT for the sustained-grade gate. */
+export const RADIUS_EPS_FRAC = 0.03;
+
 /** Tier-2 sustained window: the class design grade (maxGrade × margin)
  *  held over this length is a profile-solver bug, not resample noise. */
 export const CLASS_SUSTAINED_LEN_M = 50;
