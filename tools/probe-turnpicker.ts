@@ -332,11 +332,14 @@ async function main(): Promise<void> {
           await shot('locked');
         }
       }
-      // interaction modes, each fired once while the window is open
+      // interaction modes, each fired once while the window is open.
+      // lockRef falls back when lockM is absent (pre-cutoff builds) so the
+      // ride still EXERCISES the pick — the contract check below reddens.
       if (s.j && res.pickedEdge === null) {
         const n = s.j.opts.length;
         const nonDefault = s.j.sel === 0 ? n - 1 : 0;
-        if (mode === 'tap' && s.j.d > s.j.l + 25) {
+        const lockRef = typeof s.j.l === 'number' ? s.j.l : 20;
+        if (mode === 'tap' && s.j.d > lockRef + 25) {
           // touch path: tap the target card's own box (probe-ui-touch law)
           const box = await page.evaluate(
             `(() => { const el = document.querySelectorAll('#ride-junction .rj-opt')[${nonDefault}];
@@ -350,7 +353,7 @@ async function main(): Promise<void> {
             res.tapMoved = after.j !== null && after.j.sel === nonDefault;
             res.pickedEdge = s.j.opts[nonDefault]?.e ?? null;
           }
-        } else if (mode === 'late' && s.j.d < s.j.l + 12) {
+        } else if (mode === 'late' && s.j.d < lockRef + 12) {
           // last-moment pick, ~one bike length above the cutoff
           await page.evaluate(
             `(() => { window.__laasDbg.ride.pickJunctionOption(${nonDefault}); })()`,
@@ -384,6 +387,11 @@ async function main(): Promise<void> {
     const j = r.firstPreview?.j ?? null;
     check(`preview appeared ${tag}`, j !== null, '');
     if (j) {
+      check(
+        'preview carries lockM (cutoff contract)',
+        typeof j.l === 'number' && j.l > 0,
+        `lockM=${String(j.l)}`,
+      );
       const degs = j.opts.map((o) => (o.a * 180) / Math.PI);
       const sorted = degs.every((d, i) => i === 0 || (degs[i - 1] as number) > d - 1e-6);
       check('options sorted left→right by signed angle', sorted, `[${degs.map((d) => d.toFixed(0)).join(', ')}]`);
