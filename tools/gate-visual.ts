@@ -332,9 +332,19 @@ async function main(): Promise<void> {
       async (f) => window.__laas.settle && (await window.__laas.settle(f)),
       24,
     );
+    // post-settle fatal check: a page can die AFTER ready (live-reload races
+    // while agent worktrees share the dev server) — a black error frame
+    // trivially passes any "less than X%" metric (caught 2026-07-16: a dead
+    // flower-frost capture false-passed at 0.000% blue).
+    const lateErr = await page.evaluate(() => window.__laas.error);
+    if (lateErr) throw new Error(`[${name}] app fatal after settle: ${lateErr}`);
     const png = join(dir, `${name}.png`);
     await page.screenshot({ path: png });
     await page.close();
+    const live = meanLum(await readPixels(png));
+    if (live <= 0.02) {
+      throw new Error(`[${name}] dead frame (meanLum=${live.toFixed(4)}) — capture is not judgeable`);
+    }
     return png;
   };
 
