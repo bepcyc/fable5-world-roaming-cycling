@@ -11,14 +11,15 @@ import {
   CanvasTexture,
   CircleGeometry,
   CylinderGeometry,
+  DoubleSide,
   InstancedMesh,
   Mesh,
   PlaneGeometry,
   SRGBColorSpace,
   Vector3,
 } from 'three';
-import { MeshStandardNodeMaterial } from 'three/webgpu';
-import { float, mix, positionWorld, smoothstep, texture, uv, vec3 } from 'three/tsl';
+import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
+import { attribute, float, mix, positionWorld, smoothstep, texture, uv, varying, vec3 } from 'three/tsl';
 import type { NF, NV4 } from '../gpu/TSLTypes';
 import { hash12 } from '../gpu/noise/NoiseTSL';
 import type { DataTexture } from 'three';
@@ -158,6 +159,94 @@ export async function buildGalleryScene(ctx: WorldContext): Promise<void> {
     }
     return { x, z };
   };
+
+  // Focused material/geometry microscope. A frame contains exactly one
+  // unambiguous mode; mixing normal and diagnostic rows made visual
+  // comparisons unreliable.
+  const flowerDebug = q.get('flowerdbg');
+  if (flowerDebug === 'normal' || flowerDebug === 'parts' || flowerDebug === 'solid') {
+    const kinds: readonly FlowerKind[] = ['trefoil', 'daisy', 'umbel', 'bell', 'thyme'];
+    const colors: Readonly<Record<FlowerKind, { r: number; g: number; b: number }>> = {
+      trefoil: { r: 0.92, g: 0.66, b: 0.06 },
+      daisy: { r: 0.85, g: 0.72, b: 0.12 },
+      umbel: { r: 0.75, g: 0.75, b: 0.7 },
+      bell: { r: 0.28, g: 0.14, b: 0.5 },
+      thyme: { r: 0.5, g: 0.17, b: 0.5 },
+    };
+    const specimenScale: Readonly<Record<FlowerKind, number>> = {
+      trefoil: 14,
+      daisy: 9,
+      umbel: 5.5,
+      bell: 8,
+      thyme: 14,
+    };
+    const debugMaterial = (mode: 'parts' | 'solid'): MeshBasicNodeMaterial => {
+      const mat = new MeshBasicNodeMaterial();
+      const d = varying(attribute('vdata', 'vec4')) as unknown as NV4;
+      const centerK = smoothstep(0.12, 0.02, d.x.sub(0.5).abs());
+      const petalK = smoothstep(0.85, 0.95, d.x);
+      let c = mix(vec3(0.05, 0.85, 0.12), vec3(0.95, 0.06, 0.04), centerK);
+      c = mix(c, vec3(0.02, 0.8, 0.95), petalK);
+      mat.colorNode = mode === 'solid' ? vec3(0.95, 0.05, 0.72) : c;
+      mat.side = DoubleSide;
+      return mat;
+    };
+    const badge = document.createElement('div');
+    badge.dataset.debugOverlay = 'flower-gallery';
+    badge.textContent = flowerDebug === 'parts'
+      ? 'FLOWER DEBUG: PARTS  green=stem  red=center  cyan=petal'
+      : `FLOWER DEBUG: ${flowerDebug.toUpperCase()}`;
+    Object.assign(badge.style, {
+      position: 'fixed',
+      top: '16px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: '10000',
+      padding: '8px 12px',
+      background: '#111',
+      color: '#fff',
+      font: '600 15px monospace',
+      pointerEvents: 'none',
+    });
+    document.body.appendChild(badge);
+    for (let i = 0; i < kinds.length; i++) {
+      const kind = kinds[i] as FlowerKind;
+      const x = (i - 2) * 2.6;
+      for (let row = 0; row < 2; row++) {
+        const geo = buildFlower(kind, seed.rng(`flowerdbg/${kind}/${row}`));
+        const mat = flowerDebug === 'normal'
+          ? flowerMaterial(colors[kind])
+          : debugMaterial(flowerDebug);
+        const flower = new Mesh(geo, mat);
+        flower.position.set(x, 0.03, row === 0 ? 0.5 : -2.8);
+        flower.scale.setScalar(specimenScale[kind]);
+        flower.castShadow = false;
+        flower.receiveShadow = false;
+        engine.scene.add(flower);
+      }
+      const label = labelSprite(kind, 'seed A / seed B');
+      label.position.set(x, 0.42, 2.0);
+      label.scale.setScalar(0.62);
+      engine.scene.add(label);
+    }
+    const post = new PostStack(engine, sunSky.atmosphere, params.timeOfDay, null);
+    engine.post = post;
+    ctx.hooks.setTimeOfDay = (t: number) => {
+      void (async () => {
+        await sunSky.setTimeOfDay(t);
+        updateSunUniforms(sunSky.sun);
+        post.setTimeOfDay(t);
+      })();
+    };
+    if (params.cam === null) {
+      engine.camera.position.set(0, 3.6, 7.5);
+      engine.camera.lookAt(new Vector3(0, 1.35, -1.0));
+      engine.camera.fov = 48;
+      engine.camera.updateProjectionMatrix();
+    }
+    ctx.progress(1, 'flower debug gallery ready');
+    return;
+  }
 
   // ---- foliage cluster atlases (captured once per species) -------------------
   ctx.progress(0.08, 'gallery: capturing foliage atlases');

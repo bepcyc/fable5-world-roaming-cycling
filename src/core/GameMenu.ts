@@ -8,7 +8,7 @@
  * freezes worldTime/physics/updateFns, the frame keeps rendering so the
  * pause card sits over a still — not black — world). "Main menu" from
  * pause keeps the world paused and re-shows the splash with the Start
- * button relabeled "ПРОДОЛЖИТЬ" — the world is never torn down mid-session
+ * button relabeled "CONTINUE" — the world is never torn down mid-session
  * (Engine has no dispose; a real "new ride" would just reload the page).
  *
  * Bypass (`?nosplash=1`, `navigator.webdriver`, non-`world` debug scenes,
@@ -25,7 +25,11 @@ import { hardwareThreads, storeThreads, THREADS_LS_KEY } from './Threads';
 
 type GameState = 'MENU' | 'PLAYING' | 'PAUSED';
 
-function shouldBypass(params: LaasParams): boolean {
+/** Exported for TapGate.ts: the mobile-only tap gate is part of the same
+ *  splash flow and must vanish under every debug/tooling escape hatch this
+ *  already covers (webdriver — every Playwright probe/screenshot tool sets
+ *  it — nosplash=1, non-'world' debug scenes, freeze=1). */
+export function shouldBypass(params: LaasParams): boolean {
   const q = new URLSearchParams(window.location.search);
   if (q.get('nosplash') === '1') return true;
   if ((navigator as unknown as { webdriver?: boolean }).webdriver === true) return true;
@@ -35,10 +39,13 @@ function shouldBypass(params: LaasParams): boolean {
 }
 
 const PRESETS: QualityPreset[] = ['low', 'high', 'ultra'];
+// Labels come from I18n, which is the only file allowed to hold non-Latin
+// text. A language picker names each language in its OWN language, so 'ru'
+// must name itself in Cyrillic — that string therefore lives in the dictionary.
 const LANGS: { code: Lang; label: string }[] = [
-  { code: 'en', label: 'English' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'ru', label: 'Русский' },
+  { code: 'en', label: t('lang.en') },
+  { code: 'de', label: t('lang.de') },
+  { code: 'ru', label: t('lang.ru') },
 ];
 
 function el<T extends HTMLElement>(id: string): T {
@@ -178,7 +185,7 @@ export class GameMenu {
   }
 
   private onMainMenuClick(): void {
-    // world stays paused; splash comes back with Start relabeled "продолжить"
+    // world stays paused; splash comes back with Start relabeled "Resume"
     this.pause.classList.remove('on');
     this.splash.hidden = false;
     this.state = 'MENU';

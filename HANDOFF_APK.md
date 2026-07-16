@@ -18,6 +18,84 @@
 - **Следующий шаг**: дописать рубежи 2-5 варианта B (§6 ниже), ЛИБО по приказу
   владельца — сменить доктрину (повороты в WAR PLAN §8).
 
+## 0.5 ОБНОВЛЕНИЕ 2026-07-14 — живой тест на Pixel 10 Pro + новые требования
+
+Движок дошёл до запуска на реальном телефоне (dev-сервер по LAN, Chrome).
+Это ВАЛИДИРУЕТ вариант B и меняет приоритеты. Читать ДО §1-9.
+
+**Что подтвердилось (де-риск):**
+- **WebGPU работает на Pixel 10 Pro живьём** — `chrome://gpu: WebGPU Hardware
+  accelerated`, мир загрузился до READY. GPU = **`img-tec/d-series`**
+  (Imagination, Tensor G5). То есть §1-2 верны на реальном железе, не только
+  web-ресёрч. **GPU-список расширить: не только Adreno/Mali, но и IMG/Immortalis.**
+- **Loopback 127.0.0.1 = secure context — выбор ПОДТВЕРЖДЁН.** Сегодня LAN-IP по
+  HTTP (`http://192.168.x.y:5173`) УПАЛ: `navigator.gpu is missing`, понадобился
+  флаг `chrome://flags/#unsafely-treat-insecure-origin-as-secure`. `127.0.0.1`
+  же secure → в APK через loopback WebGPU заведётся **БЕЗ флага**. §2/§6.2 верны.
+
+**КРИТИЧНО — пресет запуска (иначе APK упадёт на первом запуске):**
+- Дефолт/`preset=high` **КРЭШИТ Pixel** (`device lost` — OOM/термал на тяжёлом
+  world-gen + первом рендере). Выжил только **`preset=min` (добавлен сегодня:
+  height 1024²/sim 512²) + `dpr=0.6`**, бут ~105с.
+- → **Старт-URL APK и `public/manifest.webmanifest start_url` сменить с
+  `preset=low` на `preset=min&dpr=0.6`.** (§3 сейчас говорит `preset=low` — устарело.)
+
+**НОВЫЙ ГЛАВНЫЙ РИСК — не WebGPU, а ПРОИЗВОДИТЕЛЬНОСТЬ.** Весь §1-9 про «заведётся
+ли WebGPU» (да). Реальная стена — перф: бут 105с на min, high падает. Критический
+путь теперь = перф-тюнинг (ортогонально нативной оболочке):
+- форсить `min`; сделать пресет «mobile» для РЕНДЕРА (сейчас его нет): выключить
+  froxel-объёмку, bloom, TRAA, тяжёлые CSM-тени; dpr-скейл;
+- ускорить бут: veg-бейки (атласы/импосторы ~16с) кэшировать; первый рендер
+  (~18с, компиляция всех WebGPU-пайплайнов, разрыв 95%→100% в тайминг-логе).
+
+**Инструменты отладки на устройстве (добавлены 2026-07-14, в v0.3.0):**
+- `?debug=1` — экранный оверлей: тайминг каждого шага бута + адаптер/лимиты,
+  остаётся на крэше. Годится в APK для диагностики без консоли. См.
+  `docs/LAUNCH_AND_DEBUG.md`.
+- Телеметрия (`src/core/Telemetry.ts` + `tools/debug-telemetry-server.ts`) —
+  dev-LAN-инструмент (телефон POST'ит begin/шаги/CRASH на десктоп); в офлайн-APK
+  без сервера смысла нет, но оверлей — да.
+
+**ДВА НОВЫХ ТРЕБОВАНИЯ ВЛАДЕЛЬЦА (2026-07-14) — бьют по слабому месту Custom Tab:**
+1. **BLE обязан работать и на Android.** План ПРЕДПОЛАГАЕТ (§2), что Web Bluetooth
+   в Custom Tab работает даром (движок Chrome, secure loopback, чузер/права у
+   Chrome). **НЕ проверено именно в Custom Tab.** Если Web Bluetooth там урезан →
+   вариант B РУШИТСЯ (нативный BLE-мост требует WebView, а в WebView нет WebGPU →
+   конфликт → месяцы). **Это риск №1.**
+2. **Не должно быть видно окна браузера — по виду игра.** Custom Tab + Fullscreen
+   API (`canvas.requestFullscreen()` на первый тап, §2) даёт иммерсивный вид
+   (браузерный UI скрыт при игре) — но **НЕ запертый kiosk** (юзер может выйти
+   жестом). Для «по виду игра» — ОК. Для гарантированно запертого экрана — только
+   нативная WebView/Chromium-оболочка (тяжело).
+
+**ГЕЙТЯЩИЙ ЭКСПЕРИМЕНТ — сделать ДО написания Kotlin (§6):** минимальный Custom Tab
+(пин `com.android.chrome`) грузит loopback-страницу, которая (а) входит в
+фуллскрин и (б) делает `navigator.bluetooth.requestDevice()` + коннект к датчику
+(power/cadence). Проходит → вариант B живёт. BLE-чузер не всплывает/не коннектится
+→ нужна другая (тяжёлая) архитектура, и знать это надо ДО, а не после месяца.
+
+### ВЕРДИКТ deep-research 2026-07-14 (23 источника, adversarial-верификация) — ПОЛОЖИТЕЛЬНЫЙ
+
+**Web Bluetooth в Custom Tab — ЖИЗНЕСПОСОБНО** (компоненты 3-0, итог = архитектурный вывод, medium):
+- Loopback `127.0.0.1` = secure context → предпосылка Web Bluetooth выполнена БЕЗ TLS (Chrome docs + W3C Secure Contexts).
+- Chrome for Android (56+, Android 6+) даёт полный API: user-gesture чузер + GATT (connect→getPrimaryService→getCharacteristic→startNotifications), покрывает Cycling Power / CSC / Heart Rate.
+- Custom Tab на `com.android.chrome` = движок/профиль/права самого Chrome (не урезанный WebView) → `navigator.bluetooth` присутствует.
+- **Права Android 12+ (`BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT`) держит CHROME, не хост-APK** — в манифесте игры BLE-permission НЕ нужен.
+- ⚠️ **Единственный честный пробел**: ни один источник НЕ показал чузер именно ВНУТРИ Custom Tab (сильные claim'ы «как в полном Chrome» отбиты 1-2 и 0-3 как overreach). Вывод логичен, но **on-device smoke-тест перед шиппингом обязателен** — сборка APK его и даёт.
+
+**Fullscreen в Custom Tab — best-effort иммерсив, НЕ kiosk** (3-0):
+- `canvas.requestFullscreen()` после тапа работает, прячет **браузерный chrome (URL-бар)** → app-like вид.
+- НО обычный Custom Tab **НЕ прячет системные бары** (статус/навигация) — это режим TWA `ImmersiveMode` (нужен verified origin, на `CustomTabsIntent` его нет). `setUrlBarHidingEnabled` — только URL-бар на скролле.
+- **Запертый kiosk через web НЕВОЗМОЖЕН** (браузеры держат выходы; хост-APK не может скриптовать страницу; OS lock-task нужен Device Policy Controller). → «по виду игра» — да; гарантированно-запертый экран — нет.
+
+**Открытые on-device вопросы (проверить на телефоне при первой сборке):**
+1. Рендерится ли BLE-чузер и runtime-промпт прав ВНУТРИ Custom Tab (не полного Chrome).
+2. **Android 16 «Advanced Protection»** — claim, что оно НЕ рубит `navigator.bluetooth`, ОТБИТ (1-2) → неизвестно. Плюс есть источник, что Advanced Protection **рубит WebGPU** — если у юзера включено, может лечь всё. Проверить.
+3. Attribution BLE-прав к Chrome + переживают ли перезапуск (стабильный origin 127.0.0.1:47862 помогает).
+4. Жест-навигация / вырез (notch) / выход из фуллскрина жестом во время игры.
+
+**Не запускать Custom Tab в incognito/ephemeral-режиме** (изолирует cookies/права → ломает shared-state).
+
 ## 1. Решение (общее Claude+Codex, дословно проверено web-ресёрчем)
 
 **Везде тащим полный Chromium — иначе нет WebGPU.** Причина жёсткая:

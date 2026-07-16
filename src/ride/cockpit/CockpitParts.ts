@@ -54,8 +54,8 @@ import { attachRider } from './RiderBody';
 // ---- fit constants (eye-relative) ------------------------------------------
 // high/close on purpose: at the ride gaze (pitch ≈ −0.06, vfov 55°) the
 // frame bottom edge is only ~0.54 rad below the view axis — the whole
-// cockpit must fit inside that band to be SEEN (owner: «вел в кадре
-// больше должен быть виден», perspective itself untouched)
+// cockpit must fit inside that band to be SEEN (owner: «more of the bike
+// should be visible in frame», perspective itself untouched)
 export const BAR_DROP = 0.165; // eye → bar-clamp vertical
 export const BAR_FWD = 0.40; // eye → bar-clamp horizontal
 // 73° head angle, pointing DOWN the steerer: the tube bottom sits FORWARD
@@ -461,7 +461,7 @@ function hoodParts(hoodPoint: Vector3, side: 1 | -1, flareDeg: number): Part[] {
   const body = new CapsuleGeometry(0.019, 0.062, 4, 12);
   body.applyMatrix4(new Matrix4().makeScale(0.85, 1, 1.08));
   parts.push(place(body, hoodPoint.clone().add(new Vector3(0, 0.014, -0.016)), bodyDir));
-  // HORN (горб) RESTORED (session 13): the reference hood has a tall nose
+  // HORN (hump) RESTORED (session 13): the reference hood has a tall nose
   // that rises ABOVE the closed fist — the hammer-grip web (thumb-index)
   // presses against its back. Session 12 removed it because the DOWN-curl
   // (bar-hang) fingers clipped it; with the rolled hammer grip the fingers
@@ -692,7 +692,7 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
       // NB: the old aero shift (0,0.004,-0.026) pushed the hood — and with
       // it the GRIP TARGET — 26 mm FORWARD of the real bar tube, so the
       // hand landed forward of the bar and the fingers overshot it into
-      // mid-air (owner: "рука проходит сквозь руль"; probe-bar: fingertips
+      // mid-air (owner: "the hand goes through the handlebar"; probe-bar: fingertips
       // 80 mm past the drop). Keep the hood AT the bar so the hand grips it.
       const hp = hp0;
       // expose the REAL hood body line (steer-space) so the rider's grip
@@ -719,7 +719,7 @@ function buildModeAssembly(spec: ModeSpec, mats: SharedMats): Group {
         // REAL bar tube the fingers drape over/through: the bend + drop
         // (points 3..7 of dropBarPoints). Without it in the grip solid the
         // wrap solver ignores it and the fingers pass STRAIGHT THROUGH the
-        // visible bar (owner: "рука проходит сквозь руль"). Round barR.
+        // visible bar (owner: "the hand goes through the handlebar"). Round barR.
         g.userData.dropPts = [3, 4, 5, 6, 7].map((i) => (ptsR[i] as Vector3).clone());
         g.userData.barR = barR;
       }

@@ -8,8 +8,8 @@
  *
  * Riding follows the road graph (Zwift principle): position advances along
  * RouteGraph edges from the fixed-timestep BikeSolver; at junctions the
- * rider CHOOSES (owner directive: on-screen "turn ahead" pick, не по
- * рельсам) with ←/→, default = straightest exit. Dead ends U-turn.
+ * rider CHOOSES (owner directive: on-screen "turn ahead" pick, not on
+ * rails) with ←/→, default = straightest exit. Dead ends U-turn.
  *
  * The solver runs ONLY on Engine.onFixedUpdate — never on frame dt — so
  * P1–P4 hold across ?dt sweeps. Camera: FlyCamera 'ride' mode (free
@@ -348,6 +348,21 @@ export class BikeRig {
     this.source = source;
   }
 
+  /** touch UI (RideHud junction cards): pick a turn by index — the tap
+   *  equivalent of ←/→, which only fires from a keydown listener and so is
+   *  unreachable on a device with no keyboard. Same clamp as pick(). */
+  pickJunctionOption(index: number): void {
+    if (!this.junction) return;
+    const n = this.junction.options.length;
+    this.junction.selected = Math.min(Math.max(index, 0), n - 1);
+  }
+
+  /** touch UI (RideHud brake button): hold-to-brake — the tap equivalent of
+   *  Space/S/↓, which only fire from keydown/keyup listeners. */
+  setBrake(on: boolean): void {
+    this.brake = on;
+  }
+
   /** route graph accessor (bike-computer map, M1.5 owner ref) */
   get routeGraph(): RouteGraph {
     return this.graph;
@@ -403,6 +418,11 @@ export class BikeRig {
     const g = this.probe(sm.x, sm.z);
     this.seedPose(sm.x, g.ground + EYE_SADDLE, sm.z, this.heading(sm.tx, sm.tz));
     this.flash(t('ride.mountBike', { mode: t('mode.' + mode) }));
+    // control ACTIVATION (not assignment) happens here, on the transition
+    // from not-riding to riding — a controllable BLE device sitting in the
+    // device manager must never send resistance writes on its own, only
+    // once the rider actually mounts a bike (BLE_ZWIFT_PLAN.md design)
+    this.source.activateControl?.();
     return true;
   }
 
@@ -414,6 +434,7 @@ export class BikeRig {
     this.solver = { v: 0, stalled: false };
     this.fly.setMode('walk');
     this.flash(t('ride.onFoot'));
+    this.source?.releaseControl?.();
   }
 
   private flash(msg: string): void {

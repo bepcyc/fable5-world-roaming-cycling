@@ -12,8 +12,11 @@ import {
 import { Engine } from './core/Engine';
 import { FlyCamera } from './core/FlyCamera';
 import { GameMenu } from './core/GameMenu';
+import { applyStaticI18n } from './core/I18n';
 import { initHooks } from './core/Hooks';
+import { initImmersiveMobile } from './core/ImmersiveMobile';
 import { parseCamString, parseParams } from './core/Params';
+import { initWakeLock } from './core/WakeLock';
 import { WorldSeed } from './core/Seed';
 import { Hud } from './debug/HUD';
 import { DebugOverlay } from './debug/DebugOverlay';
@@ -32,8 +35,9 @@ import {
   type SensorSource,
 } from './ride/Sensors';
 import { BleSensorSource } from './ride/ble/BleSensorSource';
-import { BleConnectUi } from './ride/ble/ConnectUi';
-import { FakeTransport, WebBluetoothTransport } from './ride/ble/Transport';
+import { DeviceManagerUi } from './ride/ble/DeviceManagerUi';
+import { NativeBridgeTransport, nativeBleAvailable } from './ride/ble/NativeBridgeTransport';
+import { FakeTransport, SVC, WebBluetoothTransport } from './ride/ble/Transport';
 
 async function boot(): Promise<void> {
   const hooks = initHooks();
@@ -41,9 +45,20 @@ async function boot(): Promise<void> {
   // environment gate BEFORE any loading: mobile / non-Chromium / missing
   // WebGPU each get a clear notice instead of a broken boot (?nogate=1 skips)
   if (!browserGate()) return;
+  // mobile only: arm first-tap fullscreen + landscape lock before heavy work,
+  // so the very first touch anywhere goes immersive (no-op on desktop/Electron)
+  initImmersiveMobile();
+  // desktop AND mobile: a ride is a game session, not a document — the
+  // display must not dim/lock mid-ride on any platform
+  initWakeLock();
   const params = parseParams();
   // reverse debug channel (?debug=1): phone → desktop telemetry sink
   initTelemetry(params.debug);
+  // Localize the static labels in index.html before anything shows them. They
+  // used to carry their own translations as data-de/data-ru attributes that no
+  // code ever read, so EXIT/PAUSE/SETTINGS/MAIN MENU stayed English in every
+  // language; the markup now carries a key and I18n owns the words.
+  applyStaticI18n();
   // splash+menu is static markup in index.html — this only wires behavior
   // onto it, and boot() below keeps running in the background regardless
   // of whether the user has clicked Start yet
@@ -154,10 +169,20 @@ async function boot(): Promise<void> {
   const rideQ = q0.get('ride');
   let bleSource: BleSensorSource | null = null;
   let fakeTransport: FakeTransport | null = null;
+  let bleUi: DeviceManagerUi | null = null;
   if (!params.rideDev && (rideQ === 'ble' || rideQ === 'blefake')) {
     fakeTransport = rideQ === 'blefake' ? new FakeTransport() : null;
-    bleSource = new BleSensorSource(fakeTransport ?? new WebBluetoothTransport());
-    new BleConnectUi(bleSource, true); // starts visible in both modes (B hides)
+    // Three transports, one seam (src/ride/ble/Transport.ts). The native
+    // bridge exists ONLY inside the Android WebView APK, which has no
+    // navigator.bluetooth at all — window.LaasBle is injected by BleBridge.kt,
+    // so this test is false everywhere else and desktop Chrome keeps taking
+    // the Web Bluetooth path unchanged.
+    bleSource = new BleSensorSource(
+      fakeTransport ?? (nativeBleAvailable() ? new NativeBridgeTransport() : new WebBluetoothTransport()),
+    );
+    // chip is persistent; the full manager starts closed — 'B' or the chip
+    // click opens it, same as the pre-rebuild panel's toggle
+    bleUi = new DeviceManagerUi(bleSource, false);
   }
   const source: SensorSource | null = params.rideDev
     ? new KeyboardPowerSource()
@@ -171,12 +196,28 @@ async function boot(): Promise<void> {
     const dbg0 =
       (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
     dbg0['bleSource'] = bleSource;
+    dbg0['bleUi'] = bleUi;
+    // Tacx vendor-service capture rig (src/ride/ble/TacxControlsProbe.ts).
+    // NOT a decoder: Garmin does not publish the cf800001 frame format and no
+    // public decoder exists, so the handlebar buttons/gears can only be earned
+    // from a real capture with the owner on the bike. Debug-surface only —
+    // nothing in the ride path touches it.
+    dbg0['tacxProbe'] = async (): Promise<unknown> => {
+      const { probeTacxControls, TacxControlsCapture } = await import('./ride/ble/TacxControlsProbe');
+      const trainer = bleSource?.registry.list().find((d) => d.handle?.hasService(SVC.tacxControls));
+      if (!trainer?.handle) return { error: 'no connected device exposes the Tacx vendor service cf800001' };
+      const capture = new TacxControlsCapture();
+      dbg0['tacxCapture'] = capture;
+      dbg0['tacxMark'] = (note: string) => capture.mark(note);
+      dbg0['tacxDump'] = () => ({ events: capture.events, fecPages: capture.fecPageHistogram() });
+      return probeTacxControls(trainer.handle, capture);
+    };
     if (fakeTransport) {
       dbg0['bleFake'] = fakeTransport;
       // probes build scripted peripherals in page context (tools/probe-ble.ts)
       const { FakeDevice } = await import('./ride/ble/Transport');
-      dbg0['bleMakeFakeDevice'] = (name: string, services: number[]) =>
-        new FakeDevice(name, services);
+      dbg0['bleMakeFakeDevice'] = (name: string, services: (number | string)[], id?: string) =>
+        new FakeDevice(name, services, id);
     }
     (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg0;
   }

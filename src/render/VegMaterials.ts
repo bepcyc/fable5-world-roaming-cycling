@@ -326,15 +326,20 @@ export function flowerMaterial(petal: {
 }): MeshStandardNodeMaterial {
   const mat = new MeshStandardNodeMaterial();
   const d = vdata();
-  const stem = vec3(0.045, 0.1, 0.03);
-  const center = vec3(0.5, 0.32, 0.045);
+  const stem = vec3(0.12, 0.28, 0.07);
+  const center = vec3(0.72, 0.48, 0.08);
   const petalC = vec3(petal.r, petal.g, petal.b);
   const centerK = smoothstep(0.12, 0.02, d.x.sub(0.5).abs());
   const petalK = smoothstep(0.85, 0.95, d.x);
   let albedo = mix(stem, center, centerK) as unknown as NV3;
   albedo = mix(albedo, petalC, petalK) as unknown as NV3;
-  mat.colorNode = albedo.mul(d.w.mul(0.5).add(0.5));
-  mat.roughness = 0.7;
+  mat.colorNode = albedo.mul(d.w.mul(0.15).add(0.85));
+  // Petals and hair-thin stems transmit skylight; a small color-preserving
+  // fill prevents DoubleSide back faces from collapsing to black while the
+  // standard BRDF still supplies shape and sun response.
+  mat.emissiveNode = albedo.mul(0.72);
+  mat.aoNode = float(1);
+  mat.roughness = 0.78;
   mat.metalness = 0;
   mat.side = DoubleSide;
   return mat;

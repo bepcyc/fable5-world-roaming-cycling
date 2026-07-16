@@ -39,11 +39,22 @@ function clientHints(): UAClientHints | undefined {
 export function isMobileDevice(): boolean {
   if (clientHints()?.mobile === true) return true;
   const ua = navigator.userAgent;
-  // Android tablets drop "Mobile" but keep "Android"; Kindle = Silk
+  // Kindle = Silk. Phones keep "Mobile"; most Android tablets keep "Android".
   if (/Android|iPhone|iPod|iPad|Windows Phone|IEMobile|Silk|Mobile/i.test(ua)) return true;
-  // iPadOS 13+ masquerades as desktop macOS ("Macintosh" UA) — multi-touch
-  // gives it away; real Macs report 0 touch points
-  if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 2) return true;
+  // …but a tablet in "desktop site" mode lies COMPLETELY, and that is not an
+  // edge case — it is the default on Samsung tablets. Measured on a Galaxy Tab
+  // S8 Ultra (Android 16) 2026-07-15: ua = "Mozilla/5.0 (X11; Linux x86_64) …
+  // Chrome/150" — no Android token, no Mobile token, userAgentData.mobile
+  // false. Every UA test above misses, and the old code then also cost us
+  // fullscreen and the landscape lock, since ImmersiveMobile gates on this.
+  // iPadOS 13+ pulls the same trick with a "Macintosh" UA.
+  //
+  // When the UA lies, device capability is the only honest signal: a machine
+  // with a real pointing device reports `pointer: fine` as its PRIMARY pointer,
+  // so a touchscreen laptop is still correctly treated as desktop; coarse +
+  // multi-touch means a screen you hold in your hands. index.html's #rotate
+  // overlay already relies on `pointer: coarse` for exactly this reason.
+  if (navigator.maxTouchPoints > 2 && matchMedia('(pointer: coarse)').matches) return true;
   return false;
 }
 
@@ -62,7 +73,13 @@ export function isChromiumBrowser(): boolean {
 export function browserGate(): boolean {
   if (new URLSearchParams(window.location.search).get('nogate') === '1') return true;
 
-  if (isMobileDevice()) {
+  // The offline-APK (variant B) runs the exact same web build inside a Chrome
+  // Custom Tab on 127.0.0.1 — a phone UA, but a deliberate, supported target.
+  // Let loopback origins past the mobile block while KEEPING the navigator.gpu
+  // diagnostic below, so a phone with no usable WebGPU still fails loud.
+  const onLoopback = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+
+  if (isMobileDevice() && !onLoopback) {
     failLoud('A computer is required', [
       'LAAS pushes desktop-class GPU work through WebGPU — phone and tablet',
       'browsers are not supported.',

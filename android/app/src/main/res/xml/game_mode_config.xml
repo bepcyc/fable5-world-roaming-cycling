@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Game Mode opt-in (Android 13+ / API 33; the OEM reads this at install time).
+
+  WHAT WE ARE ASKING FOR, and why each choice:
+   - supportsPerformanceGameMode=true  — we want the "Performance" profile: the
+     OEM may raise/hold clocks for us. This is the whole point of the file.
+   - supportsBatteryGameMode=false     — never trade our frame rate for battery.
+     The measured law on the tablet is frame = 106246/clock + 20.3 ms: any clock
+     the OEM takes away lands directly on the frame time.
+   - allowGameDownscaling=false        — the OEM intervention that renders at a
+     lower resolution and upscales. We already run a 0.49 MP buffer and are NOT
+     fill-bound (dpr 0.2→1.5 moved fps by 0.1), so downscaling would cost image
+     quality and buy nothing.
+   - allowGameAngleDriver=false        — ANGLE is a GLES-on-Vulkan translation
+     layer. We render WebGPU through Chrome, not GLES; forcing ANGLE on our
+     shell activity is meaningless at best.
+
+  STATUS 2026-07-15 (variant C): the old caveat here said this file was moot
+  because Chrome, not us, rendered the game. That is obsolete — MainActivity now
+  hosts an in-process WebView, so com.bepcyc.laas IS the package that draws and
+  this file applies to it. Evidence it is parsed: `cmd game list-modes
+  com.bepcyc.laas` reports performance as available, and the Pixel's dumpsys
+  gives us a config object (`Modes: {}`) where every other game prints "No
+  intervention found for package".
+
+  DO NOT "FIX" THE EMPTY `Modes: {}` IN dumpsys game. That map lists OEM/
+  server-pushed DeviceConfig `game_overlay` interventions keyed by package name;
+  nobody pushes one for a sideloaded APK, and on the Pixel `game_overlay` is
+  empty for EVERY package. It is empty for us here for a second, independent
+  reason too: we deliberately allow no interventions (both allow* flags false).
+
+  HONEST CAVEAT (measured): performance vs standard game mode was A/B'd on the
+  tablet at a fixed pose — identical GPU clock (818/818) and identical fps. This
+  file costs nothing and may be honoured by some OEM layer, but it has not been
+  shown to buy anything on these two devices.
+-->
+<game-mode-config
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:supportsBatteryGameMode="false"
+    android:supportsPerformanceGameMode="true"
+    android:allowGameDownscaling="false"
+    android:allowGameAngleDriver="false" />

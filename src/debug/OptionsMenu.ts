@@ -136,6 +136,7 @@ export class OptionsMenu {
   private wxBtns = new Map<string, HTMLDivElement>();
   private modeBtns = new Map<string, HTMLDivElement>();
   private srcBtns = new Map<string, HTMLDivElement>();
+  private handBtns = new Map<boolean, HTMLDivElement>();
   private srcRow: HTMLDivElement | null = null;
   private hint: HTMLDivElement | null = null;
   private open = false;
@@ -285,6 +286,28 @@ export class OptionsMenu {
     }
     this.panel.appendChild(modeRow);
 
+    // HANDS — Shift+H (Cockpit.ts) has no touch equivalent on a device with
+    // no keyboard; this row reads/writes the same state through the
+    // __laasDbg seam rideSetSource/rideCtl above already use.
+    this.panel.appendChild(h(t('opt.hands')));
+    const handsRow = document.createElement('div');
+    handsRow.className = 'opt-grid2';
+    for (const hv of [false, true]) {
+      const b = card(
+        hv
+          ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>'
+          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18M10.6 5.7A10.6 10.6 0 0122 12s-1 1.9-3 3.6M6.2 6.2C3.7 7.9 2 12 2 12s3.5 6.5 10 6.5c1.4 0 2.6-.3 3.7-.7M9.9 9.9a2.6 2.6 0 003.6 3.6"/></svg>',
+        hv ? t('opt.handsShow') : t('opt.handsHide'),
+      );
+      b.addEventListener('click', () => {
+        this.setHands(hv);
+        this.refresh();
+      });
+      this.handBtns.set(hv, b);
+      handsRow.appendChild(b);
+    }
+    this.panel.appendChild(handsRow);
+
     // hint line (source explanations / lock reasons)
     this.hint = document.createElement('div');
     this.hint.className = 'opt-hint';
@@ -299,7 +322,8 @@ export class OptionsMenu {
       `<b>B</b> ${t('opt.keyDashboard')}    <b>O</b> ${t('opt.keyThisMenu')}\n` +
       `<b>←/→</b> ${t('opt.keyPickTurn')}   <b>Space/S</b> ${t('opt.keyBrake')}\n` +
       `<b>[ ]</b> ${t('opt.keyTime')}        <b>1..9</b> ${t('opt.keyViews')}\n` +
-      `<b>Shift+D</b> ${t('opt.keyDebug')}   <b>Ctrl+E</b> .fit`;
+      `<b>Shift+D</b> ${t('opt.keyDebug')}   <b>Ctrl+E</b> .fit\n` +
+      `<b>Shift+H</b> ${t('opt.keyHands')}`;
     this.panel.appendChild(keys);
 
     this.fab.addEventListener('click', (e) => {
@@ -330,6 +354,18 @@ export class OptionsMenu {
     const dbg = (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg;
     const fn = dbg?.['rideSetSource'] as ((k: 'demo' | 'dev' | null) => string) | undefined;
     fn?.(kind);
+  }
+
+  private handsVisible(): boolean {
+    const dbg = (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg;
+    const fn = dbg?.['ckHandsVisible'] as (() => boolean) | undefined;
+    return fn?.() ?? false;
+  }
+
+  private setHands(v: boolean): void {
+    const dbg = (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg;
+    const fn = dbg?.['ckSetHandsVisible'] as ((v: boolean) => void) | undefined;
+    fn?.(v);
   }
 
   private showHint(text: string): void {
@@ -398,6 +434,8 @@ export class OptionsMenu {
     for (const [m, b] of this.modeBtns) b.classList.toggle('sel', m === mode);
     const src = this.sourceKind();
     for (const [k, b] of this.srcBtns) b.classList.toggle('sel', k === src);
+    const hv = this.handsVisible();
+    for (const [v, b] of this.handBtns) b.classList.toggle('sel', v === hv);
   }
 }
 

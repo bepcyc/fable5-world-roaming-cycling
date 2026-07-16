@@ -140,8 +140,8 @@ export class WeatherState {
       for (const key of Object.keys(c)) {
         c[key] = (c[key] as number) + ((t[key] as number) - (c[key] as number)) * k;
       }
-      // droplets: bead up fast under rain/fog, dry out slow ("потом
-      // обсыхают") — deliberately NOT the shared tau
+      // droplets: bead up fast under rain/fog, dry out slow ("then they
+      // dry out") — deliberately NOT the shared tau
       const dTgt = this.dropsTarget();
       const dTau = dTgt > this.dropsCur ? 7 : 55;
       this.dropsCur += (dTgt - this.dropsCur) * (1 - Math.exp(-dt / dTau));

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, maximum-scale=1" />
     <title>LAAS</title>
     <!-- relative href resolves under any base ('/', '/laas/', loopback) -->
     <link rel="manifest" href="manifest.webmanifest" />
@@ -19,10 +19,25 @@
         overflow: hidden;
         background: #06080a;
         font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        /* the single most important line here: without it a downward swipe
+           on the game surface triggers Chrome's pull-to-refresh, reloading
+           the page and costing the rider a ~105s world regen mid-ride */
+        overscroll-behavior: none;
       }
+      /* game surface only (the 3D canvas lives inside #app) — #boot/#splash/
+         #pause/#msettings/#ble-panel/HUD are all separate body-level
+         overlays, so this does NOT touch their tappability or selectable
+         text (seed input, settings labels, BLE device names). */
       #app {
         position: fixed;
         inset: 0;
+        /* browser stops owning drags as scroll/pan/pinch-zoom (also removes
+           the ~300ms double-tap-zoom delay) — FlyCamera/BikeRig own touch */
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        /* iOS/Android long-press callout (copy/lookup popup) over the world */
+        -webkit-touch-callout: none;
       }
       #app canvas {
         display: block;
@@ -149,7 +164,13 @@
         left: 0;
         right: 0;
         bottom: 0;
-        padding: 6vh 5vw;
+        /* full-bleed viewport-fit=cover means the notch/cutout can overlap the
+           edges — pad the UI out from under it (never smaller than the base) */
+        padding:
+          max(6vh, env(safe-area-inset-top))
+          max(5vw, env(safe-area-inset-right))
+          max(6vh, env(safe-area-inset-bottom))
+          max(5vw, env(safe-area-inset-left));
         display: flex;
         flex-direction: column;
         align-items: flex-start;
@@ -208,13 +229,30 @@
         position: absolute;
         inset: 0;
         display: none;
-        align-items: flex-end;
-        padding: 6vh 5vw;
+        /* flex-end pinned the card to the bottom, so a card TALLER than the
+           viewport grew upwards and off the top: on a phone in landscape (411px
+           of height) the close button measured y=-62..-34 — outside the screen,
+           unhittable, and the panel could not be closed at all. Centre it and
+           let it scroll instead: overflow on the container plus a max-height on
+           the card keeps every row reachable at any height. */
+        align-items: center;
+        justify-content: center;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding:
+          max(3vh, env(safe-area-inset-top))
+          max(5vw, env(safe-area-inset-right))
+          max(3vh, env(safe-area-inset-bottom))
+          max(5vw, env(safe-area-inset-left));
       }
       #msettings.on { display: flex; }
       .msettings-card {
         width: 340px;
         max-width: 92vw;
+        max-height: 100%;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
         background: var(--menu-panel-bg);
         border: 1px solid var(--menu-panel-border);
         backdrop-filter: blur(16px);
@@ -280,6 +318,47 @@
       .msettings-seed-btn.primary { color: #ffe9b0; border-color: rgba(255, 209, 102, 0.5); }
       .msettings-seed-btn.primary:hover { border-color: rgba(255, 209, 102, 0.8); }
 
+      /* Touch sizing — a fingertip, not a mouse cursor. Gated on pointer:coarse
+         so the desktop keeps its compact layout: desktop is desktop, mobile is
+         mobile. 48px is the Material/WCAG minimum target; measured before this
+         block, the close button was 26x26, the seed field 34 tall, the dice
+         38x31 and apply 57x31 — every one of them under a fingertip.
+         The close button keeps its 26px BOX visually (the icon would look
+         cartoonish at 48) and gains the hit area through padding, so the target
+         grows without the design changing. */
+      @media (pointer: coarse) {
+        .msettings-x {
+          width: 48px;
+          height: 48px;
+          border-radius: 12px;
+          font-size: 18px;
+          /* pull it back into the title row's optical alignment */
+          margin: -11px -11px -11px 0;
+        }
+        .msettings-card-item {
+          min-height: 48px;
+          padding: 11px 4px 9px;
+          font-size: 10.5px;
+        }
+        #msettings-seed-input {
+          min-height: 48px;
+          font-size: 16px; /* < 16px makes iOS/Android zoom the page on focus */
+          padding: 10px;
+        }
+        .msettings-seed-btn {
+          /* min-WIDTH too: the dice button holds a single glyph and measured
+             44x68 — tall enough, too narrow for a fingertip. */
+          min-height: 48px;
+          min-width: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 9px 14px;
+          font-size: 10.5px;
+        }
+        .msettings-title { margin-bottom: 14px; }
+      }
+
       /* pause overlay — no art, just a scrim over the frozen game frame */
       #pause {
         position: fixed;
@@ -312,10 +391,69 @@
         color: var(--menu-text-bright);
         margin-bottom: 6px;
       }
+
+      /* portrait-lock fallback: pure CSS so it ALWAYS covers the screen in
+         portrait even when screen.orientation.lock() is unsupported/denied.
+         Gated to `pointer: coarse` (touch devices) so a DESKTOP browser in a
+         portrait-shaped window / on a portrait monitor is NOT blocked by it. */
+      #rotate { display: none; }
+      @media (orientation: portrait) and (pointer: coarse) {
+        #rotate {
+          position: fixed;
+          inset: 0;
+          z-index: 5000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #06080a;
+          color: var(--menu-text);
+          font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        }
+      }
+      .rotate-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 22px;
+        padding: 8vw;
+        text-align: center;
+      }
+      .rotate-inner svg {
+        width: 72px;
+        height: 72px;
+        color: var(--menu-accent);
+        animation: laas-rotate-hint 2.4s ease-in-out infinite;
+      }
+      .rotate-inner .rotate-msg {
+        font-size: 13px;
+        letter-spacing: 0.22em;
+        color: var(--menu-text-bright);
+      }
+      @keyframes laas-rotate-hint {
+        0%, 40%   { transform: rotate(0deg); }
+        70%, 100% { transform: rotate(-90deg); }
+      }
+
     </style>
   </head>
   <body>
-    <div id="app"></div>
+    <!-- portrait-lock fallback (mobile): pure-CSS @media overlay, always covers
+         the screen in portrait even if JS orientation.lock is denied -->
+    <div id="rotate">
+      <div class="rotate-inner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="7" y="2" width="10" height="20" rx="2" />
+          <path d="M11 19h2" />
+        </svg>
+        <div class="rotate-msg" data-i18n="menu.rotate">ROTATE YOUR DEVICE</div>
+      </div>
+    </div>
+
+
+    <!-- oncontextmenu here (not on body) so a long-press over the 3D world
+         doesn't pop a "save image" menu, while the seed input / BLE panel /
+         menu text elsewhere keep their normal right-click / long-press -->
+    <div id="app" oncontextmenu="return false"></div>
     <div id="boot">
       <div class="title">L A A S</div>
       <div id="boot-msg">initializing</div>
@@ -338,11 +476,11 @@
           </button>
           <button class="menu-btn" id="btn-settings" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.2 12a7.2 7.2 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 00-2.1-1.2L14.3 3h-4l-.4 2.7a7.4 7.4 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7.3 7.3 0 000 2.4l-2 1.5 2 3.4 2.3-1c.6.5 1.4.9 2.1 1.2l.4 2.7h4l.4-2.7a7.4 7.4 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>
-            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+            <span data-i18n="menu.settings">SETTINGS</span>
           </button>
           <button class="menu-btn" id="btn-exit" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.5"/><path d="M12 7v5" stroke-linecap="round"/></svg>
-            <span data-i18n data-de="BEENDEN" data-ru="ВЫХОД">EXIT</span>
+            <span data-i18n="menu.exit">EXIT</span>
           </button>
         </div>
         <div id="splash-hint"></div>
@@ -351,20 +489,20 @@
       <div id="msettings">
         <div class="msettings-card">
           <div class="msettings-title">
-            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+            <span data-i18n="menu.settings">SETTINGS</span>
             <div class="msettings-x" id="msettings-close">✕</div>
           </div>
-          <div class="msettings-h" data-i18n data-de="GRAFIK (NEUSTART)" data-ru="ГРАФИКА (ПЕРЕЗАГРУЗКА)">GRAPHICS (RELOAD)</div>
+          <div class="msettings-h" data-i18n="msettings.graphics">GRAPHICS (RELOAD)</div>
           <div class="msettings-row" id="msettings-preset"></div>
-          <div class="msettings-h" data-i18n data-de="SEED (NEUSTART)" data-ru="СИД (ПЕРЕЗАГРУЗКА)">SEED (RELOAD)</div>
+          <div class="msettings-h" data-i18n="msettings.seedHeading">SEED (RELOAD)</div>
           <div class="msettings-seed-row">
             <input type="number" id="msettings-seed-input" min="0" max="4294967295" step="1" />
             <div class="msettings-seed-btn" id="msettings-seed-random">🎲</div>
             <div class="msettings-seed-btn primary" id="msettings-seed-apply">APPLY</div>
           </div>
-          <div class="msettings-h" data-i18n data-de="CPU-THREADS" data-ru="ПОТОКИ CPU">CPU THREADS</div>
+          <div class="msettings-h" data-i18n="msettings.threads">CPU THREADS</div>
           <div class="msettings-row" id="msettings-threads"></div>
-          <div class="msettings-h" data-i18n data-de="SPRACHE" data-ru="ЯЗЫК">LANGUAGE</div>
+          <div class="msettings-h" data-i18n="msettings.language">LANGUAGE</div>
           <div class="msettings-row" id="msettings-language"></div>
           <div class="msettings-hint" id="msettings-hint"></div>
         </div>
@@ -374,19 +512,19 @@
     <!-- in-game pause: ESC toggles; engine.paused freezes the frame beneath it -->
     <div id="pause">
       <div id="pause-card">
-        <div id="pause-title" data-i18n data-de="PAUSE" data-ru="ПАУЗА">PAUSE</div>
+        <div id="pause-title" data-i18n="menu.pause">PAUSE</div>
         <div class="menu-col">
           <button class="menu-btn primary" id="btn-resume" type="button">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            <span data-i18n data-de="FORTSETZEN" data-ru="ПРОДОЛЖИТЬ">RESUME</span>
+            <span data-i18n="menu.resume">RESUME</span>
           </button>
           <button class="menu-btn" id="btn-pause-settings" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.2 12a7.2 7.2 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 00-2.1-1.2L14.3 3h-4l-.4 2.7a7.4 7.4 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7.3 7.3 0 000 2.4l-2 1.5 2 3.4 2.3-1c.6.5 1.4.9 2.1 1.2l.4 2.7h4l.4-2.7a7.4 7.4 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>
-            <span data-i18n data-de="EINSTELLUNGEN" data-ru="НАСТРОЙКИ">SETTINGS</span>
+            <span data-i18n="menu.settings">SETTINGS</span>
           </button>
           <button class="menu-btn" id="btn-mainmenu" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7M6 10v9h12v-9"/></svg>
-            <span data-i18n data-de="HAUPTMENÜ" data-ru="ГЛАВНОЕ МЕНЮ">MAIN MENU</span>
+            <span data-i18n="menu.mainMenu">MAIN MENU</span>
           </button>
         </div>
       </div>

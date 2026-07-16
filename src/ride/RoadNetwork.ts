@@ -13,8 +13,8 @@
  *   - grade-limited A* on the flow-carved terrain — switchbacks EMERGE from
  *     the grade limit instead of being stamped (ROADMAP top-risk mitigation)
  *   - superelevation (banking) from curvature, crowned cross-sections
- *   - water crossings v1 = fords: the profile drops to the bed, never a
- *     causeway; deep water is a hard routing block (bridges = backlog)
+ *   - water crossings v1 = bounded low causeways; deep water remains a hard
+ *     routing block (bridges = backlog)
  *
  * Determinism: all randomness from seed.rng('roads') (owner Q2); terrain
  * inputs are themselves seed-derived. Surface ids come from SurfaceMatrix
@@ -96,6 +96,27 @@ export const ROAD_CLASSES: readonly RoadClassSpec[] = [
   },
 ];
 
+/** Hard configuration floor for a finished road surface's full width. */
+export function minimumRoadWidth(surfaceId: SurfaceId): number {
+  switch (surfaceId) {
+    case SurfaceId.Asphalt:
+      return 1.5;
+    case SurfaceId.GravelFine:
+    case SurfaceId.GravelCoarse:
+      return 1.0;
+    default:
+      return 0.5;
+  }
+}
+
+for (const cls of ROAD_CLASSES) {
+  const width = cls.halfWidth * 2;
+  const minimum = minimumRoadWidth(cls.surfaceId);
+  if (width < minimum) {
+    throw new Error(`road class ${cls.name} width ${width} m is below its ${minimum} m floor`);
+  }
+}
+
 export function roadClassBySurface(id: number): RoadClassSpec | null {
   return ROAD_CLASSES.find((c) => c.surfaceId === id) ?? null;
 }
@@ -165,8 +186,8 @@ const ASPHALT_RETRY_GRADE_MUL = 2.8;
 const ASPHALT_RETRY_JITTER_CELLS = 3; // ± grid cells, seeded jitter
 const ASPHALT_RETRY_ATTEMPTS = 3;
 
-// ---- dead-end stitching (owner 2026-07-14: «дороги, по которым нельзя
-// ездить — заебали»; гейт ≤1 тупик на большой квадрант). A ride-graph
+// ---- dead-end stitching (owner 2026-07-14: «roads you can't ride on —
+// I'm sick of them»; gate ≤1 dead-end per large quadrant). A ride-graph
 // terminus (degree-1 node) is LEGIT only at the world edge, at a water bank
 // it can't cross, or against an unbuildable slope — everything else is a
 // stub connected below or dropped. See probe-deadends.ts (same thresholds).
@@ -305,6 +326,7 @@ export class RoadNetwork {
 
   /** flattened segment view (probes / GPU upload) */
   *segments(): Generator<{
+    roadIndex: number;
     ax: number;
     az: number;
     bx: number;
@@ -316,11 +338,12 @@ export class RoadNetwork {
     ford: boolean;
     cls: RoadClassSpec;
   }> {
-    for (const r of this.routes) {
+    for (const [roadIndex, r] of this.routes.entries()) {
       for (let i = 0; i < r.pts.length - 1; i++) {
         const a = r.pts[i] as RoadPoint;
         const b = r.pts[i + 1] as RoadPoint;
         yield {
+          roadIndex,
           ax: a.x,
           az: a.z,
           bx: b.x,
@@ -521,8 +544,8 @@ export class RoadNetwork {
       }
     }
 
-    // MUD/WETLAND avoidance (owner 2026-07-06, дословно: «тоненькие
-    // малюсенькие дорожки среди грязи»). A flat wetland reads as the CHEAPEST
+    // MUD/WETLAND avoidance (owner 2026-07-06, verbatim: «thin
+    // tiny little roads winding through the mud»). A flat wetland reads as the CHEAPEST
     // terrain for the A* (grade≈0 ⇒ mult≈1), so roads were magnetically drawn
     // INTO the bogs and rendered as thin dirt ribbons winding across the mud.
     // A previous attempt penalized water PROXIMITY (ground < 2.5 m over the
@@ -675,7 +698,7 @@ export class RoadNetwork {
           let mult = 1 + 14 * gk * gk;
           // side-hill construction cost (cut/fill volume rises with cross
           // slope); quadratic tail = cliff faces are near-prohibitive (owner
-          // repro: a dirt thread traversing bare rock walls read as "палка")
+          // repro: a dirt thread traversing bare rock walls read as "a stick")
           const side = Math.max(0, (gs[ni] as number) - grade);
           mult += 1.2 * side + 10 * side * side;
           // crossings are possible but expensive → rare, short, ⟂-ish;
@@ -688,7 +711,7 @@ export class RoadNetwork {
           // expensive; crossing it stays possible but is a real junction
           // now, not free: at +10 a serpentine wove through the valley
           // road 13× (each weave = an unplanned level-conflicted crossing,
-          // owner anomaly list «пересечения без узла»). The level-mismatch
+          // owner anomaly list «crossings without a junction node»). The level-mismatch
           // term makes crossing a built road ON ITS GRADE LINE affordable
           // and crossing its embankment/cutting prohibitive — junctions
           // happen where the two roads can actually meet.
@@ -841,8 +864,8 @@ export class RoadNetwork {
       return p;
     };
 
-    // ---- alignment shaping (owner 2026-07-06: «минимум 20 м от поворота до
-    // поворота ВСЕГДА; на шоссе лучше участки 100–500 м без поворотов»). The
+    // ---- alignment shaping (owner 2026-07-06: «minimum 20 m from turn to
+    // turn ALWAYS; on highways stretches of 100–500 m without turns are better»). The
     // A* walks an 8-connected 8 m lattice — its raw polyline is a staircase
     // of 8 m micro-turns that Chaikin only ROUNDS, never removes. Fix at the
     // source: Douglas-Peucker straightens the lattice noise into real
@@ -1097,11 +1120,86 @@ export class RoadNetwork {
         }
         return false;
       };
+      /**
+       * Smooth points that a safety projection moved back onto the raw A*
+       * route. A one-point repair leaves a hard corner at the edge of the
+       * repaired area; the distance-field road stamp then unions both arms
+       * of that corner into a wide bulb. Spread the correction over a real
+       * road-length window and move as far toward the smooth target as the
+       * same water, earthworks and crossing laws allow.
+       */
+      const relaxProjectedKinks = (
+        moved: ReadonlySet<number>,
+        radius: number,
+        iterations: number,
+        enforceEarthworks = true,
+      ): void => {
+        if (moved.size === 0) return;
+        const zone = new Set<number>();
+        for (const k of moved) {
+          for (let d = -radius; d <= radius; d++) {
+            const j = k + d;
+            if (j > 0 && j < poly.length - 1) zone.add(j);
+          }
+        }
+        const ordered = [...zone].sort((a, b) => a - b);
+        const horizontallySafe = (a: number[], b: number[]): boolean => {
+          const ax = a[0] as number;
+          const az = a[1] as number;
+          const bx = b[0] as number;
+          const bz = b[1] as number;
+          const steps = Math.max(2, Math.ceil(Math.hypot(bx - ax, bz - az) / 4));
+          for (let j = 0; j <= steps; j++) {
+            const t = j / steps;
+            const x = ax + (bx - ax) * t;
+            const z = az + (bz - az) * t;
+            if (wAt(x, z) - hAt(x, z) > CAUSEWAY_MAX_DEPTH_M || levelConflict(x, z)) {
+              return false;
+            }
+          }
+          return true;
+        };
+        const legal = (k: number, x: number, z: number): boolean => {
+          // The rendered water sheet is bilinear. A nearest dry texel at a
+          // bank must not legalize a point under deep visible water.
+          if (wAt(x, z) - hAt(x, z) > CAUSEWAY_MAX_DEPTH_M) return false;
+          if (levelConflict(x, z)) return false;
+          const a = poly[k - 1] as number[];
+          const c = poly[k + 1] as number[];
+          const q = [x, z];
+          return enforceEarthworks
+            ? chordSafe(a, q, spec.maxGrade) && chordSafe(q, c, spec.maxGrade)
+            : horizontallySafe(a, q) && horizontallySafe(q, c);
+        };
+        for (let it = 0; it < iterations; it++) {
+          // Alternate direction so in-place relaxation has no persistent
+          // travel-direction bias.
+          const scan = it % 2 === 0 ? ordered : [...ordered].reverse();
+          for (const k of scan) {
+            const a = poly[k - 1] as number[];
+            const b = poly[k] as number[];
+            const c = poly[k + 1] as number[];
+            const tx = (b[0] as number) * 0.5 + ((a[0] as number) + (c[0] as number)) * 0.25;
+            const tz = (b[1] as number) * 0.5 + ((a[1] as number) + (c[1] as number)) * 0.25;
+            // The full smoothing step may enter the obstacle that caused the
+            // snap-back. A short line search still rounds the corner up to
+            // that boundary instead of freezing the point completely.
+            for (const f of [1, 0.5, 0.25, 0.125]) {
+              const rx = (b[0] as number) + (tx - (b[0] as number)) * f;
+              const rz = (b[1] as number) + (tz - (b[1] as number)) * f;
+              if (!legal(k, rx, rz)) continue;
+              b[0] = rx;
+              b[1] = rz;
+              break;
+            }
+          }
+        }
+      };
       const snapped = new Set<number>();
       for (const [pi, p] of poly.entries()) {
         const px = p[0] as number;
         const pz = p[1] as number;
-        const depth = wAtReal(px, pz) - hAt(px, pz);
+        const depth = wAt(px, pz) - hAt(px, pz);
         if (depth <= CAUSEWAY_MAX_DEPTH_M && !levelConflict(px, pz)) continue;
         snapped.add(pi);
         let bx = p[0] as number;
@@ -1129,34 +1227,16 @@ export class RoadNetwork {
         p[0] = bx;
         p[1] = bz;
       }
-      // relax the snap-back kinks: projection makes a sharp S within ~2
-      // samples — the under-20 m "double turn" defect. Laplacian-relax the
-      // moved points (+1 neighbor each side), accepting a step only while
-      // it stays out of deep water (same gate the snap-back enforces).
+      // Relax over enough arclength to restore an engineered bend. Asphalt
+      // needs the widest window: at 14 m samples, +/-6 covers about 168 m,
+      // matching its 130 m turn-spacing rule above. Narrower classes keep a
+      // shorter window so trail character is preserved.
       if (snapped.size > 0) {
-        const zone = new Set<number>();
-        for (const k of snapped) {
-          zone.add(k);
-          if (k > 0) zone.add(k - 1);
-          if (k < poly.length - 1) zone.add(k + 1);
-        }
-        for (let it = 0; it < 4; it++) {
-          for (const k of zone) {
-            if (k <= 0 || k >= poly.length - 1) continue;
-            const a = poly[k - 1] as number[];
-            const b = poly[k] as number[];
-            const c = poly[k + 1] as number[];
-            const rx = (b[0] as number) * 0.5 + ((a[0] as number) + (c[0] as number)) * 0.25;
-            const rz = (b[1] as number) * 0.5 + ((a[1] as number) + (c[1] as number)) * 0.25;
-            if (wAtReal(rx, rz) - hAt(rx, rz) <= CAUSEWAY_MAX_DEPTH_M && !levelConflict(rx, rz)) {
-              b[0] = rx;
-              b[1] = rz;
-            }
-          }
-        }
+        const asphalt = spec.surfaceId === SurfaceId.Asphalt;
+        relaxProjectedKinks(snapped, asphalt ? 6 : 3, asphalt ? 12 : 6);
       }
 
-      // ---- self-intersection repair (owner «прочее»: петли-самопересечения;
+      // ---- self-intersection repair (owner «misc»: self-intersection loops;
       // root cause of the blend-conflict walls/narrow tread at fold sites) —
       // leg stitching, Chaikin rounding and ford snap-backs can fold the
       // polyline over itself; the carve then blends the two conflicting
@@ -1188,7 +1268,7 @@ export class RoadNetwork {
                 const p2 = poly[m + 1] as number[];
                 const rx = (p1[0] as number) * 0.5 + ((p0[0] as number) + (p2[0] as number)) * 0.25;
                 const rz = (p1[1] as number) * 0.5 + ((p0[1] as number) + (p2[1] as number)) * 0.25;
-                if (wAtReal(rx, rz) - hAt(rx, rz) <= CAUSEWAY_MAX_DEPTH_M && !levelConflict(rx, rz)) {
+                if (wAt(rx, rz) - hAt(rx, rz) <= CAUSEWAY_MAX_DEPTH_M && !levelConflict(rx, rz)) {
                   p1[0] = rx;
                   p1[1] = rz;
                 }
@@ -1200,6 +1280,42 @@ export class RoadNetwork {
         }
         if (!spliced) break;
       }
+
+      // Projection is not the only source of a late hard corner: loop
+      // splices and stitched plan legs can also leave one after the normal
+      // simplify/Chaikin stage. At the 14 m output spacing, an asphalt turn
+      // over 45 degrees has a sub-20 m effective radius; its two road strips
+      // union into the 2x-width bulb caught by probe-roadshape. Run a final
+      // legality-preserving curvature pass after every topology repair, with
+      // progressively looser limits for gravel, dirt and singletrack.
+      const finalTurnLimit = (() => {
+        switch (spec.surfaceId) {
+          case SurfaceId.Asphalt:
+            return Math.PI / 4;
+          case SurfaceId.GravelFine:
+          case SurfaceId.GravelCoarse:
+            return Math.PI / 3;
+          case SurfaceId.DirtRoad:
+            return (Math.PI * 7) / 18;
+          default:
+            return (Math.PI * 4) / 9;
+        }
+      })();
+      const sharp = new Set<number>();
+      for (let i = 1; i < poly.length - 1; i++) {
+        const a = poly[i - 1] as number[];
+        const b = poly[i] as number[];
+        const c = poly[i + 1] as number[];
+        const ux = (b[0] as number) - (a[0] as number);
+        const uz = (b[1] as number) - (a[1] as number);
+        const vx = (c[0] as number) - (b[0] as number);
+        const vz = (c[1] as number) - (b[1] as number);
+        const denom = Math.hypot(ux, uz) * Math.hypot(vx, vz) || 1;
+        const turn = Math.acos(Math.min(Math.max((ux * vx + uz * vz) / denom, -1), 1));
+        if (turn > finalTurnLimit) sharp.add(i);
+      }
+      const asphalt = spec.surfaceId === SurfaceId.Asphalt;
+      relaxProjectedKinks(sharp, asphalt ? 6 : 3, asphalt ? 16 : 10, !asphalt);
 
       const n = poly.length;
       const ys = new Float64Array(n);
@@ -1216,7 +1332,7 @@ export class RoadNetwork {
         }
       }
 
-      // ---- junction leveling (owner list: пересечения дорог без узла) ----
+      // ---- junction leveling (owner list: road crossings without a junction node) ----
       // Where this route crosses or hugs an ALREADY BUILT route, the two
       // carved surfaces must meet at one height — otherwise the crossing is
       // a grade-separated step with no bridge (the carve blends the two
@@ -1444,7 +1560,7 @@ export class RoadNetwork {
       // it (it used to run only INSIDE the loop; the closing grade clamp
       // then walked the profile 20–50 m off the terrain on sustained
       // over-grade ground — the carve turned that into slot canyons and
-      // rampart embankments, the owner's «дорога въезжает в стену»)
+      // rampart embankments, the owner's «the road drives into a wall»)
       const cutFillClamp = (): void => {
         for (let i = 0; i < n; i++) {
           if (pinned(i)) continue;
@@ -1547,8 +1663,10 @@ export class RoadNetwork {
         if (pinned(i)) continue;
         const p = poly[i] as number[];
         const wy = wAt(p[0] as number, p[1] as number);
+        const waterDepth = wy - (terrY[i] as number);
         if (
           wy > (terrY[i] as number) + 0.05 &&
+          waterDepth <= CAUSEWAY_MAX_DEPTH_M &&
           wy - (ys[i] as number) > CLASSIFY.WATER_MIN_DEPTH_M * 0.6
         ) {
           ford[i] = 1;
@@ -1585,28 +1703,26 @@ export class RoadNetwork {
       for (let i = 0; i < n; i++) {
         s += ds[i] as number;
         const p = poly[i] as number[];
-        // LAKE-deep water (> 3 m — river trenches here run 1–2.5 m) for two
-        // consecutive samples = a routing artifact (a smoothed bend cutting
-        // a tarn), not a crossing — the road honestly ENDS there. River
-        // trench touches stay tagged fords; physics punishes bad ones.
-        // REAL water only (wAtReal, nearest-texel wet gate): dry texels hold a
-        // bed−2 sentinel, and a deep profile cut under DRY ground once read
-        // as "3 m under a lake" — false CUTs truncated healthy routes and
-        // collapsed the network to 19 km (found 2026-07-06).
+        // LAKE-deep water (> 3 m — river trenches here run 1–2.5 m) is a
+        // routing artifact (a smoothed bend cutting a tarn), not a crossing:
+        // the road honestly ENDS there. Use the bilinear level rendered by
+        // the water sheet, so a dry nearest bank texel cannot hide a drowned
+        // road sample at the shoreline.
         const lakeAt = (k: number): boolean => {
           const q = poly[k] as number[];
-          const wm = wAtReal(q[0] as number, q[1] as number);
+          const wm = wAt(q[0] as number, q[1] as number);
           return (
             wm - (ys[k] as number) > 3 &&
             wm > hAt(q[0] as number, q[1] as number) + 0.05
           );
         };
-        if (lakeAt(i) && i + 1 < n && lakeAt(i + 1)) {
+        // A single bad sample is already a visible drowned line or wall.
+        if (lakeAt(i)) {
           const q = poly[i] as number[];
           if (spec.surfaceId === SurfaceId.Asphalt) asphaltCuts++; // Track C2 counter
           console.warn(
             `[roads] ${name} CUT at i=${i}/${n} (${(q[0] as number).toFixed(0)},${(q[1] as number).toFixed(0)}) ` +
-              `wReal=${wAtReal(q[0] as number, q[1] as number).toFixed(1)} ys=${(ys[i] as number).toFixed(1)} terr=${(terrY[i] as number).toFixed(1)}`,
+              `water=${wAt(q[0] as number, q[1] as number).toFixed(1)} ys=${(ys[i] as number).toFixed(1)} terr=${(terrY[i] as number).toFixed(1)}`,
           );
           break;
         }
@@ -1875,7 +1991,7 @@ export class RoadNetwork {
         while (b > a + 1 && onNet(leg[b] as Cell) && onNet(leg[b - 1] as Cell)) b--;
         leg = leg.slice(Math.max(0, a - 1), b + 2);
         if (leg.length < 3) continue;
-        // T-JUNCTION rule (owner anomaly «пересечения без узла»): a leg whose
+        // T-JUNCTION rule (owner anomaly «crossings without a junction node»): a leg whose
         // MIDDLE rides an existing corridor for ≥ 10 cells (~80 m; a
         // perpendicular crossing of the ±2-cell mask is ≤ ~7) is duplicating
         // that road at its own, different grade line — the two profiles then
@@ -2166,15 +2282,15 @@ export class RoadNetwork {
       );
     }
 
-    // ---- dead-end stitching (owner 2026-07-14: «дороги, по которым нельзя
-    // ездить — заебали»). RoadNetwork ships independent polylines; a route
+    // ---- dead-end stitching (owner 2026-07-14: «roads you can't ride on —
+    // I'm sick of them»). RoadNetwork ships independent polylines; a route
     // that ENDS in open rideable ground — not at the world edge, not at a
     // water bank, not against an unbuildable slope — becomes a degree-1
     // dead-end in the ride graph (RouteGraph). Connect every such tip to the
     // nearest OTHER route with a real, ridable connector through the SAME
     // A*+buildRoute pipeline (grade/water/wall laws all apply), or — if the
     // route is an isolated island no connector can reach — drop it (an
-    // unreachable road is exactly «дорога по которой нельзя ездить»). Legit
+    // unreachable road is exactly «a road you can't ride on»). Legit
     // termini are left alone. Runs BEFORE scenic so the connectors are in
     // netMask. Gate: tools/probe-deadends.ts (≤1 dead-end per big quadrant).
     const dropped = new Set<RoadRoute>();

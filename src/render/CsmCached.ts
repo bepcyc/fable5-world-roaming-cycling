@@ -5,7 +5,7 @@
  * frame, so most of that is identical work redone).
  *
  * Cadence: cascade i re-fits + re-renders every PERIODS[i] frames (phases
- * staggered so far cascades never pile onto one frame). Between refreshes
+ * staggered to flatten the per-frame cascade count — see PHASES). Between refreshes
  * BOTH the light pose and the map are frozen — the sampling matrix derives
  * from the light pose, so a moved light with a cached map would translate
  * every shadow on screen (swimming). Forced refresh when:
@@ -27,7 +27,25 @@ import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
 import type { Camera, Light, Object3D } from 'three/webgpu';
 
 const PERIODS = [1, 2, 3, 6];
-const PHASES = [0, 1, 2, 5];
+/**
+ * Refresh phase per cascade: cascade i renders when (frameNo + PHASES[i]) %
+ * PERIODS[i] === 0. The old [0,1,2,5] made this true for ALL FOUR cascades
+ * simultaneously at frameNo ≡ 1 (mod 6) — the exact pile-up the docstring above
+ * claimed to avoid. Per 6-frame window it rendered [1,4,1,2,2,2] cascades: one
+ * frame doing 4x the shadow work of its neighbours, i.e. a periodic 6-frame
+ * hitch straight into p95/1%-low.
+ *
+ * [0,0,0,1] gives [3,1,2,2,2,2] — peak 4 -> 3, found by brute force over all
+ * 6^4 phase assignments. Peak 3 is OPTIMAL, not a compromise: a mod-3 class
+ * always straddles both parities, so c2 must collide with c1 once per 6 frames
+ * no matter the phases; a disjoint 3/2/1 packing does not exist.
+ *
+ * TOTAL WORK IS UNCHANGED (12 cascade renders per 6 frames either way) and each
+ * cascade keeps its EXACT refresh rate (c0 6/6, c1 3/6, c2 2/6, c3 1/6), so
+ * this cannot move mean fps — it is purely a spike-flattening fix. It is listed
+ * as such and measured as such.
+ */
+const PHASES = [0, 0, 0, 1];
 /** fraction of the cascade span the fit center may drift before a forced refresh */
 const DRIFT_FRAC = 0.04;
 

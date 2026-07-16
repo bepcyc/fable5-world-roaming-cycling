@@ -1,7 +1,19 @@
 node_modules/
 dist/
 dist-electron/
-android/
+# Android: ignore BUILD OUTPUT, never the source. `android/` wholesale meant the
+# APK shell (loopback server, WebView host, BLE bridge, Game Mode) lived on disk
+# only — `git add` on an ignored path fails SILENTLY, so it was possible to
+# commit a message claiming those files while committing nothing.
+# the web build is copied in at package time; dist/ is already ignored
+android/app/src/main/assets/www/
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/.idea/
+*.apk
+*.keystore
 .DS_Store
 .cache/
 test-results/
@@ -19,3 +31,5 @@ shots/*
 assets/
 # stray screenshot from a shell redirect typo
 /-background
+# runtime log written by tools/debug-telemetry-server.ts (?debug=1 phone channel)
+telemetry.jsonl

@@ -6,6 +6,7 @@
  */
 
 import type { DirectionalLight, PerspectiveCamera, Texture } from 'three';
+import { shadowMapSize } from '../core/Params';
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
 import { CachedCsmShadowNode } from './CsmCached';
 import {
@@ -121,7 +122,10 @@ export function setupSunShadows(
   const maxFar = opts?.maxFar ?? 3200;
   const lightMargin = opts?.lightMargin ?? 700;
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  // per cascade (CSMShadowNode clones this shadow) — 2048 everywhere except
+  // preset=min, which was paying 4 x 2048^2 = 16.8M shadow texels on a tiler.
+  const smap = shadowMapSize();
+  sun.shadow.mapSize.set(smap, smap);
   sun.shadow.bias = -0.00012;
   sun.shadow.normalBias = 2.2;
   sun.shadow.radius = 1.15;

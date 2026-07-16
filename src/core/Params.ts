@@ -30,6 +30,26 @@ export interface LaasParams {
   rideDev: boolean;
   /** ?debug=1 — on-screen boot diagnostic overlay (adapter, limits, timed steps) */
   debug: boolean;
+  /** ?notimestamp=1 — build the renderer WITHOUT trackTimestamp and skip the
+   *  per-frame resolveTimestampsAsync + GpuProfiler entirely.
+   *
+   *  This is the OBSERVER-EFFECT control (GPU_CPU_ISSUE_CODEX.md §4). Timing
+   *  the GPU is not free: three allocates a query pair per render context /
+   *  compute call, and every resolve creates a command encoder, does a
+   *  resolveQuerySet, copies into a MAP_READ buffer, issues an EXTRA
+   *  queue.submit() and a mapAsync (WebGPUTimestampQueryPool.js:115-218).
+   *  It is not awaited inside rAF, so it is not an explicit CPU fence — but on
+   *  Android it is still an extra submission + readback on the same queue every
+   *  frame. With this set there are no GPU ms at all; that is the point. */
+  noTimestamp: boolean;
+  /** ?segments=1 — bracket every Renderer._renderScene() call and publish the
+   *  per-render-context CPU ms into stats.counters as `seg.<label>Ms100`.
+   *
+   *  This is the cpu.submit SPLIT (GPU_CPU_ISSUE_CODEX.md §5 P0.2). cpu.submit
+   *  is one bracket around three's whole render+encode path (Engine.ts:205-236);
+   *  this says which of the ~19 render contexts inside it pays what. Debug only —
+   *  without the flag the patch is never installed. See src/debug/RenderSegments.ts. */
+  segments: boolean;
 }
 
 function num(v: string | null, fallback: number): number {
@@ -59,7 +79,85 @@ export function parseParams(search: string = window.location.search): LaasParams
     fixedDt: Math.min(50, Math.max(2, num(q.get('dt'), 1000 / 120))) / 1000,
     rideDev: q.get('ridedev') === '1',
     debug: q.get('debug') === '1',
+    noTimestamp: q.get('notimestamp') === '1',
+    segments: q.get('segments') === '1',
   };
+}
+
+export type PrepassMode = 'off' | 'grass' | 'on';
+
+/**
+ * Depth-prepass policy. ON everywhere EXCEPT preset=min, where it is OFF.
+ *
+ * MEASURED on the Adreno 730 (Tab S8 Ultra, 2026-07-15), three cooled runs per
+ * arm at a MATCHED 492 MHz GPU clock (raw fps across different clocks is not a
+ * comparison — see the clock law below):
+ *
+ *   prepass ON   frame 237.2 ms | 4.22 fps | cpu.submit 49.6
+ *   prepass OFF  frame 184.3 ms | 5.43 fps | cpu.submit 43.2      = -22% wall
+ *
+ * Clock-normalized GPU work W = (frameMs - 20.4) * clockMHz: 106.7k -> 80.6k,
+ * i.e. the prepass costs 24.4% of all GPU work and buys nothing back. An earlier
+ * independent battery measured 80.0k for the same arm (0.8% apart), and the
+ * picture was verified side-by-side: grass carpet intact, no z-fighting.
+ *
+ * WHY IT INVERTS ON MOBILE: the prepass is a real win on an IMR desktop GPU
+ * (STATUS.md: bm4 GPU 49.6 -> 39.4 ms on the M1 Max) because it lets early-Z
+ * reject shaded fragments. Adreno is a TBDR: it already resolves visibility per
+ * tile on-chip (low-res Z + early-Z), so the twins reject almost nothing while
+ * still paying full geometry + duplicated vertex wind. GPU_CPU_ISSUE_CODEX.md
+ * §5 P2.6 sanctions exactly this ("on TBDR, turn off depth prepass if
+ * prepass=0 wins on the device") — it does, so it is off on min.
+ *
+ * Desktop defaults to preset=high and is therefore UNAFFECTED ('on').
+ * ?prepass=0|1|grass overrides explicitly on any preset:
+ *   0     — off for both grass and tree cards
+ *   grass — grass keeps its prepass, tree cards do not (the old 'grass' value)
+ *   1     — force on
+ */
+export function prepassMode(search: string = window.location.search): PrepassMode {
+  const q = new URLSearchParams(search);
+  const raw = q.get('prepass');
+  if (raw === '0') return 'off';
+  if (raw === 'grass') return 'grass';
+  if (raw === '1') return 'on';
+  return (q.get('preset') ?? 'high') === 'min' ? 'off' : 'on';
+}
+
+/**
+ * CSM shadow-map resolution PER CASCADE (CSMShadowNode clones sun.shadow per
+ * cascade, so this applies to each of the four maps — ShadowSetup.ts).
+ *
+ * 2048 AT EVERY PRESET — deliberately, after MEASURING that lowering it is a
+ * pure quality loss. It looks like an obvious mobile win (preset=min rasterizes
+ * 4 x 2048^2 = 16.8M shadow texels per full refresh on a phone-class tiler), and
+ * it is not. Tab S8 Ultra, Adreno 730, preset=min, matched 492 MHz clock:
+ *
+ *   2048 (control)  157.5 ms | 6.35 fps
+ *   1024            156.9 ms | 6.37 fps
+ *    512            157.2 ms | 6.36 fps
+ *
+ * FLAT across a 16x change in texel count — a 0.4% spread against a 0.7% noise
+ * floor. The flag is NOT dead, which was verified rather than assumed: at the
+ * measurement camera the sun is at zenith (T=14) and casts almost no visible
+ * shadow, so a desktop capture at T=8 was used instead, where 512 visibly blurs
+ * the tree shadows on the hillside and the boulder/bush contact shadows (judged
+ * independently by codex-terra: 8/10, "LEFT sharper, especially under the
+ * foreground boulder/bush").
+ *
+ * CONCLUSION: shadow cost here is caster GEOMETRY + draw encoding, not fill or
+ * resolution. Do not spend shadow quality on resolution — it buys nothing.
+ * The knob stays as an attribution tool so this does not get re-derived.
+ */
+export function shadowMapSize(search: string = window.location.search): number {
+  const q = new URLSearchParams(search);
+  const raw = q.get('shadowmap');
+  if (raw !== null) {
+    const n = Number(raw);
+    // power of two, 256..4096
+    if (Number.isFinite(n) && n >= 256 && n <= 4096 && (n & (n - 1)) === 0) return n;
+  }
+  return 2048;
 }
 
 /** Parse a `cam` string into pose components; returns null when malformed. */

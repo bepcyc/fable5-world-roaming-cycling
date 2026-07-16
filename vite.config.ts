@@ -24,11 +24,12 @@ export default defineConfig(({ command }) => ({
   esbuild: {
     target: "esnext",
   },
-  // ELECTRON=1 (just linux-binary) serves dist from a loopback root, so assets
-  // must be root-absolute ('/'), NOT the '/laas/' GitHub-Pages base the Android
-  // TWA / web build uses.
+  // ELECTRON=1 (just linux-binary) and ANDROID_APK=1 (just android-apk, the
+  // offline variant-B shell) both serve dist from a 127.0.0.1 loopback root, so
+  // assets must be root-absolute ('/'), NOT the '/laas/' GitHub-Pages base the
+  // hosted web / TWA build uses.
   base:
-    process.env.ELECTRON === "1"
+    process.env.ELECTRON === "1" || process.env.ANDROID_APK === "1"
       ? "/"
       : command === "build"
         ? "/laas/"

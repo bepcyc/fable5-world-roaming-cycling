@@ -92,16 +92,53 @@ import {
 import { buildRock } from './RockBuilder';
 import { buildFlower } from './Understory';
 import type { WorldSeed } from '../core/Seed';
+import { prepassMode } from '../core/Params';
 import { runiform } from '../gpu/RenderUniform';
 
-const GRASS_GRID = 3072;
-const GRASS_CELL = 0.105; // m → ±161 m ring, ~90 slots/m²
+/**
+ * Grass slot-density divisor. The cull dispatches GRASS_GRID² threads EVERY
+ * frame — at the shipped 3072 that is 9.44 MILLION invocations per frame, and
+ * it was preset-independent, so preset=min paid the exact ultra bill. Measured
+ * on the Adreno 730: vegetation is 53% of ALL GPU work (ablate=veg at a matched
+ * 492 MHz clock: frame 237.2 -> 123.1 ms), and c.grassRingCull is the single
+ * most expensive timed pass on the device (11.11 ms, reproducing to the third
+ * decimal across every run).
+ *
+ * S divides the grid and multiplies the cell, so the RING EXTENT is invariant
+ * (GRID*CELL = 322.6 m at every S — no gap opens against the FAR super-tuft
+ * layer that takes over at 150 m) while threads and blade slots fall as 1/S².
+ * Coverage is conserved the way this file already conserves it for distance
+ * thinning: survivors widen by S (see `widen` in grassMaterial), which is the
+ * same 1/sqrt(density) compensation applied to a constant instead of a curve.
+ *
+ * ?grassscale=N overrides on any preset (sweep knob). Desktop = preset=high = 1
+ * = the shipped geometry, byte for byte.
+ */
+function grassScale(search: string = window.location.search): number {
+  const q = new URLSearchParams(search);
+  const raw = q.get('grassscale');
+  if (raw !== null) {
+    const n = Number(raw);
+    // must divide 3072 into an integer grid; 1..8 covers every useful step
+    if (Number.isFinite(n) && n >= 1 && n <= 8 && 3072 % n === 0) return n;
+  }
+  return (q.get('preset') ?? 'high') === 'min' ? 2 : 1;
+}
+
+const G_SCALE = grassScale();
+const GRASS_GRID = 3072 / G_SCALE;
+const GRASS_CELL = 0.105 * G_SCALE; // ±161 m ring at every scale, ~90/S² slots/m²
 const GRASS_R = 155;
 const G_NEAR = 30;
 const G_MID = 70;
 /** crossfade half-width — cull overlap and material fade MUST share it */
 const G_BAND = 12;
-const GRASS_CAPS = [524288, 1048576, 1835008]; // near/mid/far compact regions
+// near/mid/far compact regions. Scale EXACTLY as the slot count (1/S²) so the
+// expected-appends : capacity ratio — the thing that is proven not to overflow
+// today — is identical at every scale.
+const GRASS_CAPS = [524288, 1048576, 1835008].map((c) =>
+  Math.ceil(c / (G_SCALE * G_SCALE)),
+);
 
 /**
  * Continuous distance thinning, conserved by blade widening (1/√thin in the
@@ -146,6 +183,51 @@ const RF_CAP = 16384; // per bloom kind (raised for colony-clustered blooms)
 // cream. Densest road pool → its own cap; sized from the old ~0.95 pebble
 // accept it replaces as the bulk (now ~0.55 of soft-track cells).
 const GT_CAP = 49152; // road grit
+
+const RING_DEBUG_GROUPS = [
+  'grass-near',
+  'grass-mid',
+  'grass-far',
+  'stream-cobble',
+  'stream-pebble',
+  'twig',
+  'bark-chip',
+  'litter',
+  'grass-super-far',
+  'road-cobble',
+  'road-pebble',
+  'road-trefoil',
+  'road-thyme',
+  'road-grit',
+] as const;
+
+const RING_DEBUG_COLORS: readonly (readonly [number, number, number])[] = [
+  [0.92, 0.08, 0.08], [0.95, 0.42, 0.04], [0.95, 0.9, 0.05],
+  [0.05, 0.75, 0.9], [0.04, 0.3, 0.95], [0.85, 0.06, 0.8],
+  [0.55, 0.15, 0.85], [0.9, 0.9, 0.9], [0.08, 0.85, 0.25],
+  [0.95, 0.95, 0.95], [0.45, 0.48, 0.52], [0.95, 0.78, 0.02],
+  [0.62, 0.12, 0.95], [0.02, 0.85, 0.68],
+];
+
+function installRingDebugLegend(filter: number | null): void {
+  if (document.getElementById('ringdbg-legend')) return;
+  const el = document.createElement('div');
+  el.id = 'ringdbg-legend';
+  el.style.cssText = [
+    'position:fixed', 'top:10px', 'right:10px', 'z-index:1300',
+    'color:#eef4ef', 'background:#080c0acc', 'padding:8px 10px',
+    'font:11px/1.45 ui-monospace,Menlo,monospace',
+    'border:1px solid #39453e', 'border-radius:4px', 'pointer-events:none',
+  ].join(';');
+  const rows = RING_DEBUG_GROUPS.map((name, g) => {
+    if (filter !== null && filter !== g) return '';
+    const c = RING_DEBUG_COLORS[g] as readonly [number, number, number];
+    const rgb = `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
+    return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:${rgb};border:1px solid #000"></span>g=${g} ${name}`;
+  }).filter(Boolean);
+  el.innerHTML = `<b>GroundRing draw id</b><br>${rows.join('<br>')}`;
+  document.body.appendChild(el);
+}
 
 interface RingBind {
   cells: StorageBufferNode<'uint'>;
@@ -371,6 +453,18 @@ export class GroundRing {
 
   init(beechAtlas: DataTexture | null): void {
     this.group.add(this.prepassGroup);
+    const ringDebugRaw = new URLSearchParams(window.location.search).get('ringdbg');
+    const ringDebugOn = ringDebugRaw !== null;
+    const ringDebugNumber = Number(ringDebugRaw);
+    const ringDebugGroup = ringDebugRaw !== null && ringDebugRaw !== 'groups' && Number.isInteger(ringDebugNumber)
+      ? Math.min(Math.max(ringDebugNumber, 0), RING_DEBUG_GROUPS.length - 1)
+      : null;
+    const ringOnlyNumber = Number(new URLSearchParams(window.location.search).get('ringonly'));
+    const ringOnlyGroup = Number.isInteger(ringOnlyNumber)
+      ? Math.min(Math.max(ringOnlyNumber, 0), RING_DEBUG_GROUPS.length - 1)
+      : null;
+    const visibleGroup = ringOnlyGroup ?? ringDebugGroup;
+    if (ringDebugOn) installRingDebugLegend(ringDebugGroup);
     const hf = this.hf;
     const salt = this.seed.sub('groundring') & 0x7fffffff;
     const camU = this.camU;
@@ -975,15 +1069,27 @@ export class GroundRing {
       indirectData[d * 5] = geo.index ? geo.index.count : geo.attributes.position?.count ?? 0;
       drawGroups[d] = spec.g;
       geo.setIndirect(indirectAttr, d * 20);
+      if (ringDebugOn) {
+        const c = RING_DEBUG_COLORS[spec.g] as readonly [number, number, number];
+        const debugColor = vec3(c[0], c[1], c[2]);
+        spec.mat.colorNode = debugColor;
+        // Emissive makes ownership colors independent of sunlight, shadow,
+        // normals and AO. A black fragment in this mode is therefore from a
+        // different draw/depth failure, not merely dark lighting.
+        spec.mat.emissiveNode = debugColor.mul(0.65);
+        spec.mat.roughness = 1;
+      }
       const mesh = new Mesh(geo, spec.mat);
+      if (visibleGroup !== null && spec.g !== visibleGroup) mesh.visible = false;
       mesh.frustumCulled = false;
       mesh.castShadow = false;
       mesh.receiveShadow = true;
       this.group.add(mesh);
       // grass layers shade 2-8x per pixel without a prepass (random draw
       // order defeats early-Z); twin shares geometry = same indirect slot
-      const noPrepass =
-        new URLSearchParams(window.location.search).get('prepass') === '0';
+      // default OFF on preset=min — TBDR early-Z already does this job and the
+      // twins cost 24% of GPU work (see prepassMode()).
+      const noPrepass = prepassMode() === 'off';
       if (!noPrepass && (spec.g <= 2 || spec.g === 8)) {
         const matS = spec.mat as unknown as { positionNode: unknown; maskNode: unknown };
         this.prepassGroup.add(
@@ -1030,9 +1136,19 @@ export class GroundRing {
     const dist = wpos.sub(vec2(cameraPosition.x, cameraPosition.z)).length();
     // width compensation for the continuous thinning — coverage conserved.
     // far mode: coarse-grid super-tufts have their own fixed footprint
+    // A coarser slot grid (G_SCALE) removes S² blades per m²; each survivor
+    // must cover S² more ground, i.e. widen by S — the same 1/sqrt(density)
+    // law the distance thinning already uses, applied to a constant. The clamp
+    // band scales with it, otherwise the ceiling would eat the compensation at
+    // distance and the meadow would thin out exactly where it is cheapest to
+    // keep. far mode keeps its own fixed super-tuft footprint: its coarse grid
+    // is independent of G_SCALE.
     const widen = far
       ? h2.y.mul(0.8).add(1.6)
-      : float(1).div(grassThin(dist).sqrt()).clamp(1, 4);
+      : float(1)
+          .div(grassThin(dist).sqrt())
+          .mul(G_SCALE)
+          .clamp(G_SCALE, 4 * G_SCALE);
     const bladeH = h2.x
       .pow(1.3)
       .mul(far ? 0.42 : 0.3)

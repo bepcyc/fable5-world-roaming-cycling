@@ -11,6 +11,7 @@ import { tele } from './Telemetry';
 import { installMaterialKeyMemo } from '../render/ThreePatches';
 import { installPositionInvariance } from '../render/VegPrepass';
 import { GpuProfiler } from './GpuProfiler';
+import { installRenderSegments } from '../debug/RenderSegments';
 import type { EngineStats, LaasHooks } from './Hooks';
 import type { LaasParams } from './Params';
 
@@ -60,6 +61,9 @@ export class Engine {
   private timestampsSupported = false;
   private timestampPending = false;
   private profiler: GpuProfiler | null = null;
+  /** ?segments=1 only — publishes per-render-context CPU ms into stats.counters
+   *  once per frame. null in production (the patch is never installed). */
+  private segmentsFlush: (() => void) | null = null;
 
   private constructor(renderer: WebGPURenderer, params: LaasParams, hooks: LaasHooks) {
     this.renderer = renderer;
@@ -89,7 +93,9 @@ export class Engine {
   static async create(params: LaasParams, hooks: LaasHooks): Promise<Engine> {
     const renderer = new WebGPURenderer({
       antialias: false,
-      trackTimestamp: true,
+      // ?notimestamp=1 builds the renderer with NO timestamp queries at all —
+      // the observer-effect control (see LaasParams.noTimestamp).
+      trackTimestamp: !params.noTimestamp,
       requiredLimits: hooks.diag ? buildRequiredLimits(hooks.diag) : {},
     });
     await renderer.init();
@@ -156,7 +162,10 @@ export class Engine {
     container.appendChild(renderer.domElement);
 
     const engine = new Engine(renderer, params, hooks);
-    engine.timestampsSupported = (hooks.diag?.features ?? []).includes('timestamp-query');
+    // one gate for both the profiler and the per-frame resolve: with
+    // ?notimestamp=1 neither is ever constructed nor called
+    engine.timestampsSupported =
+      !params.noTimestamp && (hooks.diag?.features ?? []).includes('timestamp-query');
     if (engine.timestampsSupported) engine.profiler = new GpuProfiler(renderer);
     // depth-prepass correctness (see VegPrepass): position math must land
     // on identical depths across the depth-only and shaded pipelines
@@ -164,6 +173,10 @@ export class Engine {
     // shadow-pass render objects re-hash their material node graph every
     // frame (see ThreePatches) — memoize per material
     installMaterialKeyMemo(renderer);
+    // ?segments=1 — split cpu.submit per render context (P0.2). Debug only: the
+    // patch is not installed at all without the flag, so production and the
+    // desktop preset run the unpatched renderer.
+    if (params.segments) engine.segmentsFlush = installRenderSegments(renderer, engine.stats);
 
     window.addEventListener('resize', () => {
       engine.camera.aspect = window.innerWidth / window.innerHeight;
@@ -234,6 +247,9 @@ export class Engine {
     const c2 = performance.now();
     this.stats.counters['cpu.updateMs100'] = Math.round((c1 - c0) * 100);
     this.stats.counters['cpu.submitMs100'] = Math.round((c2 - c1) * 100);
+    // publish this frame's per-context segments (?segments=1) and reset the
+    // accumulator — must run AFTER the render path, before stats are read
+    if (this.segmentsFlush) this.segmentsFlush();
     this.collectStats(rawDt);
 
     if (this.settleWaiters.length > 0) {
@@ -260,6 +276,15 @@ export class Engine {
     s.drawCalls = this.renderer.info.render.drawCalls;
     s.triangles = this.renderer.info.render.triangles;
     s.frame = this.frameCounter++;
+    // render/compute SUBMISSION boundaries per frame (GPU_CPU_ISSUE_CODEX.md
+    // §5 P0.1): three ends every render context with backend.finishRender() ->
+    // its own queue.submit(), and every renderer.compute() with finishCompute()
+    // -> another. These count them for real instead of estimating from the TSL
+    // graph. Info.reset() runs at the top of each rAF tick (Animation.js:75),
+    // before this callback, so these are this frame's counts — same contract
+    // drawCalls already relies on.
+    s.counters['render.frameCalls'] = this.renderer.info.render.frameCalls;
+    s.counters['compute.frameCalls'] = this.renderer.info.compute.frameCalls;
 
     // resolve EVERY frame: the 2048-query pool only resets its write index
     // on resolve — the old every-10-frames cadence overflowed it (≈100

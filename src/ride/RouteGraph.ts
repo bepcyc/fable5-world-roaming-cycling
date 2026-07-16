@@ -7,8 +7,8 @@
  * boot on the CPU: cluster near-coincident points across routes into
  * junction NODES, split every route at its member points, and keep the
  * spans as EDGES. The M1.3 route-following mover walks edges; junction
- * picks (Zwift-style "turn ahead" choice — owner directive: не по рельсам,
- * рельсы только между развилками) enumerate a node's arms.
+ * picks (Zwift-style "turn ahead" choice — owner directive: not on rails,
+ * rails only between forks) enumerate a node's arms.
  *
  * Deterministic: pure function of the (seeded) network — no RNG, no time.
  */

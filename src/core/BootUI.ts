@@ -21,6 +21,8 @@ export class BootUI {
   private head: HTMLElement | null = null;
   private log: HTMLElement | null = null;
   private scroller: HTMLElement | null = null;
+  /** monotonic clamp for the displayed bar — see set() */
+  private shownProgress = 0;
   private t0 = performance.now();
   private headerFilled = false;
 
@@ -73,11 +75,25 @@ export class BootUI {
   }
 
   set(progress: number, message: string): void {
-    this.hooks.progress = progress;
+    // A progress bar that walks BACKWARDS reads as "it crashed and restarted"
+    // and is a ship-blocker on the stores. Subsystems report their own local
+    // 0..1 and the callers map them into overlapping bands, so the raw value
+    // really does regress — measured on-device 2026-07-15: 29%->27% at
+    // "terrain: eroding 40/150" and 62%->58% at "hydrology: tracing flow".
+    // Clamp the DISPLAY monotonic; keep the raw value on hooks/telemetry so a
+    // real regression stays diagnosable instead of being hidden by the fix.
+    const shown = Math.max(this.shownProgress, progress);
+    this.shownProgress = shown;
+    // hooks.progress feeds the menu's "LOADING NN%" Start label (GameMenu.ts)
+    // as well as tooling, so it carries the clamped value — otherwise the fix
+    // would show on the boot bar but the button would still jump backwards.
+    // Telemetry below keeps the RAW number, which is where a real regression
+    // has to stay visible.
+    this.hooks.progress = shown;
     this.hooks.progressMsg = message;
     tele()?.step(progress, message);
     if (this.msg) this.msg.textContent = message;
-    if (this.bar) this.bar.style.width = `${Math.round(progress * 100)}%`;
+    if (this.bar) this.bar.style.width = `${Math.round(shown * 100)}%`;
     if (this.log) {
       // diag lands after construction (probeWebGPU) — fill the header once it does
       if (!this.headerFilled && this.hooks.diag) this.refreshHeader();

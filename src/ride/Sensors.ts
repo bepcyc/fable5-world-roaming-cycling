@@ -37,9 +37,16 @@ export interface SensorSource {
   update(dt: number, ctx: SensorCtx): void;
   read(): RideSample;
   /** optional back-channel: the rig reports live grade + surface Crr each
-   *  fixed step; BLE trainers turn it into FTMS SIM-resistance writes
-   *  (M1.4). Sources without physical resistance simply omit this. */
+   *  fixed step; BLE trainers turn it into FTMS SIM/FE-C-resistance writes.
+   *  Sources without physical resistance simply omit this. */
   setSimState?(gradeFrac: number, crr: number): void;
+  /** optional control-activation hooks — BikeRig calls these from its
+   *  mount()/dismount() lifecycle, NEVER at connect/assignment time: a
+   *  controllable BLE device sitting in the device manager must not start
+   *  sending resistance writes until the rider actually mounts a bike.
+   *  Sources with no controllable device simply omit these (no-op). */
+  activateControl?(): void;
+  releaseControl?(): void;
 }
 
 // ---- demo stream tuning -----------------------------------------------------
@@ -172,6 +179,13 @@ export class KeyboardPowerSource implements SensorSource {
   /** probe control: force a constant power (null returns to keyboard) */
   setOverride(w: number | null): void {
     this.override = w;
+  }
+
+  /** touch UI (RideHud pedal button): hold-to-pedal — the tap equivalent of
+   *  W/↑, which only fire from keydown/keyup listeners and so leave this
+   *  source producing zero watts forever on a device with no keyboard. */
+  setPedaling(on: boolean): void {
+    this.pedaling = on;
   }
 
   update(dt: number, _ctx: SensorCtx): void {

@@ -2,7 +2,7 @@
  * Vegetation micro-droplets probe (owner order):
  *   D1  dry noon boots with droplets ≈ 0
  *   D2  rain beads up FAST (≥0.6 after ~8 s of world time)
- *   D3  drying is SLOW ("потом обсыхают": still ≥0.4 ten seconds after
+ *   D3  drying is SLOW ("then they dry out": still ≥0.4 ten seconds after
  *       the rain stops, clearly below the wet peak after ~40 s)
  *   D4  fog condenses FEWER droplets than rain (≈0.28 target)
  *   D5  early morning (T=6, dry) has dew (≈0.42..0.45)

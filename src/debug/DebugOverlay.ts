@@ -12,23 +12,25 @@ import type { FlyCamera } from '../core/FlyCamera';
 import type { LaasParams } from '../core/Params';
 import { SURF_COL, isSurfaceDbg, toggleSurfaceDbg } from '../render/DebugSurface';
 
-/** legend rows: [ru label, palette key] — order groups roads then nature */
+/** legend rows: [label, palette key] — order groups roads then nature.
+ *  English by rule: no non-Latin text outside the i18n dictionary, and a
+ *  debug overlay is not a localized surface. */
 const LEGEND: readonly [string, keyof typeof SURF_COL][] = [
-  ['вода', 'water'],
-  ['асфальт', 'asphalt'],
-  ['гравий (мелк.)', 'gravelFine'],
-  ['гравий (кр.)', 'gravelCoarse'],
-  ['русло-гравий', 'gravelRiver'],
-  ['грунтовка', 'dirtRoad'],
-  ['сингл', 'singletrack'],
-  ['трава', 'grass'],
-  ['лес', 'forest'],
-  ['почва', 'soil'],
-  ['осыпь', 'scree'],
-  ['камень', 'rock'],
-  ['снег', 'snow'],
-  ['грязь', 'mud'],
-  ['дорога: битый класс', 'anomaly'],
+  ['water', 'water'],
+  ['asphalt', 'asphalt'],
+  ['gravel (fine)', 'gravelFine'],
+  ['gravel (coarse)', 'gravelCoarse'],
+  ['river gravel', 'gravelRiver'],
+  ['dirt road', 'dirtRoad'],
+  ['singletrack', 'singletrack'],
+  ['grass', 'grass'],
+  ['forest', 'forest'],
+  ['soil', 'soil'],
+  ['scree', 'scree'],
+  ['rock', 'rock'],
+  ['snow', 'snow'],
+  ['mud', 'mud'],
+  ['road: broken class', 'anomaly'],
 ];
 
 export class DebugOverlay {

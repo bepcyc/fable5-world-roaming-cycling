@@ -2,7 +2,7 @@
  * RiderBody — low-poly rider imported and posed ONCE (M1.5.3 pivot).
  *
  * Owner decision 2026-07-04: procedural hand synthesis is dead-ended
- * ("кривые культи"); import a ready rigged mesh, pose it in CODE around
+ * ("crooked stumps"); import a ready rigged mesh, pose it in CODE around
  * the bar (contact by construction), freeze forever. Aesthetic direction:
  * low-poly rider (+ later low-poly cockpit), detail stays on the computer.
  *
@@ -346,7 +346,7 @@ export interface PoseParams {
    *  (bar-hang — the WRONG class, sessions 11-12), ~1.1 = palm rolled onto
    *  the OUTER face so the fist closes around the hood laterally — fingers
    *  over the top and down the INNER face, thumb opposing below, web on the
-   *  horn. This is the owner's «хват молотка», the reference grip class. */
+   *  horn. This is the owner's «hammer grip», the reference grip class. */
   roll?: number;
 }
 // v15 semantics (contact-driven wrap): handAlong/palmPad seed the wrist
@@ -356,8 +356,8 @@ export interface PoseParams {
 // nose-down over the hood hump. Wrap angles themselves are SOLVED against
 // the hood capsule per finger per side — not tuned here.
 /** Named grip presets (owner, 2026-07-04): the target grip is `hammer`
- *  (обхват капюшона кулаком, перепонка на горбе); `straight` is the
- *  roll≈0.95 pose the owner liked as a separate «прямой хват» — kept
+ *  (fist wraps the hood, the hand's web sits on the hump); `straight` is the
+ *  roll≈0.95 pose the owner liked as a separate «straight grip» — kept
  *  switchable for the future (dbg.riderGrip.applyPreset / future UI). */
 export const GRIP_PRESETS: Record<'hammer' | 'straight', PoseParams> = {
   hammer: {
@@ -483,7 +483,7 @@ function poseArms(root: Object3D, rig: Object3D, grip: GripSpec, p: PoseParams):
     const leverBW = mirror(grip.leverB);
     // the REAL bar tube (bend + drop): fingers wrap AROUND it instead of
     // passing through — the visible tube MUST be in the solid (owner:
-    // "рука проходит сквозь руль"; skill: model the whole solid).
+    // "the hand goes through the handlebar"; skill: model the whole solid).
     const dropW = grip.dropPts.map(mirror);
     // HORN is back in the solid (session 13): with the hammer-grip roll the
     // fingers wrap the hood body LATERALLY (not down over the nose), so the
@@ -696,7 +696,7 @@ function poseArms(root: Object3D, rig: Object3D, grip: GripSpec, p: PoseParams):
       // world-axis rotation is bind-pose-agnostic. autoDir picked "whichever
       // side shrinks the gap first" and wrapped some fingers the WRONG WAY
       // around the tube (down the OUTER face) — the owner read it as an
-      // inside-out grip («обхватываешь изнутри»), the splayed wing.
+      // inside-out grip («you're gripping it from the inside»), the splayed wing.
       curlToContact(s2b, s3b, bendAxis, solid, 0.001, 1.9);
       const s3 = curlToContact(s3b, s4b, bendAxis, solid, -0.002, 1.9);
       // flexion floor only in the flex direction — never fight a lift

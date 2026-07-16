@@ -192,7 +192,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const bio = texture(inp.biomeTex, uv);
   const fields = texture(inp.fieldsTex, uv);
   // Chebyshev radius from the world ORIGIN — the same metric the far-band
-  // envelopes use (MacroMap FAR_BAND_ENV), shared by outsideK and the П.6-7
+  // envelopes use (MacroMap FAR_BAND_ENV), shared by outsideK and the P.6-7
   // per-plane tone steps below
   const chebR = wxz.abs().x.max(wxz.abs().y);
   // Beyond the world edge the baked maps clamp to their last texel row and
@@ -201,7 +201,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const outsideK = inp.far
     ? smoothstep(WORLD_HALF * 0.96, WORLD_HALF * 1.0, chebR)
     : float(0);
-  // П.6-7: which far PLANE a fragment sits on — 0 = bandA (foothills),
+  // P.6-7: which far PLANE a fragment sits on — 0 = bandA (foothills),
   // 1 = bandB (middle range), 2 = bandC (horizon wall). Radially these are
   // ramps across the env gaps, but on screen the planes are separated by the
   // envelope troughs, so between visible surfaces the step reads as a
@@ -229,7 +229,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const macroTint = macroMix.sub(0.5).mul(0.16); // ±8% value shift
 
   // ---------- meso/micro detail noise ------------------------------------------
-  // П.6-7 texture ladder: the NEAR far-plane (bandA) gets a live coarse 140 m
+  // P.6-7 texture ladder: the NEAR far-plane (bandA) gets a live coarse 140 m
   // variation instead of the dead 0.5 constant; the farther planes flatten
   // out (B ≈30% left, C fully flat) — texture density itself becomes a
   // per-plane depth cue, orthogonal to fog
@@ -240,7 +240,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
 
   // ---------- class palettes ----------------------------------------------------
   // rock: strata banding; warm rust in the alpine zone, pale gray in karst.
-  // П.8: ONE bedding phase (beddingCorePhase — the same plane family the
+  // P.8: ONE bedding phase (beddingCorePhase — the same plane family the
   // geometric ledge-beds step along in MacroMap) drives the albedo bands,
   // the iron seams AND the slab-edge normal bump below, so paint, rust and
   // light all land on the same diagonal slabs. Warp budget ≤0.30 period —
@@ -268,7 +268,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   // recessed shelf); elsewhere a soft band keeps the old low-contrast look
   // banding retreats to genuinely steep summit rock (0.55→0.85 floor): with
   // green now on the flanks, the old wide gate painted zebra tonal rings on
-  // ground that should read as meadow (owner: "полосы как баг заливки")
+  // ground that should read as meadow (owner: "stripes like a fill bug")
   const strataBoost = zm.tAlp.mul(smoothstep(0.85, 1.25, slope)).toVar();
   const bedToneHard = smoothstep(0.62, 0.16, bandF)
     .mul(bedHash.x.mul(0.5).add(0.6)) // wider per-bed tone random (0.6..1.1)
@@ -405,7 +405,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   col = mix(col, forestFloor, forestW);
   col = mix(col, scree, screeW);
   col = mix(col, rockCol, rockW);
-  // П.8 ledge greens: ref-05 shows GREEN turf ribbons on the flat shelf tops
+  // P.8 ledge greens: ref-05 shows GREEN turf ribbons on the flat shelf tops
   // between protruding slab edges — without them the massif reads as bare
   // "zebra". Shelf zone = high bandF (the long shallow tail behind the crest,
   // the falling side of bedToneHard's profile) — the built-in "locally
@@ -538,8 +538,13 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     // wheel tracks: two compaction bands where tires actually run
     const track = smoothstep(0.16, 0.02, latN.sub(0.55).abs());
     const sid = rs.surfIdF;
+    // Surface ids are discrete, but the baked GPU field can deliver values on
+    // class boundaries after filtering/precision loss. Quantize once before
+    // every material test so a road core can never fall through all classes
+    // and render as a black or foreign-surface strip.
+    const sidI = sid.add(0.5).floor().clamp(0, SurfaceId.COUNT - 1);
     const is = (id: SurfaceId): NF =>
-      sid.greaterThan(id - 0.5).and(sid.lessThan(id + 0.5)).select(float(1), float(0));
+      sidI.equal(float(id)).select(float(1), float(0));
     // asphalt: weathered mountain blacktop, faint patchwork, tire-polished bands
     const asphalt = mix(vec3(0.062, 0.062, 0.066), vec3(0.095, 0.093, 0.094), val(3.1, 0.19, 0.53))
       .mul(macroMix.mul(0.2).add(0.9))
@@ -559,7 +564,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
       .add(vec3(0.07, 0.068, 0.06).mul(speck))
       .sub(vec3(0.05, 0.05, 0.045).mul(speckD));
     // graded dirt: compacted soil, darker ruts, grassy center strip
-    const rut = smoothstep(0.18, 0.04, latN.sub(0.55).abs());
+    const rut = smoothstep(0.2, 0.045, latN.sub(0.55).abs());
     let dirt = mix(soil, vec3(0.295, 0.245, 0.175), float(0.6))
       .mul(float(1).sub(rut.mul(0.18)));
     dirt = mix(dirt, grassCol.mul(0.85), smoothstep(0.3, 0.08, latN).mul(0.45).mul(grassW.add(0.3).min(1)));
@@ -670,6 +675,32 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     const wetRoad = wetRain.max(wetLocal.mul(rs.ford)).mul(snowW.oneMinus());
     const wetK = wetRoad.mul(is(SurfaceId.Asphalt).mul(0.35).add(0.45));
     roadCol = roadCol.mul(wetK.oneMinus());
+    // Rain used to turn dirt roads into uniformly darker hardpack. Give wet
+    // dirt its own spatial response: saturated wheel ruts plus broad, recessed
+    // waterlogged patches. This is albedo/normal/roughness only, so the stamped
+    // road profile remains rideable and cannot become a bumpy height surface.
+    const isDirt = is(SurfaceId.DirtRoad);
+    // Restore the full weather wetness for mud. wetRoad is deliberately
+    // attenuated for generic pavement darkening, but saturated soil needs the
+    // full after-rain signal to remain legible beyond the immediate foreground.
+    const mudWet = wetRoad.mul(1.4).min(1).mul(isDirt);
+    const roadMudT = texture(inp.noiseA, wxz.div(1.15 * PERIOD_FBM).add(vec2(0.21, 0.73)));
+    const roadMudPatch = smoothstep(0.46, 0.7, roadMudT.y);
+    const roadMudLens = smoothstep(0.58, 0.72, roadMudT.y)
+      .mul(rut.mul(0.65).add(0.35));
+    const roadMudK = mudWet
+      .mul(roadMudPatch.mul(0.1).add(rut.mul(0.08)).add(0.86))
+      .clamp(0, 0.96);
+    const saturatedSoil = mix(vec3(0.105, 0.052, 0.018), vec3(0.048, 0.025, 0.012), roadMudPatch)
+      .mul(rut.mul(0.28).oneMinus());
+    roadCol = mix(roadCol, saturatedSoil, roadMudK);
+    const roadMudG = roadMudT.zw.div(1.15)
+      .mul(roadMudLens.mul(roadMudLens.oneMinus()).mul(4))
+      .mul(-0.035)
+      .mul(mudWet)
+      .mul(core);
+    mudG = mudG.add(roadMudG);
+    treadK = treadK.mul(mudWet.mul(0.78).oneMinus());
     wetEff = mix(wetEff, wetRoad, core);
     col = mix(col, roadCol, core);
     // worn dusty verge between the surfaced edge and the wild ground
@@ -690,6 +721,11 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
       .sub(patch.mul(0.08))
       .clamp(0.5, 0.85);
     roadRough = mix(mix(float(0.88), float(0.78), isFine), aspRough, isAsp);
+    roadRough = mix(
+      roadRough,
+      float(0.36),
+      mudWet.mul(roadMudLens.mul(0.7).add(rut.mul(0.2)).add(0.1)).clamp(0, 0.9),
+    );
 
     // surface-debug palette by road-stamp class. surfIdF arrives FRACTIONAL
     // here (measured ≈13.5–14.6 on defect corridors) — landing on the ±0.5
@@ -697,7 +733,6 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     // core reads black. Round to the nearest class id and clamp to the valid
     // range, then match exactly — no core can fall through. Debug-only: the
     // natural `is()` above is untouched.
-    const sidI = sid.add(0.5).floor().clamp(0, SurfaceId.COUNT - 1);
     const isDbg = (id: SurfaceId): NF =>
       sidI.equal(float(id)).select(float(1), float(0));
     const sidCol = (id: SurfaceId, c: readonly number[]): NV3 => palette(c).mul(isDbg(id));
@@ -774,7 +809,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   // mid/far ridges craggy where geometric density has LOD'd out. Applied by
   // DISTANCE on both near tiles and the far shell.
   const farK = inp.far ? float(1) : smoothstep(900, 2600, camDist);
-  // П.8 slab-edge gate: where the bedding shows (steep alpine faces, no
+  // P.8 slab-edge gate: where the bedding shows (steep alpine faces, no
   // snow) — shared by the bedding bump below and the isotropic-noise damping
   const bedGate = strataBoost.mul(snowW.mul(0.8).oneMinus()).toVar();
   // pre-baked ridged gradient at 310 m features; ×44 ≈ the old ±22 m
@@ -789,7 +824,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     .mul(farK)
     .mul(bedGate.mul(0.6).oneMinus());
   if (inp.far) {
-    // П.6-7: crag strength steps DOWN per far plane (1.0 / 0.675 / 0.35) —
+    // P.6-7: crag strength steps DOWN per far plane (1.0 / 0.675 / 0.35) —
     // the near foothills keep crunchy relief, the horizon wall goes flat
     farAmp = farAmp.mul(float(1).sub(planStep.mul(0.325)));
   }
@@ -797,7 +832,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
   const perturbed = baseNormal.add(vec3(rg.x, 0, rg.y).mul(farAmp));
   let nrm: NV3 = vec3(perturbed.x, perturbed.y.max(0.1), perturbed.z).normalize();
 
-  // П.8 bedding bump: virtual slab displacement d = A·prof(bandF) along the
+  // P.8 bedding bump: virtual slab displacement d = A·prof(bandF) along the
   // bed normal, applied as n' = normalize(n − ∇ₜd) with the TANGENTIAL phase
   // gradient (CPU-constant ∇φ + the baked warp gradient — pure ALU, no extra
   // fetches). prof' is asymmetric: a sharp rise at the slab edge catches the
@@ -857,7 +892,7 @@ export function buildTerrainShading(inp: TerrainShadingInputs): TerrainShading {
     const gF = fbmG(DISP.sF1).mul(2 * DISP.wF1);
     const gR = ridG(DISP.sRid)
       .mul(rockKd.mul(1 - DISP.ridBase).add(DISP.ridBase).mul(DISP.wRid))
-      // П.8: micro ridged creases yield to the diagonal bedding on slab walls
+      // P.8: micro ridged creases yield to the diagonal bedding on slab walls
       .mul(bedGate.mul(0.45).oneMinus());
     const gSum = gF.add(gR).mul(dispAmpF);
     nrm = nrm.add(vec3(gSum.x.negate(), 0, gSum.y.negate())).normalize();

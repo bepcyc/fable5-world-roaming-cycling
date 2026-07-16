@@ -269,8 +269,8 @@ export class Heightfield {
       await hf.scenicField.bake(renderer);
     }
 
-    // post-carve water reconcile (owner 2026-07-06: «прокапывание ямки
-    // СНАЧАЛА, потом кладите гель»): waterY freezes BEFORE the road carve
+    // post-carve water reconcile (owner 2026-07-06: «dig the pit FIRST,
+    // THEN pour the gel»): waterY freezes BEFORE the road carve
     // lowers ground, so a cutting under a perched pond left the water
     // hanging as a tilted sheet over the new cut. Re-run the containment
     // clamp near roads against the CARVED terrain, then drop residual
@@ -386,6 +386,14 @@ export class Heightfield {
       }
     }
     const center = sm[gz * res + gx] ?? SurfaceId.Soil;
+    const isRoad = (id: number): boolean =>
+      id >= SurfaceId.Asphalt && id <= SurfaceId.Singletrack;
+    // A singletrack is intentionally one texel wide. The natural-surface
+    // 3x3 vote erased that exact center texel under the rider and sometimes
+    // expanded it beside the trail, so physics reported rock/soil while the
+    // baked road field still painted a narrow tread. Road ownership is
+    // already stable and deterministic: preserve the exact stamped texel.
+    if (isRoad(center)) return center;
     let best = center;
     let bestN = counts[center] ?? 0;
     for (let id = 0; id < counts.length; id++) {
@@ -395,7 +403,7 @@ export class Heightfield {
         bestN = n;
       }
     }
-    return best;
+    return isRoad(best) ? center : best;
   }
 
   /** central-difference slope (rise/run) from the CPU height mirror — the
