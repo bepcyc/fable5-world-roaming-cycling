@@ -76,8 +76,14 @@ import type { Page } from 'playwright';
 import { launchWebGPUReal, LAAS_ORIGIN } from './launch-gpu';
 
 /** THE fixed measurement spot: "px,py,pz,yaw,pitch". Every run in this campaign
- *  reuses it verbatim — never let it drift or the numbers stop being comparable. */
-export const SPOT_CAM = '-870,182.7,862,1.69,0.1';
+ *  reuses it verbatim — never let it drift or the numbers stop being comparable.
+ *
+ *  y history: 182.7 until 2026-07-16. The alpine-refs terrain rework
+ *  (65a1a68, ridge-first mountains) raised the ground at this xz, and the
+ *  walk-mode eye clamp now snaps y to 183.904 — the old y tripped the drift
+ *  gate on every run. Same spot, same xz/yaw/pitch, new ground height.
+ *  Numbers before/after this terrain change are NOT comparable anyway. */
+export const SPOT_CAM = '-870,183.904,862,1.69,0.1';
 
 /* ---- MACHINE CONTENTION GATE ---------------------------------------------
  * A benchmark is only worth the machine it ran on. Anything else heavy on this

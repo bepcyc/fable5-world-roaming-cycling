@@ -50,6 +50,7 @@ import type { Heightfield } from '../../world/Heightfield';
 import type { Atmosphere } from '../../sky/Atmosphere';
 import { SUN_E } from '../../sky/Atmosphere';
 import { hash12 } from '../noise/NoiseTSL';
+import { quality } from '../../core/Quality';
 import type { NF, NI, NV2, NV3 } from '../TSLTypes';
 
 export const PROBE_XZ = 256;
@@ -58,7 +59,10 @@ export const PROBE_LAYERS = 6;
 const LAYER_BASE = 1.5;
 const LAYER_RATIO = 2.36;
 const TOTAL = PROBE_XZ * PROBE_XZ * PROBE_LAYERS;
-const PROBES_PER_FRAME = 3072;
+// Quality-driven refresh budget: at the shipped 3072 a full 256x256x6 field
+// refresh takes ~128 frames; fewer probes/frame = slower convergence after
+// sun/weather edits, identical steady state (the world is static).
+const PROBES_PER_FRAME = quality().giProbesPerFrame;
 const DIRS = 16;
 const MARCH_STEPS = 16;
 

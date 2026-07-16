@@ -7,6 +7,7 @@
 import { ACESFilmicToneMapping, PerspectiveCamera, Scene } from 'three';
 import { TimestampQuery, WebGPURenderer } from 'three/webgpu';
 import { buildRequiredLimits, failLoud } from './Diagnostics';
+import { quality } from './Quality';
 import { tele } from './Telemetry';
 import { installMaterialKeyMemo } from '../render/ThreePatches';
 import { installPositionInvariance } from '../render/VegPrepass';
@@ -149,7 +150,11 @@ export class Engine {
         );
       }
     }
-    const dprCap = params.dpr ?? Math.min(window.devicePixelRatio, 1.5);
+    // ?dpr= wins (harness/tooling); then the quality renderScale (Settings);
+    // 0 = auto (device ratio capped at 1.5, the shipped behavior)
+    const qrs = quality().renderScale;
+    const dprCap =
+      params.dpr ?? (qrs > 0 ? qrs : Math.min(window.devicePixelRatio, 1.5));
     renderer.setPixelRatio(dprCap);
     renderer.setSize(window.innerWidth, window.innerHeight);
     // Temporary Phase-0 output transform; replaced by the post stack (Phase 2).

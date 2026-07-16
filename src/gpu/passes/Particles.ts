@@ -19,6 +19,7 @@
 
 import { DoubleSide, InstancedMesh, PlaneGeometry, Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
+import { quality } from '../../core/Quality';
 import { IrradianceNode, MeshStandardNodeMaterial } from 'three/webgpu';
 import type { ComputeNode, Renderer, StorageTexture } from 'three/webgpu';
 import {
@@ -51,7 +52,9 @@ import type { ProbeGI } from './ProbeGI';
 import { gustAt, windContext, windU } from '../../render/Wind';
 import { weatherU } from '../../sky/Weather';
 
-export const PARTICLE_COUNT = 131072;
+// Quality-driven pool size (min can zero the whole system; measured 0.4% of
+// the tablet frame at the shipped 131072, so this is a knob, not a lever)
+export const PARTICLE_COUNT = quality().particleCount;
 const BOX_R = 36; // m, horizontal half-extent around the camera
 const BOX_H = 24; // m, vertical half-extent
 

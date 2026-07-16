@@ -51,6 +51,7 @@ import type { NF, NV2, NV3, NV4 } from '../gpu/TSLTypes';
 import type { Atmosphere } from '../sky/Atmosphere';
 import { CLOUD_BOTTOM, CLOUD_TOP, type Clouds } from '../sky/Clouds';
 import { GradeUniforms, gradeParamsAt } from './ColorScript';
+import { quality } from '../core/Quality';
 import { runiform } from '../gpu/RenderUniform';
 import { cockpitVelU } from '../ride/cockpit/CockpitVelocity';
 import { gtaoLayer } from './Gtao';
@@ -72,8 +73,18 @@ export class PostStack {
     const { renderer, scene, camera } = engine;
     const q = new URLSearchParams(window.location.search);
     const cloudview = q.get('cloudview');
-    // perf attribution: ?ablate=clouds,ao,taa,bloom disables stages
+    // perf attribution: ?ablate=clouds,ao,taa,bloom disables stages.
+    // Quality post toggles reuse the exact same plumbing — a preset with
+    // ao:false takes the identical code path as ?ablate=ao.
     const ablate = new Set((q.get('ablate') ?? '').split(','));
+    const Q = quality();
+    if (!Q.ao) ablate.add('ao');
+    if (!Q.bounce) ablate.add('bounce');
+    if (!Q.taa) ablate.add('taa');
+    if (!Q.motionBlur) ablate.add('mblur');
+    if (!Q.bloom) ablate.add('bloom');
+    if (!Q.contactShadows) ablate.add('contact');
+    if (!Q.clouds) ablate.add('clouds');
     // debug probes need raw values — tone mapping would garble them
     const skyveldbg = q.get('skyveldbg') !== null && q.get('skyveldbg') !== '';
     renderer.toneMapping = cloudview || skyveldbg ? NoToneMapping : AgXToneMapping;
@@ -173,13 +184,17 @@ export class PostStack {
       halfAo = runiform(new Vector2(2, 2));
       halfEntries.push({
         name: 'ao',
+        // r8unorm attachment instead of the rgba16f default: AO is a scalar,
+        // and the R8 path existed in HalfResMrt but was never wired (free
+        // bandwidth, PERF_MOBILE_KILLERS #6)
+        red: true,
         node: gtaoLayer(
           depthTex as unknown as Parameters<typeof gtaoLayer>[0],
           camera,
           halfAo,
           // GTAO defaults are mesh-viewer scale: 16 samples cost ~50 ms on
           // terrain vistas (Phase-2 finding) — 8 samples, 1.6 m radius
-          { samples: 8, radius: 1.6, distanceFallOff: 0.6 },
+          { samples: Q.aoSamples, radius: 1.6, distanceFallOff: 0.6 },
         ),
       });
     }
@@ -567,7 +582,12 @@ export class PostStack {
           acc.addAssign(texture(src.value, screenUV.add(dir.mul(t))).rgb);
         }
         const blurred = acc.div(TAPS);
-        const center = texture(src.value, screenUV).rgb;
+        // center tap references the TRAA NODE, not a raw texture read: the
+        // raw reads (src.value) do not keep TRAANode's updateBefore in the
+        // frame graph, so when bloom (the only other node reference) was
+        // ablated, TRAA never rendered and the whole frame sampled a dead
+        // RT — the ablate=bloom black-frame bug (war plan, Front A item 4).
+        const center = (taaed as unknown as NV4).rgb;
         return vec4(isCk.select(center, blurred), 1);
       })();
       taaedRgb = (mb as unknown as NV4).rgb;

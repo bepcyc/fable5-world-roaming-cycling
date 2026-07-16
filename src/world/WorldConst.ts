@@ -52,7 +52,9 @@ export interface QualityConfig {
   tileVerts: number; // vertices per tile edge
 }
 
-export function qualityConfig(preset: 'min' | 'low' | 'high' | 'ultra'): QualityConfig {
+export function qualityConfig(
+  preset: 'min' | 'low' | 'mid' | 'high' | 'ultra',
+): QualityConfig {
   switch (preset) {
     case 'min':
       // weakest — phone floor: quarter-res height, 512 sim, few erosion iters,
@@ -60,6 +62,8 @@ export function qualityConfig(preset: 'min' | 'low' | 'high' | 'ultra'): Quality
       return { heightRes: 1024, simRes: 512, erosionIters: 150, tileVerts: 33 };
     case 'low':
       return { heightRes: 2048, simRes: 1024, erosionIters: 500, tileVerts: 49 };
+    case 'mid':
+      return { heightRes: 2048, simRes: 1024, erosionIters: 640, tileVerts: 49 };
     case 'ultra':
       return { heightRes: 4096, simRes: 2048, erosionIters: 900, tileVerts: 81 };
     case 'high':

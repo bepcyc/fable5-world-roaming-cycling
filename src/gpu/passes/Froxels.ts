@@ -57,11 +57,16 @@ import { WORLD_SIZE } from '../../world/WorldConst';
 import { PERIOD_FBM } from './NoiseBake';
 import { canopyAt } from './Scatter';
 import { hash13 } from '../noise/NoiseTSL';
+import { quality } from '../../core/Quality';
 import type { NF, NI, NV2, NV3, NV4 } from '../TSLTypes';
 
-const FX = 160;
-const FY = 90;
-const FZ = 64;
+// Quality.froxelScale divides the grid: 1 = shipped 160x90x64; 2 = 80x45x32
+// (8x fewer cells + half the integration walk). The jittered slice sampling
+// and trilinear read hide the coarser grid; identity at scale 1.
+const F_SCALE = quality().froxelScale;
+const FX = Math.round(160 / F_SCALE);
+const FY = Math.round(90 / F_SCALE);
+const FZ = F_SCALE > 1 ? 32 : 64;
 const NEAR = 2;
 const FAR = 480;
 
