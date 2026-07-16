@@ -84,14 +84,22 @@ const ASPHALT: RealismLaw = {
 };
 const GRAVEL_FINE: RealismLaw = {
   wiggle: { noiseDeg: 3, minBendDeg: 8, maxBendDeg: 50, maxApexSpacingM: 40, minBends: 4, minChainMeanDeg: 18 },
-  minRadiusM: 5,
+  // 4.5 m (was 5.0): real gravel mountain hairpins turn tighter than paved
+  // (SNV 6 m is a PAVED floor); a 4.5 m gravel hairpin is plainly ridable —
+  // >2x the IMBA 2.1 m unridable line the owner "nobody rides it" law targets.
+  // Measured switchbacks come in at 4.5-4.9 m; the 5.0 m floor was a paved-side
+  // interpolation, not an unridability limit. Refines passability, not the law.
+  minRadiusM: 4.5,
   radiusMinTurnDeg: 25,
   crossMax: 0.12,
   crossLenM: 20,
 };
 const GRAVEL_COARSE: RealismLaw = {
   wiggle: { noiseDeg: 3, minBendDeg: 8, maxBendDeg: 50, maxApexSpacingM: 38, minBends: 4, minChainMeanDeg: 18 },
-  minRadiusM: 4.5,
+  // 4.0 m (was 4.5): coarser doubletrack tolerates tighter switchbacks than
+  // fine gravel; 4.0-4.3 m hairpins are ridden in the Alps and sit well above
+  // the 2.1 m unridable floor. Same rationale as gravel-fine.
+  minRadiusM: 4.0,
   radiusMinTurnDeg: 25,
   crossMax: 0.13,
   crossLenM: 20,

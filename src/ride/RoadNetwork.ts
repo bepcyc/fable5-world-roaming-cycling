@@ -27,6 +27,7 @@ import type { MacroParams } from '../world/MacroMap';
 import { LAKE_LEVEL, TREELINE, WORLD_SIZE } from '../world/WorldConst';
 import { computeRoadGridBand, type RoadGridJob } from './RoadGridWorker';
 import { traceScenicContours, type ScenicPolyline } from './ScenicContours';
+import { realismLaw, WIGGLE_GRADE_EXEMPT_GATE } from './RoadRealismLaw';
 import { CLASSIFY, SurfaceId } from './SurfaceMatrix';
 
 /** engineering spec per road class (SI; grades rise/run) */
@@ -1316,6 +1317,155 @@ export class RoadNetwork {
       }
       const asphalt = spec.surfaceId === SurfaceId.Asphalt;
       relaxProjectedKinks(sharp, asphalt ? 6 : 3, asphalt ? 16 : 10, !asphalt);
+
+      // ---- anti-zigzag chain relaxation (owner law #1, RoadRealismLaw) ------
+      // relaxProjectedKinks above only touches SHARP kinks (> finalTurnLimit);
+      // the realism gate bans a different shape it never sees: a chain of
+      // >= minBends ALTERNATING sub-corner bends (each <= maxBendDeg, apexes
+      // within maxApexSpacingM, mean |bend| >= minChainMean). Detect those with
+      // the SAME law the gate enforces (RoadRealismLaw) and Laplacian-relax
+      // their spans (grade/water-legal moves only) so generator and gate agree.
+      // Grade-forced serpentine tacking (chain climbs near the class limit) is
+      // left alone: flattening it would steepen the ride and deepen cut/fill —
+      // exactly the gate's WIGGLE_GRADE_EXEMPT_GATE carve-out.
+      const wig = realismLaw(spec.surfaceId).wiggle;
+      const zigzagVerts = (): Set<number> => {
+        const out = new Set<number>();
+        const nn = poly.length;
+        if (nn < 4) return out;
+        const sArr = new Float64Array(nn);
+        for (let i = 1; i < nn; i++) {
+          const p0 = poly[i - 1] as number[];
+          const p1 = poly[i] as number[];
+          sArr[i] =
+            (sArr[i - 1] as number) +
+            Math.hypot((p1[0] as number) - (p0[0] as number), (p1[1] as number) - (p0[1] as number));
+        }
+        const turnDeg = (i: number): number => {
+          const a = poly[i - 1] as number[];
+          const b = poly[i] as number[];
+          const c = poly[i + 1] as number[];
+          const d1x = (b[0] as number) - (a[0] as number);
+          const d1z = (b[1] as number) - (a[1] as number);
+          const d2x = (c[0] as number) - (b[0] as number);
+          const d2z = (c[1] as number) - (b[1] as number);
+          const dot = d1x * d2x + d1z * d2z;
+          const cross = d1x * d2z - d1z * d2x;
+          const l = Math.hypot(d1x, d1z) * Math.hypot(d2x, d2z) || 1;
+          const ang = (Math.acos(Math.min(Math.max(dot / l, -1), 1)) * 180) / Math.PI;
+          return cross >= 0 ? ang : -ang;
+        };
+        interface Bnd {
+          sign: number;
+          total: number;
+          apexS: number;
+          apexAbs: number;
+          i0: number;
+          i1: number;
+        }
+        const bends: Bnd[] = [];
+        let cur: Bnd | null = null;
+        for (let i = 1; i < nn - 1; i++) {
+          const t = turnDeg(i);
+          if (Math.abs(t) < wig.noiseDeg) continue;
+          const sign = t >= 0 ? 1 : -1;
+          if (cur && cur.sign === sign && i - cur.i1 <= 2) {
+            cur.total += Math.abs(t);
+            cur.i1 = i;
+            if (Math.abs(t) > cur.apexAbs) {
+              cur.apexAbs = Math.abs(t);
+              cur.apexS = sArr[i] as number;
+            }
+          } else {
+            if (cur) bends.push(cur);
+            cur = { sign, total: Math.abs(t), apexS: sArr[i] as number, apexAbs: Math.abs(t), i0: i, i1: i };
+          }
+        }
+        if (cur) bends.push(cur);
+        const sig = bends.filter((b) => b.total >= wig.minBendDeg);
+        let chain: Bnd[] = [];
+        const flush = (): void => {
+          if (chain.length >= wig.minBends) {
+            const mean = chain.reduce((a, b) => a + b.total, 0) / chain.length;
+            if (mean >= wig.minChainMeanDeg) {
+              const first = chain[0] as Bnd;
+              const last = chain[chain.length - 1] as Bnd;
+              const span = Math.max((sArr[last.i1] as number) - (sArr[first.i0] as number), 1);
+              const p0 = poly[first.i0] as number[];
+              const p1 = poly[last.i1] as number[];
+              const g =
+                Math.abs(
+                  hAt(p1[0] as number, p1[1] as number) - hAt(p0[0] as number, p0[1] as number),
+                ) / span;
+              if (g < spec.maxGrade * WIGGLE_GRADE_EXEMPT_GATE) {
+                for (let k = first.i0; k <= last.i1; k++) if (k > 0 && k < nn - 1) out.add(k);
+              }
+            }
+          }
+          chain = [];
+        };
+        for (const b of sig) {
+          if (b.total > wig.maxBendDeg) {
+            flush();
+            continue; // honest corner/hairpin — never part of a zigzag chain
+          }
+          const prev = chain[chain.length - 1];
+          if (prev && prev.sign !== b.sign && b.apexS - prev.apexS <= wig.maxApexSpacingM) {
+            chain.push(b);
+          } else {
+            flush();
+            chain.push(b);
+          }
+        }
+        flush();
+        return out;
+      };
+      // Horizontal-only legality (enforceEarthworks=false): the anti-zigzag
+      // relax straightens plan geometry; the vertical solver below (gradeClamp
+      // at spec.maxGrade) owns the ridden grade, so a grade guard here only
+      // freezes gravel/dirt zigzags on sloped ground (asphalt already cleared
+      // via its horizontal path). Grade-forced tacking is already excluded by
+      // the WIGGLE_GRADE_EXEMPT_GATE skip inside zigzagVerts().
+      for (let round = 0; round < 5; round++) {
+        const zz = zigzagVerts();
+        if (zz.size === 0) break;
+        relaxProjectedKinks(zz, 2, 8, false);
+      }
+      // Apex-drop finisher: chains the relax could not flatten are pinned by
+      // water or a junction level-conflict (e.g. a shoreline gravel road that
+      // cannot be pushed off the bank). Remove their small-bend apex vertices
+      // where the bridging chord stays clear of deep water / level conflicts —
+      // never two adjacent (preserves the centerline-gap law). This is the
+      // gate-doc's intended second step after the relaxation.
+      const chordClearOfWater = (a: number[], b: number[]): boolean => {
+        const ax = a[0] as number;
+        const az = a[1] as number;
+        const bx = b[0] as number;
+        const bz = b[1] as number;
+        const steps = Math.max(2, Math.ceil(Math.hypot(bx - ax, bz - az) / 4));
+        for (let j = 0; j <= steps; j++) {
+          const t = j / steps;
+          const x = ax + (bx - ax) * t;
+          const z = az + (bz - az) * t;
+          if (wAt(x, z) - hAt(x, z) > CAUSEWAY_MAX_DEPTH_M || levelConflict(x, z)) return false;
+        }
+        return true;
+      };
+      for (let round = 0; round < 3; round++) {
+        const zz = zigzagVerts();
+        if (zz.size === 0) break;
+        const dropped = new Set<number>();
+        for (const k of [...zz].sort((a, b) => a - b)) {
+          if (k <= 0 || k >= poly.length - 1) continue;
+          if (dropped.has(k - 1) || dropped.has(k + 1)) continue; // never two adjacent
+          const a = poly[k - 1] as number[];
+          const c = poly[k + 1] as number[];
+          if (!chordClearOfWater(a, c)) continue;
+          dropped.add(k);
+        }
+        if (dropped.size === 0) break;
+        poly = poly.filter((_, i) => !dropped.has(i));
+      }
 
       const n = poly.length;
       const ys = new Float64Array(n);
