@@ -324,6 +324,28 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
     const b1 = g.vertex(lx * ll - lz * 0.01, y0 + ll * 0.5 + 0.005, lz * ll + lx * 0.01, 0, 1, 0, 1, 1, 0, 0, 0, 1);
     g.quad(a0, a1, b1, b0);
   }
+  const stemLink = (
+    ax: number, ay: number, az: number,
+    bx: number, by: number, bz: number,
+    w = 0.0035,
+  ): void => {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const dz = bz - az;
+    const lxy = Math.hypot(dx, dy) || 1;
+    const lyz = Math.hypot(dy, dz) || 1;
+    const ribbons = [
+      { ox: (-dy / lxy) * w, oy: (dx / lxy) * w, oz: 0, nx: 0, ny: 0, nz: 1 },
+      { ox: 0, oy: (-dz / lyz) * w, oz: (dy / lyz) * w, nx: 1, ny: 0, nz: 0 },
+    ];
+    for (const r of ribbons) {
+      const a0 = g.vertex(ax - r.ox, ay - r.oy, az - r.oz, r.nx, r.ny, r.nz, 0, 0, 0, 0, 0, 0.95);
+      const a1 = g.vertex(ax + r.ox, ay + r.oy, az + r.oz, r.nx, r.ny, r.nz, 1, 0, 0, 0, 0, 0.95);
+      const b0 = g.vertex(bx - r.ox, by - r.oy, bz - r.oz, r.nx, r.ny, r.nz, 0, 1, 0, 0, 0, 1);
+      const b1 = g.vertex(bx + r.ox, by + r.oy, bz + r.oz, r.nx, r.ny, r.nz, 1, 1, 0, 0, 0, 1);
+      g.quad(a0, b0, b1, a1);
+    }
+  };
   // head(s)
   const head = (cx: number, cy: number, cz: number, s: number): void => {
     if (kind === 'daisy') {
@@ -338,7 +360,10 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
         const a1 = g.vertex(cx + dx * s * 0.18 + dz * pw * 0.5, cy, cz + dz * s * 0.18 - dx * pw * 0.5, 0, 1, 0.2, 1, 0, 1, 0, 0, 1);
         const b0 = g.vertex(cx + dx * plen - dz * pw * 0.25, cy + s * 0.16, cz + dz * plen + dx * pw * 0.25, 0, 1, 0.2, 0.4, 1, 1, 0, 0, 1);
         const b1 = g.vertex(cx + dx * plen + dz * pw * 0.25, cy + s * 0.16, cz + dz * plen - dx * pw * 0.25, 0, 1, 0.2, 0.6, 1, 1, 0, 0, 1);
-        g.quad(a0, a1, b1, b0);
+        // Front face points up. The old clockwise order made every petal a
+        // back face from the riding camera; DoubleSide then flipped its normal
+        // downward, producing the recurring black center/head artifact.
+        g.quad(a0, b0, b1, a1);
       }
       // center disc: small fan
       const c = g.vertex(cx, cy + s * 0.08, cz, 0, 1, 0, 0.5, 0.5, 0.5, 0, 0, 1);
@@ -362,7 +387,7 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
         const a1 = g.vertex(cx + Math.cos(az + 1.25) * s * 0.12, cy, cz + Math.sin(az + 1.25) * s * 0.12, dx, 0.3, dz, 0.6, 0, 1, 0, 0, 1);
         const b0 = g.vertex(cx + dx * s * 0.3, cy - s * 0.5, cz + dz * s * 0.3, dx, 0, dz, 0.4, 1, 1, 0, 0, 1);
         const b1 = g.vertex(cx + Math.cos(az + 1.25) * s * 0.3, cy - s * 0.5, cz + Math.sin(az + 1.25) * s * 0.3, dx, 0, dz, 0.6, 1, 1, 0, 0, 1);
-        g.quad(a0, a1, b1, b0);
+        g.quad(a0, b0, b1, a1);
       }
     } else {
       // umbel: cluster of tiny 4-petal florets on a dome
@@ -378,7 +403,7 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
         const a1 = g.vertex(fx + fs, fy, fz - fs, 0, 1, 0, 1, 0, 1, 0, 0, 1);
         const b1 = g.vertex(fx + fs, fy + fs * 0.2, fz + fs, 0, 1, 0, 1, 1, 1, 0, 0, 1);
         const b0 = g.vertex(fx - fs, fy + fs * 0.2, fz + fs, 0, 1, 0, 0, 1, 1, 0, 0, 1);
-        g.quad(a0, a1, b1, b0);
+        g.quad(a0, b0, b1, a1);
       }
     }
   };
@@ -387,7 +412,11 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
     const bells = 2 + rng.int(3);
     for (let i = 0; i < bells; i++) {
       const t = 0.6 + (i / bells) * 0.4;
-      head(top.x * t + 0.02 * i, H * t, top.z * t, 0.05 + rng.float() * 0.02);
+      const hx = top.x * t + 0.02 * i;
+      const hy = H * t;
+      const hz = top.z * t;
+      stemLink(top.x * t, H * t, top.z * t, hx, hy, hz);
+      head(hx, hy, hz, 0.05 + rng.float() * 0.02);
     }
   } else if (kind === 'trefoil') {
     // 2–4 small golden heads clustered atop the low stem
@@ -395,12 +424,11 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
     for (let i = 0; i < heads; i++) {
       const az = rng.float() * Math.PI * 2;
       const rr = 0.015 + rng.float() * 0.025;
-      head(
-        top.x + Math.cos(az) * rr,
-        H + 0.01 + rng.float() * 0.03,
-        top.z + Math.sin(az) * rr,
-        0.03 + rng.float() * 0.015,
-      );
+      const hx = top.x + Math.cos(az) * rr;
+      const hy = H + 0.01 + rng.float() * 0.03;
+      const hz = top.z + Math.sin(az) * rr;
+      stemLink(top.x, top.y, top.z, hx, hy, hz);
+      head(hx, hy, hz, 0.03 + rng.float() * 0.015);
     }
   } else if (kind === 'thyme') {
     // low cushion: several tiny floret domes spread just above the ground
@@ -408,15 +436,16 @@ export function buildFlower(kind: FlowerKind, rng: Rng): BufferGeometry {
     for (let i = 0; i < pads; i++) {
       const az = rng.float() * Math.PI * 2;
       const rr = 0.02 + rng.float() * 0.06;
-      head(
-        Math.cos(az) * rr,
-        0.02 + rng.float() * 0.045,
-        Math.sin(az) * rr,
-        0.035 + rng.float() * 0.02,
-      );
+      const hx = Math.cos(az) * rr;
+      const hy = 0.02 + rng.float() * 0.045;
+      const hz = Math.sin(az) * rr;
+      stemLink(0, 0.012, 0, hx, hy, hz, 0.0028);
+      head(hx, hy, hz, 0.035 + rng.float() * 0.02);
     }
   } else {
-    head(top.x, H + 0.02, top.z, kind === 'umbel' ? 0.09 + rng.float() * 0.04 : 0.045 + rng.float() * 0.02);
+    const hy = H + 0.012;
+    stemLink(top.x, top.y, top.z, top.x, hy, top.z);
+    head(top.x, hy, top.z, kind === 'umbel' ? 0.09 + rng.float() * 0.04 : 0.045 + rng.float() * 0.02);
   }
   return g.build();
 }
