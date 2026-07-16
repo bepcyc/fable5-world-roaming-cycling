@@ -103,6 +103,11 @@ const STYLE = `
 .rj-hint{margin-top:8px;font:10px/1.2 ui-monospace,Menlo,monospace;
   color:#b9cdc1;text-shadow:0 1px 5px rgba(0,0,0,0.8);letter-spacing:0.08em}
 .rj-hint b{color:#ffd166}
+/* committed turn (window closed): a status chip, not a menu — the single
+   card must NOT read as a control (probe-ui-touch audits cursor:pointer) */
+#ride-junction.locked .rj-hint{visibility:hidden}
+#ride-junction.locked .rj-label{color:#ffd166}
+.rj-opt.ro{pointer-events:none;cursor:default}
 #ride-pedal{position:fixed;left:max(18px,env(safe-area-inset-left));
   bottom:max(18px,env(safe-area-inset-bottom));z-index:950;display:none;
   flex-direction:row;gap:12px;align-items:flex-end;
@@ -153,10 +158,14 @@ export const MODE_ICON: Record<string, string> = {
   mtb: '<circle cx="6" cy="16.5" r="3.4" fill="none" stroke-width="1.9"/><circle cx="18" cy="16.5" r="3.4" fill="none" stroke-width="1.9"/><path d="M6 16.5l3.2-6.4h6l2.8 6.4M9.2 10.1L7.6 7.4h2.6M14.4 9.4l-3.2 7.1" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.5 5.5l3.2-2.2 2.6 2.6 3-2 2.6 2.4 3.2-2.2 2.9 2.2" fill="none" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>',
 };
 
-/** arrow glyphs for the chooser (24×24, stroke drawn) */
+/** arrow glyphs for the chooser (24×24, stroke drawn) — one glyph per
+ *  angle bucket (BikeRig.classifyTurn): a slight bend, a 90° corner, a
+ *  hairpin and a U-turn read as DIFFERENT signs, matching the real angle */
 function turnSvg(turn: Turn, color: string): string {
   const arrow: Record<Turn, string> = {
     straight: '<path d="M12 20V6M7.5 10.5L12 5.5l4.5 5"/>',
+    'slight-left': '<path d="M14 20v-7L10 6M8.7 10.8L10 6l4.8 1.3"/>',
+    'slight-right': '<path d="M10 20v-7L14 6M15.3 10.8L14 6l-4.8 1.3"/>',
     left: '<path d="M16.5 20v-8.5a3 3 0 00-3-3H6M9.5 4.5L5.5 8.5l4 4"/>',
     right: '<path d="M7.5 20v-8.5a3 3 0 013-3H18M14.5 4.5l4 4-4 4"/>',
     'sharp-left': '<path d="M15 20V9L7 13.5M7.5 7.5L6.5 14l6-1"/>',
@@ -188,6 +197,7 @@ export class RideHud {
   private junctionEl: HTMLDivElement;
   private junctionRow: HTMLDivElement;
   private junctionTitle: HTMLDivElement;
+  private junctionLabel: HTMLSpanElement;
   private junctionKey = '';
   /** touch UI (mobile only): hold-to-pedal + hold-to-brake, the tap
    *  equivalent of the 'dev' keyboard source's W/S — see buildTouchPedal() */
@@ -259,7 +269,8 @@ export class RideHud {
 
     this.junctionEl = document.createElement('div');
     this.junctionEl.id = 'ride-junction';
-    this.junctionEl.innerHTML = `<div class="rj-title">${t('ride.turnAhead')} · <span class="rj-dist">0 m</span></div><div class="rj-row"></div><div class="rj-hint">${t('ride.turnHint')}</div>`;
+    this.junctionEl.innerHTML = `<div class="rj-title"><span class="rj-label">${t('ride.turnAhead')}</span> · <span class="rj-dist">0 m</span></div><div class="rj-row"></div><div class="rj-hint">${isMobileDevice() ? t('ride.turnHintTouch') : t('ride.turnHint')}</div>`;
+    this.junctionLabel = this.junctionEl.querySelector('.rj-label') as HTMLSpanElement;
     this.junctionTitle = this.junctionEl.querySelector('.rj-dist') as HTMLDivElement;
     this.junctionRow = this.junctionEl.querySelector('.rj-row') as HTMLDivElement;
     document.body.appendChild(this.junctionEl);
@@ -513,7 +524,7 @@ export class RideHud {
       this.banner.style.opacity = '0';
     }
 
-    this.renderJunction(st?.junction ?? null);
+    this.renderJunction(st?.junction ?? null, st?.turnLocked ?? null);
   }
 
   private showBanner(text: string, info: boolean): void {
@@ -522,33 +533,65 @@ export class RideHud {
     this.banner.style.opacity = '1';
   }
 
-  private renderJunction(j: JunctionPreview | null): void {
-    if (!j || j.options.length < 2) {
-      this.junctionEl.classList.remove('on');
-      this.junctionKey = '';
+  private renderJunction(
+    j: JunctionPreview | null,
+    locked: { turn: Turn; cls: string; angle: number; distM: number } | null,
+  ): void {
+    if (j && j.options.length >= 2) {
+      // pickable window — cards left→right by real exit angle (BikeRig sorts)
+      this.junctionEl.classList.remove('locked');
+      this.junctionLabel.textContent = t('ride.turnAhead');
+      this.junctionTitle.textContent = `${Math.max(Math.round(j.distM / 5) * 5, 0)} m`;
+      const key =
+        'pick|' +
+        j.options
+          .map((o) => o.turn + o.cls + String(Math.round((o.angle * 36) / Math.PI)))
+          .join('|');
+      if (key !== this.junctionKey) {
+        this.junctionKey = key;
+        this.junctionRow.innerHTML = '';
+        j.options.forEach((o, i) => {
+          const el = document.createElement('div');
+          el.className = 'rj-opt';
+          const color = CLS_COLOR[o.cls] ?? '#cfe3d6';
+          const deg = Math.round((o.angle * 180) / Math.PI);
+          // exact signed exit angle for anyone hovering (L+ / R−)
+          el.title = deg === 0 ? '0°' : `${deg > 0 ? 'L' : 'R'} ${Math.abs(deg)}°`;
+          el.innerHTML = `${turnSvg(o.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${t('surface.' + o.cls)}</div>`;
+          // tap/click picks this turn — the only path before was ←/→, a
+          // keydown listener with nothing to fire it on a phone/tablet
+          el.addEventListener('click', () => this.rig?.pickJunctionOption(i));
+          this.junctionRow.appendChild(el);
+        });
+      }
+      const kids = this.junctionRow.children;
+      for (let i = 0; i < kids.length; i++) {
+        (kids[i] as HTMLElement).classList.toggle('sel', i === j.selected);
+      }
+      this.junctionEl.classList.add('on');
       return;
     }
-    this.junctionTitle.textContent = `${Math.max(Math.round(j.distM / 5) * 5, 0)} m`;
-    const key = j.options.map((o) => o.turn + o.cls).join('|');
-    if (key !== this.junctionKey) {
-      this.junctionKey = key;
-      this.junctionRow.innerHTML = '';
-      j.options.forEach((o, i) => {
+    if (locked) {
+      // committed: the window is CLOSED before the node (docs/TURN_PICKER.md)
+      // — show the frozen turn, not a menu; nothing here is tappable
+      this.junctionEl.classList.add('locked');
+      this.junctionLabel.textContent = t('ride.turnLocked');
+      this.junctionTitle.textContent = `${Math.max(Math.round(locked.distM / 5) * 5, 0)} m`;
+      const key = 'locked|' + locked.turn + locked.cls;
+      if (key !== this.junctionKey) {
+        this.junctionKey = key;
+        this.junctionRow.innerHTML = '';
         const el = document.createElement('div');
-        el.className = 'rj-opt';
-        const color = CLS_COLOR[o.cls] ?? '#cfe3d6';
-        el.innerHTML = `${turnSvg(o.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${t('surface.' + o.cls)}</div>`;
-        // tap/click picks this turn — the only path before was ←/→, a
-        // keydown listener with nothing to fire it on a phone/tablet
-        el.addEventListener('click', () => this.rig?.pickJunctionOption(i));
+        el.className = 'rj-opt sel ro';
+        const color = CLS_COLOR[locked.cls] ?? '#cfe3d6';
+        el.innerHTML = `${turnSvg(locked.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${t('surface.' + locked.cls)}</div>`;
         this.junctionRow.appendChild(el);
-      });
+      }
+      this.junctionEl.classList.add('on');
+      return;
     }
-    const kids = this.junctionRow.children;
-    for (let i = 0; i < kids.length; i++) {
-      (kids[i] as HTMLElement).classList.toggle('sel', i === j.selected);
-    }
-    this.junctionEl.classList.add('on');
+    this.junctionEl.classList.remove('on', 'locked');
+    this.junctionKey = '';
   }
 }
 

@@ -317,6 +317,8 @@ const DICT: Record<string, Entry> = {
   },
   'ride.turnAhead': { en: 'turn ahead', de: 'Abzweigung voraus', ru: 'поворот впереди' },
   'ride.turnHint': { en: '← / → choose', de: '← / → wählen', ru: '← / → выбор' },
+  'ride.turnHintTouch': { en: 'tap to choose', de: 'zum Wählen tippen', ru: 'коснись для выбора' },
+  'ride.turnLocked': { en: 'turn locked', de: 'Abzweig fixiert', ru: 'поворот зафиксирован' },
 
   // ---- BikeRig.ts flash() notes (surfaced verbatim through RideHud's banner) ----
   'ride.lockedNoPower': {

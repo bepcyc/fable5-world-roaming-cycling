@@ -294,33 +294,7 @@ export class RouteGraph {
   /** interpolated state at arclength s along an edge (s clamped) */
   sample(edgeId: number, s: number): EdgeSample {
     const e = this.edges[edgeId] as GraphEdge;
-    const pts = e.pts;
-    const sc = Math.min(Math.max(s, 0), e.length);
-    // binary search the span containing sc
-    let lo = 0;
-    let hi = pts.length - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if ((pts[mid] as RoadPoint).s <= sc) lo = mid;
-      else hi = mid;
-    }
-    const a = pts[lo] as RoadPoint;
-    const b = pts[hi] as RoadPoint;
-    const ds = Math.max(b.s - a.s, 1e-6);
-    const f = (sc - a.s) / ds;
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const run = Math.max(Math.hypot(dx, dz), 1e-6);
-    return {
-      x: a.x + dx * f,
-      z: a.z + dz * f,
-      y: a.y + (b.y - a.y) * f,
-      grade: (b.y - a.y) / run,
-      bank: a.bank + (b.bank - a.bank) * f,
-      ford: a.ford || b.ford,
-      tx: dx / run,
-      tz: dz / run,
-    };
+    return samplePolyline(e.pts, e.length, s);
   }
 
   /** nearest edge point to (x,z) — brute force, called on mode entry only */
@@ -350,4 +324,38 @@ export class RouteGraph {
     const node = this.nodes[nodeId] as GraphNode;
     return node.arms.filter((a) => a.edge !== arrivedEdge);
   }
+}
+
+/**
+ * Interpolated state at arclength s along ANY RoadPoint polyline (s clamped).
+ * Shared by edge sampling above and the BikeRig junction bridge (a synthetic
+ * polyline stitched between two edges — same fields, same math).
+ */
+export function samplePolyline(pts: RoadPoint[], length: number, s: number): EdgeSample {
+  const sc = Math.min(Math.max(s, 0), length);
+  // binary search the span containing sc
+  let lo = 0;
+  let hi = pts.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if ((pts[mid] as RoadPoint).s <= sc) lo = mid;
+    else hi = mid;
+  }
+  const a = pts[lo] as RoadPoint;
+  const b = pts[hi] as RoadPoint;
+  const ds = Math.max(b.s - a.s, 1e-6);
+  const f = (sc - a.s) / ds;
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const run = Math.max(Math.hypot(dx, dz), 1e-6);
+  return {
+    x: a.x + dx * f,
+    z: a.z + dz * f,
+    y: a.y + (b.y - a.y) * f,
+    grade: (b.y - a.y) / run,
+    bank: a.bank + (b.bank - a.bank) * f,
+    ford: a.ford || b.ford,
+    tx: dx / run,
+    tz: dz / run,
+  };
 }
