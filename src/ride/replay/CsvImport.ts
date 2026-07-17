@@ -18,8 +18,9 @@
 import type { ImportedActivity, ImportedRecord } from './types';
 
 // ---- migration CSV format constants -----------------------------------------
-// accepted migration-CSV signatures: 'RIDE' is what our own CsvExport writes;
-// 'TMIW' is an opaque legacy signature kept so files already in the wild import
+// accepted migration-CSV signatures: the first is what our own CsvExport
+// writes; the second is an opaque legacy signature accepted so existing
+// files in the wild keep importing
 const CSV_MAGICS = ['RIDE', 'TMIW'];
 const CSV_VERSION = 5;
 const RIDE_SUMMARY_TAG = 'RIDE SUMMARY';
