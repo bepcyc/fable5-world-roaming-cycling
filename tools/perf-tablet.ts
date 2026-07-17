@@ -212,10 +212,24 @@ function forwardCdp(socket: string): void {
  *  (adb reverse dials `localhost` -> ::1). Testing from the device is the only
  *  test that means anything. */
 function assertServerReachable(): void {
-  const code = adbShell(
-    `curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1:${DEV_PORT}/`,
-    20_000,
-  );
+  // Samsung ships a shell curl; Pixel does not. Fall back to toybox wget,
+  // and if the device has neither probe tool, warn and continue — the boot
+  // gate (waitForReady) still catches a dead server, just later.
+  let code = '';
+  try {
+    code = adbShell(
+      `curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1:${DEV_PORT}/ 2>/dev/null` +
+        ` || (wget -qO /dev/null http://127.0.0.1:${DEV_PORT}/ 2>/dev/null && echo 200)` +
+        ` || echo NOPROBE`,
+      20_000,
+    );
+  } catch {
+    code = 'NOPROBE';
+  }
+  if (code.includes('NOPROBE')) {
+    console.warn('[perf-tablet] no curl/wget on device — skipping reachability pre-check');
+    return;
+  }
   if (!code.includes('200')) {
     throw new Error(
       `device cannot reach the dev server (http ${code}). Is vite up on ${DEV_PORT}? ` +
