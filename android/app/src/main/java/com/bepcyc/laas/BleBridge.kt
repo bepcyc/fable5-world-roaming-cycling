@@ -259,7 +259,10 @@ class BleBridge(
         // bonded trainer may drop the service UUIDs from its advertisement
         // (the owner's Tacx does after its first connect), which makes every
         // service filter miss it forever — the address filter still matches.
-        val addrs = o.optJSONArray("addrs")
+        // Defense in depth: honored ONLY when service filters exist. Without
+        // that gate a show-all scan (no services) would degrade into
+        // "saved devices only" — the exact bug the owner hit live.
+        val addrs = if (filters.isEmpty()) null else o.optJSONArray("addrs")
         if (addrs != null) {
             for (i in 0 until addrs.length()) {
                 try {

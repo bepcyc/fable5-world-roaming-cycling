@@ -528,8 +528,16 @@ export class NativeBridgeTransport implements BleTransport {
       };
       c.onScan((h) => chooser.add(h));
       const args: Record<string, unknown> = {};
-      if (services) args['services'] = services;
-      if (known.length > 0) args['addrs'] = known.map((k) => k.addr);
+      if (services) {
+        args['services'] = services;
+        // saved-MAC filters are an ADDITION to the service filters (a bonded
+        // trainer that hides its services from the advertisement still
+        // matches by address). They must NEVER ride along in the show-all
+        // path: with services==null they would become the ONLY filters and
+        // silently shrink "every sensor in the world" down to the saved two
+        // (found live by the owner, 2026-07-17).
+        if (known.length > 0) args['addrs'] = known.map((k) => k.addr);
+      }
       c.call('scan', args).catch((e: unknown) => {
         void stop();
         reject(e instanceof Error ? e : new Error(String(e)));
