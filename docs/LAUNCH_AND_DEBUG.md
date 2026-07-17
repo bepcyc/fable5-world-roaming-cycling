@@ -18,9 +18,10 @@ Chrome (проверено на Pixel 10 Pro, GPU `img-tec/d-series`, Tensor G5)
 ## URL-параметры (весь запуск описан URL'ом, см. `src/core/Params.ts`)
 
 - `seed=<n>` — сид мира. `T=<0..24>` — время суток (дефолт 14). `scene=world`.
-- `preset=min|low|high|ultra` — качество (см. `src/world/WorldConst.ts qualityConfig`):
+- `preset=min|low|mid|high|ultra` — качество (рендер-оси: `src/core/Quality.ts`;
+  world-gen сетки: `src/world/WorldConst.ts qualityConfig`):
   - `min`  — height 1024² / sim 512², мало эрозии, редкие тайлы. **Слабейший, для телефона.**
-  - `low`  — 2048² / 1024². `high` (дефолт) — 4096² / 2048². `ultra` — макс.
+  - `low`/`mid` — 2048² / 1024². `high` (дефолт) — 4096² / 2048². `ultra` — макс.
 - `dpr=<f>` — кап device-pixel-ratio (например `0.6` на мобиле — режет разрешение рендера).
 - `debug=1` — экранный диагностический оверлей + обратный телеметрический канал (ниже).
 - `nogate=1` — пропустить BrowserGate (обязателен на не-десктопе/LAN).

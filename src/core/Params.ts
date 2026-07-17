@@ -9,7 +9,9 @@ export interface LaasParams {
   scene: string;
   /** time of day, hours 0..24 */
   timeOfDay: number;
-  /** quality preset: low (iGPU floor), high (default), ultra (max grids) */
+  /** quality preset: min (phone floor) | low | mid | high (default) | ultra —
+   *  rendering axes in core/Quality.ts, world-gen grids in
+   *  world/WorldConst.ts qualityConfig() */
   preset: QualityPreset;
   /** HUD visible at boot */
   hud: boolean;
