@@ -1,9 +1,9 @@
 /**
- * ?scene=terrain — terrain inspection scene (also currently ?scene=world).
- * Real CDLOD tiles + far shell + PBR terrain material, temporary sun/sky
- * lighting (replaced by the Phase-2 atmosphere stack).
+ * ?scene=terrain — the full world scene (?scene=world boots the same builder;
+ * it grew from a terrain inspection scene into the whole stack): CDLOD tiles +
+ * far shell + PBR terrain material, Phase-2 atmosphere/sky/cloud lighting,
+ * water, vegetation, GI probes, froxels, particles, post stack, weather.
  *
- * Views: ?view=hydro paints hydrology diagnostics on a preview grid.
  * ?alt=N puts the camera N meters above ground (ground-clamped spawn).
  */
 
