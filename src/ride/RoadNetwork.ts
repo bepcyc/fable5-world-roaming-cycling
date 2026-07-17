@@ -1467,6 +1467,187 @@ export class RoadNetwork {
         poly = poly.filter((_, i) => !dropped.has(i));
       }
 
+      // ---- chord-straighten finisher (R5): the Laplacian relax + apex-drop
+      // leave two residual chain classes the gate still flags — a gratuitous
+      // open-ground wiggle over steep-but-carvable terrain (seed-1 link-3:
+      // uncarved 14% but the carve rides it at 6%, so zigzagVerts' raw-terrain
+      // grade skip wrongly EXEMPTED it) and a long low-frequency S the weak
+      // Laplacian could not damp (seed-2 valley-highway, amp 17 m / 235 m).
+      // Detect chains by the gate law WITHOUT the raw-terrain grade skip
+      // (that skip diverges from the ridden profile the gate measures) and
+      // pull each interior vertex onto the chain chord as far as the earthworks
+      // law allows: net grade <= maxGrade AND cut/fill <= MAX_CUT_FILL AND no
+      // deep water AND no level conflict. A genuinely grade-forced serpentine
+      // (ridge tacking) has a chord whose net grade exceeds the class limit, so
+      // that gate freezes it — the ridden grade stays real, no sustained-grade
+      // trade. The gate's sampled-grade veto is deliberately NOT applied: a
+      // local terrain bump the carve absorbs within the cut/fill budget is not
+      // a reason to keep an abrupt tack.
+      const pullSegOK = (A: number[], B: number[]): boolean => {
+        const ax = A[0] as number;
+        const az = A[1] as number;
+        const bx = B[0] as number;
+        const bz = B[1] as number;
+        const len = Math.hypot(bx - ax, bz - az);
+        const hA = hAt(ax, az);
+        const hB = hAt(bx, bz);
+        if (Math.abs(hB - hA) / Math.max(len, 1) > spec.maxGrade) return false;
+        const steps = Math.max(2, Math.ceil(len / 6));
+        for (let k = 0; k <= steps; k++) {
+          const t = k / steps;
+          const x = ax + (bx - ax) * t;
+          const z = az + (bz - az) * t;
+          if (wAt(x, z) - hAt(x, z) > CAUSEWAY_MAX_DEPTH_M) return false;
+          if (Math.abs(hAt(x, z) - (hA + (hB - hA) * t)) > MAX_CUT_FILL) return false;
+        }
+        return true;
+      };
+      const pullLegal = (q: number[], a: number[], c: number[]): boolean => {
+        if (wAt(q[0] as number, q[1] as number) - hAt(q[0] as number, q[1] as number) > CAUSEWAY_MAX_DEPTH_M) {
+          return false;
+        }
+        if (levelConflict(q[0] as number, q[1] as number)) return false;
+        return pullSegOK(a, q) && pullSegOK(q, c);
+      };
+      // chains by the gate law, no raw-terrain grade exemption (the pull gate
+      // above is what keeps grade-forced tacking legal, not a terrain estimate)
+      const pullChains = (): Array<[number, number]> => {
+        const chains: Array<[number, number]> = [];
+        const nn = poly.length;
+        if (nn < 4) return chains;
+        const turnDeg = (i: number): number => {
+          const a = poly[i - 1] as number[];
+          const b = poly[i] as number[];
+          const c = poly[i + 1] as number[];
+          const d1x = (b[0] as number) - (a[0] as number);
+          const d1z = (b[1] as number) - (a[1] as number);
+          const d2x = (c[0] as number) - (b[0] as number);
+          const d2z = (c[1] as number) - (b[1] as number);
+          const dot = d1x * d2x + d1z * d2z;
+          const cross = d1x * d2z - d1z * d2x;
+          const l = Math.hypot(d1x, d1z) * Math.hypot(d2x, d2z) || 1;
+          const ang = (Math.acos(Math.min(Math.max(dot / l, -1), 1)) * 180) / Math.PI;
+          return cross >= 0 ? ang : -ang;
+        };
+        const sArr = new Float64Array(nn);
+        for (let i = 1; i < nn; i++) {
+          const p0 = poly[i - 1] as number[];
+          const p1 = poly[i] as number[];
+          sArr[i] =
+            (sArr[i - 1] as number) +
+            Math.hypot((p1[0] as number) - (p0[0] as number), (p1[1] as number) - (p0[1] as number));
+        }
+        interface Bnd { sign: number; total: number; apexS: number; apexAbs: number; i0: number; i1: number }
+        const bends: Bnd[] = [];
+        let cur: Bnd | null = null;
+        for (let i = 1; i < nn - 1; i++) {
+          const t = turnDeg(i);
+          if (Math.abs(t) < wig.noiseDeg) continue;
+          const sign = t >= 0 ? 1 : -1;
+          if (cur && cur.sign === sign && i - cur.i1 <= 2) {
+            cur.total += Math.abs(t);
+            cur.i1 = i;
+            if (Math.abs(t) > cur.apexAbs) { cur.apexAbs = Math.abs(t); cur.apexS = sArr[i] as number; }
+          } else {
+            if (cur) bends.push(cur);
+            cur = { sign, total: Math.abs(t), apexS: sArr[i] as number, apexAbs: Math.abs(t), i0: i, i1: i };
+          }
+        }
+        if (cur) bends.push(cur);
+        const sig = bends.filter((b) => b.total >= wig.minBendDeg);
+        let chain: Bnd[] = [];
+        const flush = (): void => {
+          if (chain.length >= wig.minBends) {
+            const mean = chain.reduce((a, b) => a + b.total, 0) / chain.length;
+            if (mean >= wig.minChainMeanDeg) {
+              const first = chain[0] as Bnd;
+              const last = chain[chain.length - 1] as Bnd;
+              chains.push([first.i0, last.i1]);
+            }
+          }
+          chain = [];
+        };
+        for (const b of sig) {
+          if (b.total > wig.maxBendDeg) { flush(); continue; }
+          const prev = chain[chain.length - 1];
+          if (prev && prev.sign !== b.sign && b.apexS - prev.apexS <= wig.maxApexSpacingM) chain.push(b);
+          else { flush(); chain.push(b); }
+        }
+        flush();
+        return chains;
+      };
+      for (let round = 0; round < 12; round++) {
+        const chains = pullChains();
+        if (chains.length === 0) break;
+        let moved = false;
+        for (const [ci0, ci1] of chains) {
+          const a0 = ci0 - 1;
+          const a1 = ci1 + 1;
+          if (a0 < 0 || a1 > poly.length - 1) continue;
+          const A = poly[a0] as number[];
+          const B = poly[a1] as number[];
+          const abx = (B[0] as number) - (A[0] as number);
+          const abz = (B[1] as number) - (A[1] as number);
+          const len2 = abx * abx + abz * abz || 1;
+          for (let k = ci0; k <= ci1; k++) {
+            const b = poly[k] as number[];
+            const nA = poly[k - 1] as number[];
+            const nC = poly[k + 1] as number[];
+            const t = (((b[0] as number) - (A[0] as number)) * abx + ((b[1] as number) - (A[1] as number)) * abz) / len2;
+            // target 1: onto the anchor chord (aggressive straighten, clears
+            // open-ground wiggles); target 2: the neighbour midpoint (Laplacian
+            // — damps alternating tacks along a curve the chord cannot reach
+            // because a spur/bump boxes it, e.g. seed-2 valley-highway).
+            const targets: Array<[number, number]> = [
+              [(A[0] as number) + abx * t, (A[1] as number) + abz * t],
+              [((nA[0] as number) + (nC[0] as number)) * 0.5, ((nA[1] as number) + (nC[1] as number)) * 0.5],
+            ];
+            let did = false;
+            for (const [tx, tz] of targets) {
+              for (const f of [1, 0.75, 0.5, 0.25]) {
+                const qx = (b[0] as number) + (tx - (b[0] as number)) * f;
+                const qz = (b[1] as number) + (tz - (b[1] as number)) * f;
+                if (pullLegal([qx, qz], nA, nC)) {
+                  b[0] = qx;
+                  b[1] = qz;
+                  moved = true;
+                  did = true;
+                  break;
+                }
+              }
+              if (did) break;
+            }
+          }
+        }
+        if (!moved) break;
+      }
+      // apex-drop finisher for pull residuals: where a steep spur or bump boxes
+      // the chord (seed-2 valley-highway threads a 110%-grade spur the straight
+      // chord would cut >6 m through), the pull cannot reach it and leaves a few
+      // alternating tacks on the obstacle flank. Remove alternate small-bend
+      // apexes whose BRIDGING chord is itself buildable — water + level clear
+      // (chordClearOfWater) AND within the grade + cut/fill budget (pullSegOK) —
+      // never two adjacent (keeps the ≤30 m centerline-gap law). A tack that
+      // genuinely rounds the spur has a bridging chord that cuts the spur (fails
+      // pullSegOK) and is kept; only the gratuitous flank tacks drop.
+      for (let round = 0; round < 4; round++) {
+        const chains = pullChains();
+        if (chains.length === 0) break;
+        const inChain = new Set<number>();
+        for (const [ci0, ci1] of chains) for (let k = ci0; k <= ci1; k++) inChain.add(k);
+        const dropped = new Set<number>();
+        for (const k of [...inChain].sort((a, b) => a - b)) {
+          if (k <= 0 || k >= poly.length - 1) continue;
+          if (dropped.has(k - 1) || dropped.has(k + 1)) continue;
+          const a = poly[k - 1] as number[];
+          const c = poly[k + 1] as number[];
+          if (!chordClearOfWater(a, c) || !pullSegOK(a, c)) continue;
+          dropped.add(k);
+        }
+        if (dropped.size === 0) break;
+        poly = poly.filter((_, i) => !dropped.has(i));
+      }
+
       const n = poly.length;
       const ys = new Float64Array(n);
       const terrY = new Float64Array(n);
