@@ -91,10 +91,16 @@ export class GameMenu {
 
     el<HTMLButtonElement>('btn-resume').addEventListener('click', () => this.resume());
     el<HTMLButtonElement>('btn-pause-settings').addEventListener('click', () => this.onPauseSettingsClick());
+    el<HTMLButtonElement>('btn-pause-graphics').addEventListener('click', () => this.onPauseGraphicsClick());
     el<HTMLButtonElement>('btn-mainmenu').addEventListener('click', () => this.onMainMenuClick());
 
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'Escape') return;
+      // UX-11 bug 2: the graphics sheet is a higher modal layer with its own
+      // Escape=close handler. Without this guard BOTH fired on one press —
+      // the sheet closed AND pause opened. The top open layer owns Escape;
+      // when the sheet is up, it closes itself and pause stays out of it.
+      if (document.getElementById('qset')?.classList.contains('on')) return;
       if (this.state === 'PLAYING') this.openPause();
       else if (this.state === 'PAUSED') this.resume();
     });
@@ -201,6 +207,15 @@ export class GameMenu {
     // open across the resume is its normal supported mode, not a bug.
     this.pause.classList.remove('on');
     this.hooks.openSettings?.();
+  }
+
+  private onPauseGraphicsClick(): void {
+    // UX-11: a direct GRAPHICS door from the pause card — the world's most
+    // perf-sensitive knobs, one tap from a mid-ride pause (was: SETTINGS →
+    // OptionsMenu → GRAPHICS, two extra hops). The sheet (z 2401, above the
+    // pause card at 1500) floats over the still-visible pause chrome, so
+    // closing it returns straight to PAUSE — no dead frozen frame.
+    this.hooks.openGraphicsSettings?.();
   }
 
   private onMainMenuClick(): void {

@@ -46,12 +46,17 @@ const TAB_ORDER: AxisMeta['tab'][] = [
 const ADVANCED_LS_KEY = 'laas.settings.advanced';
 
 const STYLE = `
-#qset-veil{position:fixed;inset:0;z-index:1400;background:rgba(4,7,6,0.62);
+/* UX-11 bug 1: the sheet is opened from the main menu (over the #splash,
+   z 2000) AND from the pause card (#pause, z 1500) — at the old 1400/1401 it
+   rendered BEHIND both and was invisible/dead. It must sit above every menu
+   layer but below the boot loader and the fatal-error overlay (both z 5000)
+   and the portrait #rotate blocker. */
+#qset-veil{position:fixed;inset:0;z-index:2400;background:rgba(4,7,6,0.62);
   backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
   opacity:0;visibility:hidden;transition:opacity 0.22s,visibility 0.22s}
 #qset-veil.on{opacity:1;visibility:visible}
 #qset{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(0.985);
-  z-index:1401;width:min(880px,94vw);height:min(640px,92vh);display:flex;
+  z-index:2401;width:min(880px,94vw);height:min(640px,92vh);display:flex;
   flex-direction:column;border-radius:18px;overflow:hidden;
   background:rgba(10,14,12,0.92);border:1px solid rgba(255,255,255,0.12);
   backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);color:#cfe3d6;

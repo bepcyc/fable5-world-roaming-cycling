@@ -72,6 +72,7 @@ const DICT: Record<string, Entry> = {
   // which nothing ever read, so in practice these strings were ALWAYS English
   // no matter the language, and they also put Cyrillic outside this file.
   'menu.settings': { en: 'SETTINGS', de: 'EINSTELLUNGEN', ru: 'НАСТРОЙКИ' },
+  'menu.graphics': { en: 'GRAPHICS', de: 'GRAFIK', ru: 'ГРАФИКА' },
   'menu.exit': { en: 'EXIT', de: 'BEENDEN', ru: 'ВЫХОД' },
   'menu.mainMenu': { en: 'MAIN MENU', de: 'HAUPTMENÜ', ru: 'ГЛАВНОЕ МЕНЮ' },
   'menu.pause': { en: 'PAUSE', de: 'PAUSE', ru: 'ПАУЗА' },
