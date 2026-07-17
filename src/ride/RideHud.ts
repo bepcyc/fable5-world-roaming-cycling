@@ -391,19 +391,27 @@ export class RideHud {
     const dbg =
       (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
     dbg['rideSetSource'] = (kind: 'demo' | 'dev' | null): string => {
-      const src =
-        kind === 'demo' ? new DemoSensorSource() : kind === 'dev' ? new KeyboardPowerSource() : null;
-      this.source = src;
-      this.rig?.setSource(src);
-      this.applyBadge();
-      if (src && !this.visible) {
-        this.visible = true; // picking a source means "I want to ride"
-        this.applyVisibility();
-      }
+      this.setSource(
+        kind === 'demo' ? new DemoSensorSource() : kind === 'dev' ? new KeyboardPowerSource() : null,
+      );
       return this.source?.kind ?? 'none';
     };
     dbg['rideSourceKind'] = (): string => this.source?.kind ?? 'none';
     (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg;
+  }
+
+  /** swap the live power source — options-menu picks and the lazy BLE attach
+   *  (UX-15b: bring BLE up mid-ride without a page reload) both route here.
+   *  Propagates to the rig, refreshes the honesty badge, and reveals the HUD
+   *  (picking a source means "I want to ride"). */
+  setSource(src: SensorSource | null): void {
+    this.source = src;
+    this.rig?.setSource(src);
+    this.applyBadge();
+    if (src && !this.visible) {
+      this.visible = true;
+      this.applyVisibility();
+    }
   }
 
   /** (re)draw the honesty badge for the current source */

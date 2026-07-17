@@ -152,6 +152,11 @@ const DICT: Record<string, Entry> = {
     de: 'Ger\u00e4t nicht dabei? Alle Bluetooth-Ger\u00e4te anzeigen',
     ru: '\u041d\u0435 \u0432\u0438\u0436\u0443 \u0441\u0432\u043e\u0451 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e? \u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0432\u0441\u0435 Bluetooth-\u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430',
   },
+  'ble.sensorLost': {
+    en: 'Sensor lost \u2014 tap to reconnect',
+    de: 'Sensor verloren \u2014 zum Neuverbinden tippen',
+    ru: '\u0414\u0430\u0442\u0447\u0438\u043a \u043f\u043e\u0442\u0435\u0440\u044f\u043d \u2014 \u043a\u043e\u0441\u043d\u0438\u0441\u044c, \u0447\u0442\u043e\u0431\u044b \u043f\u0435\u0440\u0435\u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u044c',
+  },
 
   'msettings.auto': { en: 'auto', de: 'auto', ru: '\u0430\u0432\u0442\u043e' },
   'msettings.seed': { en: 'seed', de: 'Seed', ru: 'сид' },

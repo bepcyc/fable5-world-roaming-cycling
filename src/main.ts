@@ -259,6 +259,34 @@ async function boot(): Promise<void> {
     }
   }
 
+  // UX-15b: attach BLE mid-ride WITHOUT a page reload. The OptionsMenu BLE
+  // button used to location.assign(?ride=ble) purely to bring the transport up
+  // at boot — but the secure-context requirement is identical either way, so a
+  // user gesture can build the source + device manager lazily and swap it onto
+  // the live rig/HUD. Idempotent: a second call just opens the existing
+  // manager. (No-op wiring cost until the gesture fires.)
+  {
+    const dbgRoot =
+      (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
+    dbgRoot['ensureBle'] = (): void => {
+      if (!bleSource) {
+        bleSource = new BleSensorSource(
+          nativeBleAvailable() ? new NativeBridgeTransport() : new WebBluetoothTransport(),
+        );
+        bleUi = new DeviceManagerUi(bleSource, true); // start open — the user just asked for it
+        rideHud.setSource(bleSource); // propagates to the rig + refreshes badge/visibility
+        const d =
+          (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
+        d['bleSource'] = bleSource;
+        d['bleUi'] = bleUi;
+        (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = d;
+      } else {
+        bleUi?.open();
+      }
+    };
+    (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbgRoot;
+  }
+
   hooks.setPose = (p) => fly.setPose(p);
   hooks.getPose = () => fly.getPose();
   hooks.settle = (frames?: number) => engine.settle(frames ?? 8);

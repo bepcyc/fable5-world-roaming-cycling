@@ -247,7 +247,18 @@ export class OptionsMenu {
       );
       b.addEventListener('click', () => {
         if (s.kind === 'ble') {
-          // BLE needs the boot-time connect flow (secure context + UI)
+          // UX-15b: bring BLE up lazily on this gesture — no page reload — and
+          // let the device manager open itself. Fall back to the old boot-flow
+          // reload only if the seam isn't wired (shouldn't happen in a ride).
+          const dbg = (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg;
+          const ensure = dbg?.['ensureBle'] as (() => void) | undefined;
+          if (ensure) {
+            ensure();
+            this.showHint(s.hint);
+            this.toggle(false); // close options; the BLE manager takes over
+            this.refresh();
+            return;
+          }
           const u = new URL(window.location.href);
           u.searchParams.set('ride', 'ble');
           u.searchParams.delete('ridedev');
