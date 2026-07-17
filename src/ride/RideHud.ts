@@ -202,12 +202,18 @@ export class RideHud {
   /** touch UI (mobile only): hold-to-pedal + hold-to-brake, the tap
    *  equivalent of the 'dev' keyboard source's W/S — see buildTouchPedal() */
   private pedalWrap: HTMLDivElement | null = null;
-  /** bound inside buildTouchPedal(); called from update() whenever the
-   *  pedal/brake controls transition from shown to hidden (dismount / source
-   *  swap away from 'dev') so a held finger can't latch state forever once
-   *  its buttons go display:none (codex review, scenario 1). */
-  private releasePedalBrake: (() => void) | null = null;
+  private pedalBtn: HTMLDivElement | null = null;
+  private brakeBtn: HTMLDivElement | null = null;
+  /** bound inside buildTouchPedal(); called from update() whenever a
+   *  pedal/brake control transitions from shown to hidden (dismount / source
+   *  swap) so a held finger can't latch state forever once its button goes
+   *  display:none (codex review, scenario 1). Split per-button so the brake
+   *  (shown for ANY source, UX-08) and the dev-only pedal release
+   *  independently; the document/blur path releases both via a local closure. */
+  private releasePedal: (() => void) | null = null;
+  private releaseBrake: (() => void) | null = null;
   private pedalWasOn = false;
+  private brakeWasOn = false;
   private visible: boolean;
   private last: { x: number; z: number } | null = null;
   private speedMs = 0;
@@ -295,11 +301,16 @@ export class RideHud {
   }
 
   /**
-   * Touch UI: hold-to-pedal + hold-to-brake — the 'dev' power source (KEYS,
-   * picked from the touch-friendly OptionsMenu) reads W/S from a keydown
-   * listener with no touch path, so on a phone/tablet it mounted the bike
-   * and then produced zero watts forever. These two buttons are the tap
-   * equivalent, shown only while that source is actually mounted (update()).
+   * Touch UI: hold-to-pedal + hold-to-brake — the tap equivalents of the
+   * keyboard bike's W/S, which a phone/tablet has no way to press.
+   *
+   * BRAKE is shown for ANY power source while riding (UX-08): a rider on a
+   * real BLE trainer flying into a hairpin needs a finger brake — the old
+   * gate only showed these controls for the 'dev' keyboard source, so a
+   * touch player with real sensors had no way to stop. PEDAL emulation stays
+   * dev-only: injecting synthetic watts only means anything for the keyboard
+   * source (demo/BLE produce their own power). Per-button visibility is
+   * decided in update().
    */
   private buildTouchPedal(): void {
     const wrap = document.createElement('div');
@@ -317,11 +328,14 @@ export class RideHud {
     wrap.append(pedal, brake);
     document.body.appendChild(wrap);
     this.pedalWrap = wrap;
+    this.pedalBtn = pedal;
+    this.brakeBtn = brake;
 
     const setPedal = (on: boolean): void => {
       pedal.classList.toggle('active', on);
       if (this.source?.kind === 'dev') (this.source as KeyboardPowerSource).setPedaling(on);
     };
+    this.releasePedal = () => setPedal(false);
     pedal.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       setPedal(true);
@@ -339,6 +353,7 @@ export class RideHud {
       brake.classList.toggle('active', on);
       this.rig?.setBrake(on);
     };
+    this.releaseBrake = () => setBrake(false);
     brake.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       setBrake(true);
@@ -356,7 +371,6 @@ export class RideHud {
       setPedal(false);
       setBrake(false);
     };
-    this.releasePedalBrake = releaseBoth;
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) releaseBoth();
     });
@@ -438,13 +452,22 @@ export class RideHud {
     if (!this.visible) return;
 
     const st = this.rig?.state() ?? null;
-    if (this.pedalWrap) {
-      const showPedal = this.source?.kind === 'dev' && (st?.riding ?? false);
-      // dismount / source swap away from 'dev' while a finger is still down
-      // on the (about to vanish) button — release now, not never
-      if (this.pedalWasOn && !showPedal) this.releasePedalBrake?.();
+    if (this.pedalWrap && this.pedalBtn && this.brakeBtn) {
+      const riding = st?.riding ?? false;
+      // brake works for ANY source while riding (UX-08: a BLE-trainer rider
+      // must be able to stop with a finger); pedal emulation is dev-only.
+      const showBrake = riding;
+      const showPedal = this.source?.kind === 'dev' && riding;
+      // a finger still down on a button that is about to vanish (dismount /
+      // source swap) — release now, not never; per-button so hiding the
+      // dev-only pedal never drops the brake and vice versa
+      if (this.pedalWasOn && !showPedal) this.releasePedal?.();
+      if (this.brakeWasOn && !showBrake) this.releaseBrake?.();
       this.pedalWasOn = showPedal;
-      this.pedalWrap.classList.toggle('on', showPedal);
+      this.brakeWasOn = showBrake;
+      this.pedalBtn.style.display = showPedal ? 'flex' : 'none';
+      this.brakeBtn.style.display = showBrake ? 'flex' : 'none';
+      this.pedalWrap.classList.toggle('on', showBrake || showPedal);
     }
     const sample = this.source?.read() ?? { cadenceRpm: null, heartRateBpm: null, powerW: null };
     // session recording (1 Hz decimation inside; power is real solver input)
