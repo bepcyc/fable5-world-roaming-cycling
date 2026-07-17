@@ -66,6 +66,9 @@ interface Cli {
   edge?: number;
   s?: number;
   dir?: 1 | -1;
+  /** raw URL params appended verbatim (e.g. "prepass=grass&preset=ultra") —
+   *  lets A/B ablation runs ride the exact same spawn */
+  extra?: string;
 }
 
 function parseCli(argv: string[]): Cli {
@@ -102,6 +105,7 @@ function parseCli(argv: string[]): Cli {
     edge: num('--edge'),
     s: num('--s'),
     dir: dirN as 1 | -1 | undefined,
+    extra: get('--extra'),
   };
 }
 
@@ -288,7 +292,8 @@ async function main(): Promise<void> {
   const t0 = Date.now(); // video-clock zero point (page creation)
 
   const url =
-    `${LAAS_ORIGIN}/?scene=world&seed=${cli.seed}&T=${cli.t}&preset=high&hud=0&ridedev=1`;
+    `${LAAS_ORIGIN}/?scene=world&seed=${cli.seed}&T=${cli.t}&preset=high&hud=0&ridedev=1` +
+    (cli.extra ? `&${cli.extra}` : '');
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => window.__laas && (window.__laas.ready || window.__laas.error !== null),
@@ -411,6 +416,9 @@ async function main(): Promise<void> {
     surfaceClass: choice.clsName,
     route: choice.edge.route,
     edge: choice.edge.id,
+    // s/dir make the spawn fully replayable (--edge --s --dir) for A/B runs
+    s: choice.s,
+    dir: choice.dir,
     spawn: { x: point.x, z: point.z },
     durationRequestedSec: cli.dur,
     durationActualSec: durSec,
