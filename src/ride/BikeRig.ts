@@ -248,6 +248,11 @@ export class BikeRig {
         if (e.code === 'Space' || e.code === 'KeyS' || e.code === 'ArrowDown') this.brake = true;
         if (e.code === 'ArrowLeft') this.pick(-1);
         if (e.code === 'ArrowRight') this.pick(1);
+        // UX-07: a dedicated "dismount" — ALWAYS lands in hike in one press,
+        // unlike M which cycles through the other bikes first (panic anti-
+        // pattern: the same key meant "swap bike" or "get off" depending on
+        // how many times you hit it). One key, one meaning.
+        if (e.code === 'KeyX' && !e.repeat) this.dismount();
       }
     });
     window.addEventListener('keyup', (e) => {
