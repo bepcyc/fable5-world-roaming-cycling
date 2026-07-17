@@ -22,10 +22,16 @@ import {
   type Protocol,
 } from './Capabilities';
 import { parseCpFeature, parseCscFeature, parseFtmsFeatures } from './Parsers';
+import { C2Provider } from './providers/C2Provider';
 import { CpsProvider } from './providers/CpsProvider';
 import { CscProvider } from './providers/CscProvider';
 import { FtmsProvider } from './providers/FtmsProvider';
 import { HrsProvider } from './providers/HrsProvider';
+import { KayakFirstProvider } from './providers/KayakFirstProvider';
+import { LfProvider } from './providers/LfProvider';
+import { PrecorProvider } from './providers/PrecorProvider';
+import { RscProvider } from './providers/RscProvider';
+import { SchwinnX70Provider } from './providers/SchwinnX70Provider';
 import { TacxFecProvider } from './providers/TacxFecProvider';
 import { RoleMux } from './RoleMux';
 import { FtmsController, TacxFecController } from './TrainerController';
@@ -74,6 +80,11 @@ async function probeGatt(handle: BleDeviceHandle): Promise<GattProbe> {
     SVC.tacxFec,
     SVC.battery,
     SVC.runningSpeedCadence,
+    SVC.concept2Erg,
+    SVC.schwinnX70,
+    SVC.precor,
+    SVC.kayakFirst,
+    SVC.lifeFitnessControl,
   ]) {
     if (handle.hasService(svc)) services.add(serviceKey(svc));
   }
@@ -274,6 +285,40 @@ export class DeviceRegistry {
       if (stale()) return;
       this.roleMux.registerProvider(p);
       this.roleMux.registerController(handle.id, handle.name, new TacxFecController(handle));
+    } else if (protocol === 'lf') {
+      // Life Fitness: FTMS bike behind a handshake; control is standard FTMS.
+      const p = new LfProvider(handle, caps);
+      await p.start();
+      if (stale()) return;
+      this.roleMux.registerProvider(p);
+      if (caps.control) this.roleMux.registerController(handle.id, handle.name, new FtmsController(handle, caps.control));
+    } else if (protocol === 'c2') {
+      const p = new C2Provider(handle, caps);
+      await p.start();
+      if (stale()) return;
+      this.roleMux.registerProvider(p);
+    } else if (protocol === 'x70') {
+      const p = new SchwinnX70Provider(handle, caps);
+      await p.start();
+      if (stale()) return;
+      this.roleMux.registerProvider(p);
+    } else if (protocol === 'precor') {
+      const p = new PrecorProvider(handle, caps);
+      await p.start();
+      if (stale()) return;
+      this.roleMux.registerProvider(p);
+    } else if (protocol === 'kf') {
+      const p = new KayakFirstProvider(handle, caps);
+      await p.start();
+      if (stale()) return;
+      this.roleMux.registerProvider(p);
+    } else if (protocol === 'rsc') {
+      // RSC is not auto-derived (Capabilities.ts RSC exclusion); this branch
+      // exists so an explicit `rsc` capability, if ever added, streams speed.
+      const p = new RscProvider(handle, caps);
+      await p.start();
+      if (stale()) return;
+      this.roleMux.registerProvider(p);
     }
   }
 

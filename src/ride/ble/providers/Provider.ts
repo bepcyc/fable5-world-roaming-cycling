@@ -10,7 +10,7 @@
  * provider's own device lifecycle (connect/reconnect/teardown) resets it.
  */
 
-import type { DeviceCapabilities, Metric } from '../Capabilities';
+import type { DeviceCapabilities, Metric, Protocol } from '../Capabilities';
 
 export type StreamState = 'waiting' | 'live' | 'stale' | 'disconnected';
 
@@ -51,7 +51,7 @@ export class AgingChannel {
 }
 
 export interface TelemetryProvider {
-  readonly protocol: 'ftms' | 'cps' | 'csc' | 'hrs' | 'fec';
+  readonly protocol: Protocol;
   readonly deviceId: string;
   readonly deviceName: string;
   /** dimension 1 (Capabilities.ts) — what this protocol on this device

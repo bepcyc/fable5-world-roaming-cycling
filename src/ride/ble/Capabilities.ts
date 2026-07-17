@@ -39,7 +39,16 @@ export type Metric = 'power' | 'cadence' | 'speed' | 'heartRate';
 export type Role = Metric | 'control';
 export const ROLES: readonly Role[] = ['power', 'cadence', 'speed', 'heartRate', 'control'];
 
-export type Protocol = 'ftms' | 'cps' | 'csc' | 'hrs' | 'fec';
+/**
+ * Protocol identity. The original five plus the ported families:
+ *   c2     Concept2 PM5 erg (service 0x0030, multi-characteristic merge)
+ *   x70    Schwinn X70 (service 0x8980, power model + HR side-channel)
+ *   precor Precor Spinner Chrono Power (service 0xee07, 19B fixed)
+ *   kf     KayakFirst (service 0xffe0, serial ASCII)
+ *   lf     Life Fitness (FTMS + handshake; SUPPRESSES a bare `ftms` entry)
+ *   rsc    Running Speed & Cadence 0x1814 — see the RSC note below.
+ */
+export type Protocol = 'ftms' | 'cps' | 'csc' | 'hrs' | 'fec' | 'c2' | 'x70' | 'precor' | 'kf' | 'lf' | 'rsc';
 
 /** stable identity for one (device, protocol) telemetry/control source —
  *  the key RoleMux and DeviceRegistry both index providers/controllers by,
@@ -107,7 +116,13 @@ export function hasSvc(probe: GattProbe, svc: ServiceUuid): boolean {
 export function deriveProtocolCapabilities(probe: GattProbe): Partial<Record<Protocol, DeviceCapabilities>> {
   const out: Partial<Record<Protocol, DeviceCapabilities>> = {};
 
-  if (hasSvc(probe, SVC.ftms)) {
+  // Life Fitness (control service 0x4b90): FTMS-backed but needs a handshake
+  // and emits cadence even when the FTMS flag lies (LF bike override). When
+  // present it SUPPRESSES the bare `ftms` entry so a single `lf` provider owns
+  // the machine rather than two providers fighting over 0x2AD2.
+  const hasLf = hasSvc(probe, SVC.lifeFitnessControl);
+
+  if (hasSvc(probe, SVC.ftms) && !hasLf) {
     const f = probe.ftmsFeature;
     out.ftms = {
       // Feature char absent/unreadable → optimistic (Indoor Bike Data
@@ -172,6 +187,52 @@ export function deriveProtocolCapabilities(probe: GattProbe): Partial<Record<Pro
     // real channel the owner's "see every sensor" bar requires.
     out.fec = { power: true, cadence: true, speed: true, heartRate: true, control: { simulation: true, targetPower: true } };
   }
+
+  if (hasLf) {
+    // Life Fitness streams standard FTMS after the handshake; capability mirrors
+    // an FTMS bike (cadence always true — the LF override recovers it even when
+    // the flag bit is 0). Control is real FTMS control when the feature says so.
+    const f = probe.ftmsFeature;
+    out.lf = {
+      power: f ? f.powerMeasurement : true,
+      cadence: true,
+      speed: true,
+      heartRate: f ? f.heartRate : false,
+      control:
+        f && (f.indoorBikeSimulation || f.powerTarget)
+          ? { simulation: f.indoorBikeSimulation, targetPower: f.powerTarget }
+          : null,
+    };
+  }
+
+  if (hasSvc(probe, SVC.concept2Erg)) {
+    // PM5: distance(0x0031) + speed/strokeRate/HR(0x0032) + calories(0x0033) +
+    // stroke power(0x0036), merged. All four telemetry roles are reachable.
+    out.c2 = { power: true, cadence: true, speed: true, heartRate: true, control: null };
+  }
+
+  if (hasSvc(probe, SVC.schwinnX70)) {
+    // 17B packet → cadence + a resistance-driven power MODEL → Cardano speed;
+    // HR arrives on the 0xf580 side-channel. No resistance control path here.
+    out.x70 = { power: true, cadence: true, speed: true, heartRate: true, control: null };
+  }
+
+  if (hasSvc(probe, SVC.precor)) {
+    // 19B fixed layout carries power / speed / cadence / HR directly.
+    out.precor = { power: true, cadence: true, speed: true, heartRate: true, control: null };
+  }
+
+  if (hasSvc(probe, SVC.kayakFirst)) {
+    // ASCII data frame → distance / speed / cadence / power (no heart rate).
+    out.kf = { power: true, cadence: true, speed: true, heartRate: false, control: null };
+  }
+
+  // RSC (0x1814) is DELIBERATELY NOT derived here — the RSC-exclusion invariant
+  // (this file's header + ble-sensors-helper) forbids treating it as a cycling
+  // telemetry source. The parser (Parsers.parseRsc) and RscProvider exist for
+  // completeness/explicit opt-in, but a chest strap advertising RSC alongside
+  // Heart Rate (the owner's HRMPro+) must never auto-offer a bogus SPEED/cadence
+  // candidate. No `out.rsc` here, by design.
 
   return out;
 }

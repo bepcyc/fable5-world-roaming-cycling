@@ -29,6 +29,8 @@ import { buildScene, registerScene, type WorldContext } from './debug/Scenes';
 import { setSurfaceDbg } from './render/DebugSurface';
 import { BikeRig } from './ride/BikeRig';
 import { RideHud } from './ride/RideHud';
+import { RideMenu, type RideSessionControl } from './ride/RideMenu';
+import { StravaAuth, StravaUpload } from './ride/strava';
 import { RouteGraph } from './ride/RouteGraph';
 import {
   DemoSensorSource,
@@ -235,10 +237,14 @@ async function boot(): Promise<void> {
     }
     (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg0;
   }
+  // hoisted so the ride-recording menu (built below) can read the live riding
+  // state without depending on the road graph having produced a rig
+  let rideRig: BikeRig | null = null;
   if (hooks.roads && hooks.groundProbe) {
     engine.fixedDt = params.fixedDt;
     const graph = RouteGraph.build(hooks.roads);
     const rig = new BikeRig(engine, fly, graph, hooks.groundProbe, source);
+    rideRig = rig;
     rideHud.attachRig(rig);
     engine.stats.counters['ride.graphNodes'] = graph.nodes.length;
     engine.stats.counters['ride.graphEdges'] = graph.edges.length;
@@ -258,6 +264,29 @@ async function boot(): Promise<void> {
       const mode = cls === 'asphalt' ? 'road' : cls.startsWith('gravel') ? 'gravel' : 'mtb';
       rig.setMode(mode);
     }
+  }
+
+  // Ride-recording control surface (pause / resume / finish → save .fit /
+  // sync to Strava / discard). It consumes the live RideRecorder's FIT bytes
+  // through the narrow {bytes,name} provider below; the seam where a richer
+  // session/FitExport swaps in lives in RideRecorder.exportForUpload().
+  {
+    const recorder = rideHud.getRecorder();
+    const stravaAuth = new StravaAuth();
+    const control: RideSessionControl = {
+      exportFit: (name) => recorder.exportForUpload(name),
+      saveFile: (name) => recorder.download(name),
+      pause: () => recorder.pause(),
+      resume: () => recorder.resume(),
+      reset: () => recorder.reset(),
+      snapshot: () => ({
+        elapsedS: recorder.elapsedS,
+        distanceM: recorder.distanceM,
+        samples: recorder.sampleCount,
+      }),
+      isRiding: () => rideRig?.riding ?? false,
+    };
+    new RideMenu(engine, control, stravaAuth, new StravaUpload(stravaAuth));
   }
 
   // UX-15b: attach BLE mid-ride WITHOUT a page reload. The OptionsMenu BLE

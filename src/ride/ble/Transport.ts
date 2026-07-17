@@ -60,6 +60,21 @@ export const SVC = {
    *  Bike 12583, which advertises NO 0x1826 FTMS at all. This is that
    *  trainer's ONLY resistance-control path. */
   tacxFec: '6e40fec1-b5a3-f393-e0a9-e50e24dcca9e',
+  /** Concept2 PM5 ergometer primary data service (). Fixed-layout,
+   *  multi-characteristic (distance / speed+HR / calories / stroke power). */
+  concept2Erg: 0x0030,
+  /** Schwinn X70 (170/270/570) proprietary service — 17B packet + power model
+   *  + HR side-channel (). */
+  schwinnX70: 0x8980,
+  /** Precor Spinner Chrono Power proprietary service — 19B fixed layout (). */
+  precor: 0xee07,
+  /** KayakFirst serial-over-BLE service — ASCII protocol, polling (). */
+  kayakFirst: 0xffe0,
+  /** Life Fitness proprietary control service () — carries the scripted
+   *  connect handshake that unlocks FTMS streaming. */
+  lifeFitnessControl: 0x4b90,
+  /** Life Fitness proprietary user-data service () — handshake user fields. */
+  lifeFitnessUser: 0x4b91,
   /** Tacx vendor service, present on the owner's trainer (dumped live over the
    *  native bridge 2026-07-15, the only non-DFU custom service in its tree).
    *  STRONGLY SUSPECTED to be Garmin's private "Tacx Trainer BLE Service",
@@ -87,6 +102,23 @@ export const CHR = {
   heartRateMeasurement: 0x2a37,
   batteryLevel: 0x2a19,
   rscMeasurement: 0x2a53,
+  // Concept2 PM5 erg characteristics (service 0x0030,)
+  c2GeneralStatus: 0x0031, // 19B — distance (primary)
+  c2AdditionalStatus1: 0x0032, // 17B — speed / strokeRate / HR / pace
+  c2AdditionalStatus2: 0x0033, // 20B — total calories
+  c2AdditionalStrokeData: 0x0036, // 15B — stroke power
+  // Schwinn X70 characteristics (service 0x8980,)
+  schwinnX70Measurement: 0x82a0, // 17B measurement
+  schwinnX70Control: 0xb3c0, // control write (HR-stream-start)
+  schwinnX70Extra: 0xf580, // 20B, contains HR (data[15]==0x5a)
+  // Precor characteristic (service 0xee07,)
+  precorMeasurement: 0xe01d, // 19B fixed layout
+  // KayakFirst characteristic (service 0xffe0,)
+  kayakFirstAllAround: 0xffe1, // notify + write (serial-over-BLE control point)
+  // Life Fitness control/user characteristics ()
+  lfControl1: 0x58dc, // write 0x01 then later 0x02
+  lfStatus1: 0x51de, // notify
+  lfControl2: 0x69e2, // write magic
   /** notify, trainer → client */
   tacxFecTx: '6e40fec2-b5a3-f393-e0a9-e50e24dcca9e',
   /** write, client → trainer */
@@ -142,6 +174,42 @@ export const KNOWN_SERVICES: KnownService[] = [
     label: 'Tacx FE-C',
     chars: [CHR.tacxFecTx, CHR.tacxFecRx],
     chooserFilter: true,
+  },
+  // Proprietary telemetry services included in the filtered scan (worthy set:
+  // {1826,ee07,8980,1818,1816,0030,ffe0,180d}) → chooserFilter true.
+  {
+    uuid: SVC.concept2Erg,
+    label: 'Concept2 PM5',
+    chars: [
+      CHR.c2GeneralStatus,
+      CHR.c2AdditionalStatus1,
+      CHR.c2AdditionalStatus2,
+      CHR.c2AdditionalStrokeData,
+    ],
+    chooserFilter: true,
+  },
+  {
+    uuid: SVC.schwinnX70,
+    label: 'Schwinn X70',
+    chars: [CHR.schwinnX70Measurement, CHR.schwinnX70Control, CHR.schwinnX70Extra],
+    chooserFilter: true,
+  },
+  { uuid: SVC.precor, label: 'Precor', chars: [CHR.precorMeasurement], chooserFilter: true },
+  { uuid: SVC.kayakFirst, label: 'KayakFirst', chars: [CHR.kayakFirstAllAround], chooserFilter: true },
+  // Life Fitness handshake services — not in the worthy-scan set (LF is found
+  // by name + FTMS); authorized only so the handshake can reach them.
+  {
+    uuid: SVC.lifeFitnessControl,
+    label: 'Life Fitness Control',
+    chars: [CHR.lfControl1, CHR.lfStatus1, CHR.lfControl2],
+    chooserFilter: false,
+  },
+  {
+    uuid: SVC.lifeFitnessUser,
+    label: 'Life Fitness User',
+    // user-data characteristics resolved lazily by the handshake writer
+    chars: [],
+    chooserFilter: false,
   },
   { uuid: SVC.battery, label: 'Battery', chars: [CHR.batteryLevel], chooserFilter: false },
   {

@@ -55,18 +55,35 @@ export interface RoleRow {
   candidates: RoleCandidate[];
 }
 
-const PROTOCOL_PRIORITY: Record<Protocol, number> = { ftms: 0, cps: 1, csc: 2, hrs: 3, fec: 4 };
+// stable tie-break for the picker (candidatesFor): dedicated standard GATT
+// services first, proprietary device protocols next, the FE-C vendor tunnel
+// last. Exhaustive over Protocol.
+const PROTOCOL_PRIORITY: Record<Protocol, number> = {
+  ftms: 0,
+  lf: 1,
+  cps: 2,
+  csc: 3,
+  c2: 4,
+  x70: 5,
+  precor: 6,
+  kf: 7,
+  hrs: 8,
+  rsc: 9,
+  fec: 10,
+};
 
 /** per-ROLE protocol preference for AUTO assignment (lower = better;
  *  absent = this protocol never auto-claims the role). Dedicated/standard
  *  channels outrank the FE-C tunnel everywhere; for heartRate the actual
- *  HR service outranks a trainer's tunneled (and usually invalid) HR field. */
+ *  HR service outranks a trainer's tunneled (and usually invalid) HR field.
+ *  `rsc` is intentionally absent from every role — it must never auto-claim
+ *  anything (RSC-exclusion invariant; it also has no auto-derived capability). */
 const ROLE_PROTO_RANK: Record<Role, Partial<Record<Protocol, number>>> = {
-  power: { ftms: 0, cps: 1, fec: 2 },
-  cadence: { ftms: 0, cps: 1, csc: 2, fec: 3 },
-  speed: { ftms: 0, fec: 1 },
-  heartRate: { hrs: 0, ftms: 1, fec: 2 },
-  control: { ftms: 0, fec: 1 },
+  power: { ftms: 0, lf: 1, cps: 2, c2: 3, x70: 4, precor: 5, kf: 6, fec: 7 },
+  cadence: { ftms: 0, lf: 1, cps: 2, csc: 3, c2: 4, x70: 5, precor: 6, kf: 7, fec: 8 },
+  speed: { ftms: 0, lf: 1, c2: 2, x70: 3, precor: 4, kf: 5, fec: 6 },
+  heartRate: { hrs: 0, ftms: 1, lf: 2, c2: 3, x70: 4, precor: 5, fec: 6 },
+  control: { ftms: 0, lf: 1, fec: 2 },
 };
 
 function roleRank(role: Role, protocol: Protocol): number {

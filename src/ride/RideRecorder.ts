@@ -98,6 +98,9 @@ export class RideRecorder {
   private recs: Rec[] = [];
   private dist = 0;
   private lastT: number | null = null;
+  /** paused feed (RideMenu PAUSE card): addSample() is a no-op while true, so
+   *  neither samples nor distance accumulate. RideMenu owns the flag. */
+  private paused = false;
 
   /** 1 Hz-ish sampling; callers may tick every frame — we decimate here */
   addSample(
@@ -109,6 +112,7 @@ export class RideRecorder {
     sample: RideSample | null,
     powerW: number | null,
   ): void {
+    if (this.paused) return;
     const t = Math.floor(nowMs / 1000);
     if (this.lastT === t) return;
     if (this.lastT !== null) this.dist += speedMs * (t - this.lastT);
@@ -235,20 +239,74 @@ export class RideRecorder {
     return out;
   }
 
-  /** browser download (Ctrl+E) */
-  download(): void {
+  /** browser download (Ctrl+E, or RideMenu SAVE FILE). Optional base name;
+   *  falls back to the legacy timestamped name. */
+  download(baseName?: string): void {
     if (this.recs.length < 2) return;
     const blob = new Blob([this.exportFit().buffer as ArrayBuffer], {
       type: 'application/octet-stream',
     });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `rando-ride-${new Date().toISOString().replace(/[:.]/g, '-')}.fit`;
+    const stub = baseName
+      ? baseName.replace(/[^A-Za-z0-9._-]+/g, '-')
+      : `rando-ride-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    a.download = `${stub}.fit`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
 
+  // ---- RideMenu control seam (pause / resume / reset + snapshot) -----------
+
+  /** pause the sample feed (PAUSE card). No samples/distance accrue. */
+  pause(): void {
+    this.paused = true;
+  }
+
+  /** resume the feed; re-anchor the clock so the paused gap is not counted as
+   *  distance on the next sample (lastT reset → next tick just anchors). */
+  resume(): void {
+    this.paused = false;
+    this.lastT = null;
+  }
+
+  /** DISCARD / new ride — drop everything and start fresh. */
+  reset(): void {
+    this.recs = [];
+    this.dist = 0;
+    this.lastT = null;
+    this.paused = false;
+  }
+
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
   get sampleCount(): number {
     return this.recs.length;
+  }
+
+  /** wall-clock span of the recorded stream, seconds */
+  get elapsedS(): number {
+    if (this.recs.length < 2) return 0;
+    return (this.recs[this.recs.length - 1] as Rec).t - (this.recs[0] as Rec).t;
+  }
+
+  /** accumulated ground distance, meters */
+  get distanceM(): number {
+    return this.dist;
+  }
+
+  /**
+   * The narrow FIT provider the Strava upload consumes: raw .fit bytes + a
+   * suggested base name, or null if the session is too short to be a valid
+   * activity. NOTE (seam): a parallel branch is building a richer
+   * session/FitExport — when it merges, swap this one method to source the
+   * bytes from it; the {bytes,name} contract stays identical, so RideMenu and
+   * StravaUpload need no change.
+   */
+  exportForUpload(baseName: string): { bytes: Uint8Array; name: string } | null {
+    if (this.recs.length < 2) return null;
+    return { bytes: this.exportFit(), name: baseName.replace(/[^A-Za-z0-9._-]+/g, '-') };
   }
 }

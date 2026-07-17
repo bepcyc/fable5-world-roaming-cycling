@@ -596,6 +596,80 @@ const DICT: Record<string, Entry> = {
   // ---- Cockpit.ts on-device screen (tiny canvas texture, no CSS/DOM —
   // keep short, the hazard strip has a fixed pixel width and no wrap) ----
   'cockpit.steep': { en: 'STEEP', de: 'STEIL', ru: 'КРУТО' },
+
+  // ---- ride-recording control (RideMenu.ts): pause / finish card ----
+  'ride.menu.recordTitle': { en: 'ride menu', de: 'Fahrtmenü', ru: 'меню поездки' },
+  'ride.menu.paused': { en: 'RIDE PAUSED', de: 'FAHRT PAUSIERT', ru: 'ПОЕЗДКА НА ПАУЗЕ' },
+  'ride.menu.elapsed': { en: 'elapsed', de: 'Dauer', ru: 'время' },
+  'ride.menu.resume': { en: 'RESUME', de: 'FORTSETZEN', ru: 'ПРОДОЛЖИТЬ' },
+  'ride.menu.finish': { en: 'FINISH', de: 'BEENDEN', ru: 'ЗАВЕРШИТЬ' },
+  'ride.menu.finishTitle': { en: 'FINISH RIDE', de: 'FAHRT BEENDEN', ru: 'ЗАВЕРШИТЬ ПОЕЗДКУ' },
+  'ride.menu.activityName': { en: 'activity name', de: 'Aktivitätsname', ru: 'название заезда' },
+  'ride.menu.saveSync': {
+    en: 'SAVE & SYNC TO STRAVA',
+    de: 'SPEICHERN & ZU STRAVA',
+    ru: 'СОХРАНИТЬ И В STRAVA',
+  },
+  'ride.menu.saveFile': { en: 'SAVE .FIT FILE', de: '.FIT-DATEI SPEICHERN', ru: 'СОХРАНИТЬ .FIT' },
+  'ride.menu.discard': { en: 'DISCARD', de: 'VERWERFEN', ru: 'СБРОСИТЬ' },
+  'ride.menu.discardConfirm': {
+    en: 'Discard this ride? The recording will be deleted.',
+    de: 'Diese Fahrt verwerfen? Die Aufzeichnung wird gelöscht.',
+    ru: 'Сбросить эту поездку? Запись будет удалена.',
+  },
+  'ride.menu.savedFile': { en: 'saved .fit file', de: '.fit-Datei gespeichert', ru: '.fit-файл сохранён' },
+  'ride.menu.tooShort': {
+    en: 'ride too short to save yet',
+    de: 'Fahrt noch zu kurz zum Speichern',
+    ru: 'заезд слишком короткий для сохранения',
+  },
+  'ride.menu.close': { en: 'close', de: 'schließen', ru: 'закрыть' },
+
+  // ---- Strava connection + upload (RideMenu.ts) ----
+  'ride.strava.connected': { en: 'Connected to Strava', de: 'Mit Strava verbunden', ru: 'Подключено к Strava' },
+  'ride.strava.notConnected': { en: 'Not connected', de: 'Nicht verbunden', ru: 'Не подключено' },
+  'ride.strava.connect': { en: 'CONNECT', de: 'VERBINDEN', ru: 'ПОДКЛЮЧИТЬ' },
+  'ride.strava.disconnect': { en: 'DISCONNECT', de: 'TRENNEN', ru: 'ОТКЛЮЧИТЬ' },
+  'ride.strava.settings': { en: 'Strava settings', de: 'Strava-Einstellungen', ru: 'Настройки Strava' },
+  'ride.strava.clientId': { en: 'Client ID', de: 'Client-ID', ru: 'Client ID' },
+  'ride.strava.clientSecret': { en: 'Client secret', de: 'Client-Secret', ru: 'Client secret' },
+  'ride.strava.redirectUri': { en: 'Redirect URI', de: 'Redirect-URI', ru: 'Redirect URI' },
+  'ride.strava.corsProxy': {
+    en: 'CORS proxy (optional)',
+    de: 'CORS-Proxy (optional)',
+    ru: 'CORS-прокси (необязательно)',
+  },
+  'ride.strava.save': { en: 'SAVE', de: 'SPEICHERN', ru: 'СОХРАНИТЬ' },
+  'ride.strava.saved': { en: 'settings saved', de: 'Einstellungen gespeichert', ru: 'настройки сохранены' },
+  'ride.strava.needCreds': {
+    en: 'Enter your Strava API Client ID and secret first (Strava settings below).',
+    de: 'Zuerst Strava-API Client-ID und Secret eingeben (Strava-Einstellungen unten).',
+    ru: 'Сначала введите Client ID и secret из Strava API (настройки Strava ниже).',
+  },
+  'ride.strava.registerHint': {
+    en: 'Register an app at strava.com/settings/api, then paste the Client ID and secret. Callback domain: 127.0.0.1 for development.',
+    de: 'Registriere eine App unter strava.com/settings/api und füge Client-ID und Secret ein. Callback-Domain: 127.0.0.1 für die Entwicklung.',
+    ru: 'Зарегистрируйте приложение на strava.com/settings/api и вставьте Client ID и secret. Callback-домен: 127.0.0.1 для разработки.',
+  },
+  'ride.strava.pasteCode': {
+    en: 'Paste the code from the redirect URL',
+    de: 'Code aus der Redirect-URL einfügen',
+    ru: 'Вставьте code из URL перенаправления',
+  },
+  'ride.strava.pasteHint': {
+    en: 'A Strava tab opened. After you approve, copy the code=… value from the address bar and paste it here.',
+    de: 'Ein Strava-Tab wurde geöffnet. Nach der Freigabe den Wert code=… aus der Adresszeile kopieren und hier einfügen.',
+    ru: 'Открылась вкладка Strava. После подтверждения скопируйте значение code=… из адресной строки и вставьте сюда.',
+  },
+  'ride.strava.connectCode': { en: 'CONNECT', de: 'VERBINDEN', ru: 'ПОДКЛЮЧИТЬ' },
+  'ride.strava.authOpening': { en: 'opening Strava…', de: 'Strava wird geöffnet…', ru: 'открываем Strava…' },
+  'ride.strava.uploading': { en: 'uploading to Strava…', de: 'Upload zu Strava…', ru: 'загрузка в Strava…' },
+  'ride.strava.processing': { en: 'Strava is processing…', de: 'Strava verarbeitet…', ru: 'Strava обрабатывает…' },
+  'ride.strava.uploaded': { en: 'uploaded to Strava', de: 'zu Strava hochgeladen', ru: 'загружено в Strava' },
+  'ride.strava.viewActivity': { en: 'view activity', de: 'Aktivität ansehen', ru: 'открыть заезд' },
+  'ride.strava.uploadFailed': { en: 'upload failed', de: 'Upload fehlgeschlagen', ru: 'ошибка загрузки' },
+  'ride.strava.connectFailed': { en: 'connect failed', de: 'Verbindung fehlgeschlagen', ru: 'ошибка подключения' },
+  'ride.strava.disconnected': { en: 'disconnected from Strava', de: 'von Strava getrennt', ru: 'отключено от Strava' },
 };
 
 /**
