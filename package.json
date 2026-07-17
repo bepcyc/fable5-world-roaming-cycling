@@ -11,7 +11,6 @@
     "typecheck": "tsc --noEmit",
     "shoot": "tsx tools/shoot.ts",
     "compare": "tsx tools/compare.ts",
-    "battery": "tsx tools/battery.ts",
     "gates:grass": "tsx tools/gate-grass-blue.ts",
     "gates:perf": "tsx tools/gate-perf.ts",
     "gates:visual": "tsx tools/gate-visual.ts",
