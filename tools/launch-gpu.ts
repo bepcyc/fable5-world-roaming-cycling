@@ -3,13 +3,15 @@
  *
  * tools/launch.ts predates Linux: its recipes rely on the Playwright-bundled
  * Chromium (`channel:'chromium'`), which does not even start on NixOS (FHS
- * dynamic linking), and headless Linux Chrome silently substitutes the
- * SwiftShader CPU rasterizer unless `--use-angle=vulkan` is present — a
- * poisoned adapter that looks alive. This launcher probes system-browser
- * `executablePath` recipes with the Vulkan flag set, VERIFIES the adapter is
- * a real GPU (rejects swiftshader/llvmpipe), caches the winner, and returns
- * the adapter identity so callers can print it next to their measurements.
- * Requires the dev server on :5173 (secure-context probe, as launch.ts).
+ * dynamic linking), and headless Linux Chrome can silently substitute the
+ * SwiftShader CPU rasterizer — a poisoned adapter that looks alive. This
+ * launcher probes system-browser `executablePath` recipes (flag history and
+ * the --use-angle=vulkan story live at LINUX_FLAGS below), VERIFIES the
+ * adapter is a real GPU (rejects swiftshader/llvmpipe), caches the winner,
+ * and returns the adapter identity so callers can print it next to their
+ * measurements.
+ * Requires the tooling dev server at LAAS_ORIGIN (:5174 by default — :5173
+ * belongs to the owner; override with LAAS_PORT) for the secure-context probe.
  * Binary override: CHROME_BIN=/path/to/chrome.
  */
 
@@ -167,8 +169,10 @@ export async function launchWebGPUReal(
   }
   throw new Error(
     'No launch recipe produced a REAL WebGPU adapter (SwiftShader/llvmpipe rejected). ' +
-      'Dev server must run on :5173. On Linux the working set is a system Chrome via ' +
-      'executablePath + --enable-unsafe-webgpu --enable-features=Vulkan --use-angle=vulkan ' +
-      '(see docs/notes/nixos-webgpu-launch-recipe.md); override the binary with CHROME_BIN.',
+      `Dev server must run at ${LAAS_ORIGIN} (LAAS_PORT overrides the port). On Linux ` +
+      'the working set is a system Chrome via executablePath + --enable-unsafe-webgpu ' +
+      '--enable-features=Vulkan (--use-angle=vulkan only as a HEADLESS fallback — headed ' +
+      'it SIGFPE-crashes the GPU process, see the LINUX_FLAGS comment and ' +
+      'docs/notes/nixos-webgpu-launch-recipe.md); override the binary with CHROME_BIN.',
   );
 }

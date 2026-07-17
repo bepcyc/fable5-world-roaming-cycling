@@ -139,7 +139,8 @@ async function boot(): Promise<void> {
   registerScene('terrain', buildTerrainScene);
   registerScene('gallery', buildGalleryScene);
   registerScene('shadowtest', buildShadowTestScene);
-  // 'world' becomes the streamed open world once terrain tiles land.
+  // 'world' IS the terrain scene: the world is boot-generated and fully
+  // resident (4x4 km, no streaming by design) — see TerrainScene.ts.
   registerScene('world', buildTerrainScene);
 
   const ctx: WorldContext = {
