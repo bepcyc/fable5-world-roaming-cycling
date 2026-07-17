@@ -36,10 +36,10 @@ async function main(): Promise<void> {
     await page.waitForSelector('#pause-fab.on', { state: 'visible', timeout: 8000 }).catch(() => null);
 
     c.check('touch ⏸ appears once PLAYING', await shown('pause-fab'));
-    // СТАЛО (with the new affordance): playing screen, ⏸ top-left
+    // AFTER (with the new affordance): playing screen, pause button top-left
     await page.screenshot({ path: 'shots/wip/ux/ux10-stalo-button.png' });
 
-    // БЫЛО: the old build had no touch pause path at all — reproduce that
+    // BEFORE: the old build had no touch pause path at all — reproduce that
     // render (fab absent) for the SBS, then restore
     await page.evaluate(() => {
       const f = document.getElementById('pause-fab');

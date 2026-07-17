@@ -82,9 +82,9 @@ async function main(): Promise<void> {
     });
     c.check('PEDAL button stays dev-only (hidden for demo)', pedalBtnHidden);
 
-    // СТАЛО (after fix): the ride screen WITH the brake button
+    // AFTER (fix): the ride screen WITH the brake button
     await page.screenshot({ path: 'shots/wip/ux/ux08-stalo.png' });
-    // БЫЛО (before fix): the OLD gate hid the whole #ride-pedal wrap for any
+    // BEFORE (fix): the OLD gate hid the whole #ride-pedal wrap for any
     // non-'dev' source (`classList.toggle('on', showPedal)` → false →
     // display:none). Reproduce that exact render for the SBS, then restore.
     await page.evaluate(() => {
