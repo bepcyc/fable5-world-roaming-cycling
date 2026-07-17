@@ -444,6 +444,14 @@ export class RideHud {
     window.addEventListener('blur', releaseBoth);
   }
 
+  /** The live session recorder — RideMenu drives pause/resume/reset/export on
+   *  this same instance (it is the one being fed in update()). Exposed rather
+   *  than duplicated so the FIT bytes RideMenu uploads are exactly what was
+   *  recorded. See RideRecorder.exportForUpload() for the FitExport merge seam. */
+  getRecorder(): RideRecorder {
+    return this.recorder;
+  }
+
   /** BikeRig attaches after world build (needs the road graph) */
   attachRig(rig: BikeRig): void {
     this.rig = rig;
