@@ -37,6 +37,7 @@
  */
 
 import { t } from '../../core/I18n';
+import { KNOWN_NAMES_KEY } from './DeviceRegistry';
 import {
   canonicalUuid,
   KNOWN_SERVICES,
@@ -367,16 +368,25 @@ let styleInjected = false;
 
 /** The chooser Web Bluetooth would have drawn for us. Live-updating list: a
  *  BLE scan streams the same device repeatedly, so hits are keyed by MAC and
- *  the row is refreshed in place rather than appended. */
+ *  the row is refreshed in place rather than appended.
+ *
+ *  SEEDED with saved devices (DeviceRegistry's known-names cache): a trainer
+ *  that stops advertising its service list after the first bond (the owner's
+ *  Tacx — it vanished from every service-filtered scan forever) is still
+ *  connectable by MAC, so it must stay pickable even with zero scan hits.
+ *  A live hit for the same MAC upgrades the row in place (SAVED → dBm). */
 class ScanChooser {
   private root: HTMLDivElement;
   private list: HTMLDivElement;
   private empty: HTMLDivElement;
-  private hits = new Map<string, ScanHit>();
+  private hits = new Map<string, ScanHit & { saved?: boolean }>();
   private onPick: (hit: ScanHit) => void;
 
-  constructor(onPick: (hit: ScanHit) => void, onCancel: () => void) {
+  constructor(onPick: (hit: ScanHit) => void, onCancel: () => void, known: { addr: string; name: string }[] = []) {
     this.onPick = onPick;
+    for (const k of known) {
+      this.hits.set(k.addr, { addr: k.addr, name: k.name, rssi: 0, services: [], saved: true });
+    }
     if (!styleInjected) {
       const style = document.createElement('style');
       style.textContent = CHOOSER_STYLE;
@@ -410,12 +420,15 @@ class ScanChooser {
     card.append(title, note, this.list, cancel);
     this.root.appendChild(card);
     document.body.appendChild(this.root);
+    if (this.hits.size > 0) this.render();
   }
 
   add(hit: ScanHit): void {
-    const fresh = !this.hits.has(hit.addr);
+    const prev = this.hits.get(hit.addr);
     this.hits.set(hit.addr, hit);
-    if (fresh) this.render();
+    // fresh device or a saved seed just proven live — the row set/order
+    // changes, re-render; a repeat hit only refreshes its dBm in place
+    if (!prev || prev.saved) this.render();
     else {
       const rssi = this.list.querySelector<HTMLDivElement>(`[data-addr="${CSS.escape(hit.addr)}"] .bs-rssi`);
       if (rssi) rssi.textContent = `${hit.rssi} dBm`;
@@ -428,8 +441,13 @@ class ScanChooser {
       this.list.appendChild(this.empty);
       return;
     }
-    // strongest first: the sensor the rider is sitting on is the near one
-    for (const hit of [...this.hits.values()].sort((a, b) => b.rssi - a.rssi)) {
+    // live hits strongest-first (the sensor the rider sits on is the near
+    // one); saved-but-silent devices after — present, tappable, honest
+    const rows = [...this.hits.values()].sort((a, b) => {
+      if (!!a.saved !== !!b.saved) return a.saved ? 1 : -1;
+      return b.rssi - a.rssi;
+    });
+    for (const hit of rows) {
       const row = document.createElement('div');
       row.className = 'bs-item';
       row.dataset['addr'] = hit.addr;
@@ -438,7 +456,7 @@ class ScanChooser {
       nm.textContent = hit.name;
       const rssi = document.createElement('div');
       rssi.className = 'bs-rssi';
-      rssi.textContent = `${hit.rssi} dBm`;
+      rssi.textContent = hit.saved ? t('ble.scan.saved') : `${hit.rssi} dBm`;
       row.append(nm, rssi);
       row.addEventListener('click', () => this.onPick(hit));
       this.list.appendChild(row);
@@ -473,6 +491,18 @@ export class NativeBridgeTransport implements BleTransport {
 
   private async chooseAndConnect(services: string[] | null): Promise<BleDeviceHandle> {
     const c = bleClient();
+    // saved devices (registry's known-names cache): seeded into the picker AND
+    // sent as per-address scan filters. A bonded trainer that stops putting
+    // its service UUIDs in the advertisement (the owner's Tacx after its first
+    // connect) fails every service filter forever — the MAC filter still
+    // matches it, and the seeded row keeps it pickable even fully silent.
+    let known: { addr: string; name: string }[] = [];
+    try {
+      const names = JSON.parse(localStorage.getItem(KNOWN_NAMES_KEY) ?? '{}') as Record<string, string>;
+      known = Object.entries(names).map(([addr, name]) => ({ addr, name }));
+    } catch {
+      /* storage disabled/corrupt — the picker just starts empty */
+    }
     const hit = await new Promise<ScanHit>((resolve, reject) => {
       const chooser = new ScanChooser(
         (h) => {
@@ -485,6 +515,7 @@ export class NativeBridgeTransport implements BleTransport {
           // is a non-event, exactly as a dismissed Web Bluetooth chooser is
           reject(new Error('cancelled'));
         },
+        known,
       );
       const stop = async (): Promise<void> => {
         c.onScan(null);
@@ -496,7 +527,10 @@ export class NativeBridgeTransport implements BleTransport {
         }
       };
       c.onScan((h) => chooser.add(h));
-      c.call('scan', services ? { services } : {}).catch((e: unknown) => {
+      const args: Record<string, unknown> = {};
+      if (services) args['services'] = services;
+      if (known.length > 0) args['addrs'] = known.map((k) => k.addr);
+      c.call('scan', args).catch((e: unknown) => {
         void stop();
         reject(e instanceof Error ? e : new Error(String(e)));
       });

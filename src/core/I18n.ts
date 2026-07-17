@@ -133,6 +133,7 @@ const DICT: Record<string, Entry> = {
     ru: 'Поиск…',
   },
   'ble.scan.cancel': { en: 'CANCEL', de: 'ABBRECHEN', ru: 'ОТМЕНА' },
+  'ble.scan.saved': { en: 'saved', de: 'gespeichert', ru: 'сохранён' },
   'ble.err.off': {
     en: 'Bluetooth is switched off. Turn it on and try again.',
     de: 'Bluetooth ist ausgeschaltet. Schalte es ein und versuche es erneut.',
@@ -590,6 +591,7 @@ const DICT: Record<string, Entry> = {
   'ride.deadEndUturn': { en: 'dead end — U-turn', de: 'Sackgasse — wenden', ru: 'тупик — разворот' },
   'ride.uTurn': { en: 'U-turn', de: 'Wende', ru: 'разворот' },
   'ride.uturnBtn': { en: 'U-TURN', de: 'WENDE', ru: 'РАЗВОРОТ' },
+  'ride.dismountBtn': { en: 'GET OFF', de: 'ABSTEIGEN', ru: 'СПЕШИТЬСЯ' },
 
   // ---- Cockpit.ts on-device screen (tiny canvas texture, no CSS/DOM —
   // keep short, the hazard strip has a fixed pixel width and no wrap) ----

@@ -20,6 +20,7 @@
 import { isMobileDevice } from '../core/BrowserGate';
 import type { LaasHooks } from '../core/Hooks';
 import { t } from '../core/I18n';
+import { announceMenuOpen, onOtherMenuOpen } from '../core/MenuBus';
 import { MODE_ICON } from '../ride/RideHud';
 import type { WeatherKind, WeatherState } from '../sky/Weather';
 
@@ -380,6 +381,13 @@ export class OptionsMenu {
     });
     window.addEventListener('keydown', (e) => {
       if (e.code === 'KeyO' && !e.repeat) this.toggle();
+      // Escape closes this panel when it is the open overlay (GameMenu's
+      // pause handler defers to open overlays)
+      if (e.code === 'Escape' && this.open) this.toggle(false);
+    });
+    // one overlay at a time: pause/BLE-manager/graphics opening closes this
+    onOtherMenuOpen('opt-panel', () => {
+      if (this.open) this.toggle(false);
     });
   }
 
@@ -463,10 +471,12 @@ export class OptionsMenu {
   }
 
   private toggle(to?: boolean): void {
+    const was = this.open;
     this.open = to ?? !this.open;
     this.panel.classList.toggle('on', this.open);
     this.fab.classList.toggle('on', this.open);
     if (this.open) {
+      if (!was) announceMenuOpen('opt-panel'); // closes every other overlay
       document.exitPointerLock();
       this.refresh();
     }

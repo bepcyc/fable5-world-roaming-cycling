@@ -130,6 +130,12 @@ const STYLE = `
   border-color:rgba(140,190,255,0.4)}
 .rp-btn.uturn.active{background:rgba(140,190,255,0.34)}
 .rp-btn.uturn.armed{background:rgba(140,190,255,0.55);transform:scale(1.02)}
+/* dismount: the touch equivalent of X — a phone has no keyboard, and "get
+   off the bike" must never require one (owner release rule). Plain tap:
+   dismounting is safe and instantly reversible via the options menu. */
+.rp-btn.dismount{width:64px;height:64px;font-size:8px;color:#d8e8c9;
+  border-color:rgba(180,220,150,0.4)}
+.rp-btn.dismount.active{background:rgba(180,220,150,0.32)}
 `;
 
 /** `setPointerCapture()` throws NotFoundError once the browser no longer
@@ -215,6 +221,8 @@ export class RideHud {
   private uturnBtn: HTMLDivElement | null = null;
   private uturnWasOn = false;
   private releaseUturn: (() => void) | null = null;
+  /** touch dismount button — the tap equivalent of X (keyboard-only before) */
+  private dismountBtn: HTMLDivElement | null = null;
   /** bound inside buildTouchPedal(); called from update() whenever a
    *  pedal/brake control transitions from shown to hidden (dismount / source
    *  swap) so a held finger can't latch state forever once its button goes
@@ -341,12 +349,25 @@ export class RideHud {
     uturn.textContent = t('ride.uturnBtn');
     uturn.setAttribute('role', 'button');
     uturn.setAttribute('aria-label', t('ride.uturnBtn'));
-    wrap.append(pedal, brake, uturn);
+    const dismount = document.createElement('div');
+    dismount.className = 'rp-btn dismount';
+    dismount.textContent = t('ride.dismountBtn');
+    dismount.setAttribute('role', 'button');
+    dismount.setAttribute('aria-label', t('ride.dismountBtn'));
+    wrap.append(pedal, brake, uturn, dismount);
     document.body.appendChild(wrap);
     this.pedalWrap = wrap;
     this.pedalBtn = pedal;
     this.brakeBtn = brake;
     this.uturnBtn = uturn;
+    this.dismountBtn = dismount;
+
+    dismount.addEventListener('pointerdown', () => dismount.classList.add('active'));
+    dismount.addEventListener('pointerup', () => {
+      dismount.classList.remove('active');
+      this.rig?.setMode('hike');
+    });
+    dismount.addEventListener('pointercancel', () => dismount.classList.remove('active'));
 
     const setPedal = (on: boolean): void => {
       pedal.classList.toggle('active', on);
@@ -505,13 +526,14 @@ export class RideHud {
     if (!this.visible) return;
 
     const st = this.rig?.state() ?? null;
-    if (this.pedalWrap && this.pedalBtn && this.brakeBtn && this.uturnBtn) {
+    if (this.pedalWrap && this.pedalBtn && this.brakeBtn && this.uturnBtn && this.dismountBtn) {
       const riding = st?.riding ?? false;
-      // brake + U-turn work for ANY source while riding (UX-08/02: a rider on
-      // a real trainer must be able to stop AND reverse with a finger); pedal
-      // emulation is dev-only.
+      // brake + U-turn + dismount work for ANY source while riding (UX-08/02:
+      // a rider on a real trainer must be able to stop, reverse AND get off
+      // with a finger); pedal emulation is dev-only.
       const showBrake = riding;
       const showUturn = riding;
+      const showDismount = riding;
       const showPedal = this.source?.kind === 'dev' && riding;
       // a finger still down on a button that is about to vanish (dismount /
       // source swap) — release now, not never; per-button so hiding the
@@ -525,7 +547,8 @@ export class RideHud {
       this.pedalBtn.style.display = showPedal ? 'flex' : 'none';
       this.brakeBtn.style.display = showBrake ? 'flex' : 'none';
       this.uturnBtn.style.display = showUturn ? 'flex' : 'none';
-      this.pedalWrap.classList.toggle('on', showBrake || showPedal || showUturn);
+      this.dismountBtn.style.display = showDismount ? 'flex' : 'none';
+      this.pedalWrap.classList.toggle('on', showBrake || showPedal || showUturn || showDismount);
     }
     const sample = this.source?.read() ?? { cadenceRpm: null, heartRateBpm: null, powerW: null };
     // session recording (1 Hz decimation inside; power is real solver input)

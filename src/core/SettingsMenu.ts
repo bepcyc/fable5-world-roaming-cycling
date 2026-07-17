@@ -22,6 +22,7 @@
  */
 
 import { t } from './I18n';
+import { announceMenuOpen } from './MenuBus';
 import type { QualityPreset } from './Params';
 import {
   QUALITY_META,
@@ -295,6 +296,10 @@ export class SettingsMenu {
   }
 
   show(): void {
+    // announce BEFORE turning on: the pause card deliberately ignores 'qset'
+    // (the sheet stacks over it and returns to it, UX-11), everything else
+    // (options panel, BLE manager) closes — one-overlay rule, MenuBus.ts
+    announceMenuOpen('qset');
     this.render();
     this.veil.classList.add('on');
     this.sheet.classList.add('on');

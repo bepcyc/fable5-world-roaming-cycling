@@ -21,6 +21,7 @@ import { isMobileDevice } from './BrowserGate';
 import type { Engine } from './Engine';
 import type { LaasHooks } from './Hooks';
 import { LANG, type Lang, storeLang, t } from './I18n';
+import { announceMenuOpen, onOtherMenuOpen } from './MenuBus';
 import type { LaasParams, QualityPreset } from './Params';
 import { hardwareThreads, storeThreads, THREADS_LS_KEY } from './Threads';
 
@@ -96,14 +97,22 @@ export class GameMenu {
 
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'Escape') return;
-      // UX-11 bug 2: the graphics sheet is a higher modal layer with its own
-      // Escape=close handler. Without this guard BOTH fired on one press —
-      // the sheet closed AND pause opened. The top open layer owns Escape;
-      // when the sheet is up, it closes itself and pause stays out of it.
+      // UX-11 bug 2 (generalized): the TOP open overlay owns Escape. Each of
+      // these layers has its own Escape=close handler firing on this same
+      // press — without the guard BOTH fired: the overlay closed AND pause
+      // opened/resumed on top of it (the owner's "menus stack on each other").
       if (document.getElementById('qset')?.classList.contains('on')) return;
+      if (document.getElementById('ble-mgr')?.classList.contains('on')) return;
+      if (document.getElementById('opt-panel')?.classList.contains('on')) return;
+      if (document.getElementById('ble-scan')) return; // native BLE chooser (its Cancel owns dismissal)
       if (this.state === 'PLAYING') this.openPause();
       else if (this.state === 'PAUSED') this.resume();
     });
+    // one-overlay rule (MenuBus): another overlay opening while the pause
+    // card is up hides the card exactly like the SETTINGS door already does
+    // (world stays paused; Esc/⏸ still resumes). 'qset' is ignored — the
+    // graphics sheet deliberately stacks over pause and returns to it (UX-11).
+    onOtherMenuOpen('pause', () => this.pause.classList.remove('on'), ['qset']);
 
     // touch pause (UX-10): a phone has no Escape — this ⏸ is its only way
     // into the PAUSE card. Shown only while PLAYING on a touch device.
@@ -186,6 +195,7 @@ export class GameMenu {
 
   private openPause(): void {
     if (!this.engine) return;
+    announceMenuOpen('pause'); // one-overlay rule: closes options/BLE manager
     this.engine.paused = true;
     this.state = 'PAUSED';
     this.pause.classList.add('on');

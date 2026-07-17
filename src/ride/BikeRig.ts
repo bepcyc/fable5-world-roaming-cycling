@@ -431,9 +431,16 @@ export class BikeRig {
   }
 
   /** runtime power-source swap (options menu): the honesty gates in
-   *  mount() keep applying — a null source still locks the bikes */
+   *  mount() keep applying — a null source still locks the bikes.
+   *  Mid-ride swap moves control activation across the seam: the old
+   *  source's trainer must stop getting resistance writes, the new one
+   *  must start — mount() only fires on the not-riding→riding transition,
+   *  so without this a demo→BLE switch mid-ride left control dark. */
   setSource(source: SensorSource | null): void {
+    if (source === this.source) return;
+    if (this.riding) this.source?.releaseControl?.();
     this.source = source;
+    if (this.riding) source?.activateControl?.();
   }
 
   /** touch UI (RideHud junction cards): pick a turn by index — the tap

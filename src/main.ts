@@ -282,6 +282,10 @@ async function boot(): Promise<void> {
         d['bleUi'] = bleUi;
         (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = d;
       } else {
+        // the source may have been swapped away (demo/dev picked mid-session) —
+        // picking BLE again must actually re-route the rig/HUD to the live BLE
+        // source, not just show the manager over an unchanged demo ride
+        rideHud.setSource(bleSource);
         bleUi?.open();
       }
     };

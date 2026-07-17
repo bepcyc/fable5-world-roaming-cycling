@@ -31,6 +31,7 @@
  */
 
 import { t } from '../../core/I18n';
+import { announceMenuOpen, onOtherMenuOpen } from '../../core/MenuBus';
 import type { Metric, Protocol, Role } from './Capabilities';
 import type { BleSensorSource } from './BleSensorSource';
 import type { ConnectionStage, PairedDevice } from './DeviceRegistry';
@@ -202,6 +203,12 @@ export class DeviceManagerUi {
 
     this.root = el('div');
     this.root.id = 'ble-mgr';
+    // backdrop tap/click closes (one-overlay UX rule): the manager fills the
+    // screen with a dimmed veil — tapping outside the card is the universal
+    // "dismiss" gesture and previously did nothing
+    this.root.addEventListener('click', (e) => {
+      if (e.target === this.root) this.close();
+    });
     document.body.appendChild(this.root);
 
     window.addEventListener('keydown', (e) => {
@@ -212,6 +219,16 @@ export class DeviceManagerUi {
         this.visible = !this.visible;
         this.render();
       }
+      // Escape closes the manager when it is the open overlay (GameMenu's
+      // pause handler defers to any open overlay, so this is the only
+      // consumer of the press)
+      if (e.code === 'Escape' && this.visible) {
+        this.close();
+      }
+    });
+    // one overlay at a time: opening pause/options/graphics dismisses this
+    onOtherMenuOpen('ble-mgr', () => {
+      if (this.visible) this.close();
     });
     source.onChange(() => {
       this.render();
@@ -299,8 +316,10 @@ export class DeviceManagerUi {
 
   private render(): void {
     this.renderChip();
+    const wasOn = this.root.className === 'on';
     this.root.className = this.visible ? 'on' : '';
     if (!this.visible) return;
+    if (!wasOn) announceMenuOpen('ble-mgr'); // closes every other overlay
     this.root.replaceChildren();
     const card = el('div', 'bm-card');
 
