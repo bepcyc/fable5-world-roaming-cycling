@@ -53,6 +53,12 @@ const PROTOCOL_LABEL: Record<Protocol, string> = {
   csc: 'CSC',
   hrs: 'Heart Rate',
   fec: 'Tacx FE-C',
+  lf: 'Life Fitness',
+  c2: 'Concept2 PM5',
+  x70: 'Schwinn X70',
+  precor: 'Precor',
+  kf: 'KayakFirst',
+  rsc: 'RSC',
 };
 const STAGE_LABEL: Record<ConnectionStage, string> = {
   connecting: 'CONNECTING…',

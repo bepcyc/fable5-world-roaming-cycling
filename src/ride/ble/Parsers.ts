@@ -15,7 +15,14 @@
  * DEFENSIVE PARSING CONTRACT: a malformed/truncated notification must never
  * throw — every field read is bounds-checked; missing bytes yield nulls and
  * a `truncated` marker so callers can count garbage without crashing.
+ *
+ * FTMS parsing was folded into the complete machines/FtmsMachines.ts engine
+ * (all six FTMS data characteristics); parseIndoorBikeData below now delegates
+ * to it, producing the same field values as the previous inline reader
+ * (signed power/resistance preserved).
  */
+
+import { parseIndoorBike } from './machines/FtmsMachines';
 
 // ---- bounds-checked little-endian readers -----------------------------------
 
@@ -120,8 +127,13 @@ export interface CyclingPowerData {
   accTorqueNm: number | null;
   wheel: { revs: number; eventT: number } | null;
   crank: { revs: number; eventT: number } | null;
+  /** accumulated energy converted to kcal (raw kJ × jToCal), null if absent */
+  accEnergyKcal: number | null;
   truncated: boolean;
 }
+
+/** Joule→calorie factor (jToCal); kJ→kcal uses the same factor. */
+const J_TO_CAL = 0.239006;
 
 /** flags u16 + sint16 power, optional fields in bit order:
  *  bit0 pedal balance u8 (+bit1 reference), bit2 acc torque u16 (+bit3 src),
@@ -141,6 +153,7 @@ export function parseCyclingPower(dv: DataView): CyclingPowerData {
     accTorqueNm: null,
     wheel: null,
     crank: null,
+    accEnergyKcal: null,
     truncated: c.truncated,
   };
   if (flags === null || powerW === null) {
@@ -173,7 +186,11 @@ export function parseCyclingPower(dv: DataView): CyclingPowerData {
   if (flags & 0x0100) c.skip(3); // extreme angles (packed 2×12 bit)
   if (flags & 0x0200) c.skip(2); // top dead spot angle
   if (flags & 0x0400) c.skip(2); // bottom dead spot angle
-  if (flags & 0x0800) c.skip(2); // accumulated energy
+  if (flags & 0x0800) {
+    // Accumulated Energy: uint16 kJ → kcal (raw × jToCal)
+    const kj = c.u16();
+    if (kj !== null) out.accEnergyKcal = kj * J_TO_CAL;
+  }
   out.truncated = c.truncated;
   return out;
 }
@@ -250,6 +267,46 @@ export function parseCscFeature(dv: DataView): CscFeatureBits {
     wheelRevolutionSupported: (bits & 0x0001) !== 0,
     crankRevolutionSupported: (bits & 0x0002) !== 0,
   };
+}
+
+// ---- RSC Measurement 0x2A53 (service 0x1814) ----------------------------------
+
+export interface RscData {
+  /** running speed, km/h (raw 1/256 m/s → km/h) */
+  speedKmh: number | null;
+  /** running cadence, steps/min — NOT crank rpm, never a cycling cadence source */
+  cadenceSpm: number | null;
+  /** total distance, m (raw 1/10 m), null if absent */
+  distanceM: number | null;
+  truncated: boolean;
+}
+
+/** RSC Measurement 0x2A53.
+ *  flag = data[0] & 3 (bits 0,1 only — walk/run status bits ignored).
+ *  Mandatory: speed uint16 /(256/3.6) km/h, cadence uint8 spm. Then
+ *  bit0 instantaneous stride length (uint16, skipped),
+ *  bit1 total distance uint32 /10 m.
+ *  RSC "cadence" is steps/min from a gait algorithm — categorically NOT crank
+ *  RPM; no cycling-cadence role ever reads it (Capabilities.ts RSC exclusion). */
+export function parseRsc(dv: DataView): RscData {
+  const c = new Cursor(dv);
+  const flags = c.u8();
+  const out: RscData = { speedKmh: null, cadenceSpm: null, distanceM: null, truncated: false };
+  if (flags === null) {
+    out.truncated = true;
+    return out;
+  }
+  const speedRaw = c.u16();
+  if (speedRaw !== null) out.speedKmh = speedRaw / (256 / 3.6);
+  const cad = c.u8();
+  if (cad !== null) out.cadenceSpm = cad;
+  if (flags & 0x01) c.skip(2); // instantaneous stride length (1/100 m)
+  if (flags & 0x02) {
+    const d = c.u32();
+    if (d !== null) out.distanceM = d / 10;
+  }
+  out.truncated = c.truncated;
+  return out;
 }
 
 // ---- revolution-data accumulator (cadence / speed from cumulative counters) ---
@@ -391,64 +448,23 @@ export interface IndoorBikeData {
  *  notification of a record); bit0 == 1 marks a continuation without speed.
  *  Resistance Level: spec history is ambiguous (GSS says u8, FTMS-era
  *  Assigned Numbers said s16) — real trainers ship s16 2 bytes and both
- *  pycycling and Auuki parse 2 bytes; we read s16. */
+ *  pycycling and Auuki parse 2 bytes; we read s16.
+ *
+ *  Now a thin adapter over the shared machines/FtmsMachines engine (the
+ *  authoritative parser for all six FTMS data characteristics); the shape
+ *  and signed-field behavior are identical to the previous inline reader. */
 export function parseIndoorBikeData(dv: DataView): IndoorBikeData {
-  const c = new Cursor(dv);
-  const flags = c.u16();
-  const out: IndoorBikeData = {
-    speedKmh: null,
-    cadenceRpm: null,
-    totalDistanceM: null,
-    resistance: null,
-    powerW: null,
-    heartRateBpm: null,
-    elapsedS: null,
-    truncated: false,
+  const r = parseIndoorBike(dv);
+  return {
+    speedKmh: r.speedKmh,
+    cadenceRpm: r.cadenceRpm,
+    totalDistanceM: r.distanceM,
+    resistance: r.resistance,
+    powerW: r.powerW,
+    heartRateBpm: r.heartRateBpm,
+    elapsedS: r.elapsedS,
+    truncated: r.truncated,
   };
-  if (flags === null) {
-    out.truncated = true;
-    return out;
-  }
-  if ((flags & 0x0001) === 0) {
-    const v = c.u16();
-    if (v !== null) out.speedKmh = v / 100;
-  }
-  if (flags & 0x0002) c.skip(2); // average speed
-  if (flags & 0x0004) {
-    const v = c.u16();
-    if (v !== null) out.cadenceRpm = v / 2;
-  }
-  if (flags & 0x0008) c.skip(2); // average cadence
-  if (flags & 0x0010) {
-    const v = c.u24();
-    if (v !== null) out.totalDistanceM = v;
-  }
-  if (flags & 0x0020) {
-    const v = c.i16();
-    if (v !== null) out.resistance = v;
-  }
-  if (flags & 0x0040) {
-    const v = c.i16();
-    if (v !== null) out.powerW = v;
-  }
-  if (flags & 0x0080) c.skip(2); // average power
-  if (flags & 0x0100) {
-    // expended energy = total u16 + per-hour u16 + per-minute u8 (0xFFFF/0xFF
-    // sentinels mean "not available"); dashboard doesn't use them — skip
-    c.skip(5);
-  }
-  if (flags & 0x0200) {
-    const v = c.u8();
-    if (v !== null) out.heartRateBpm = v;
-  }
-  if (flags & 0x0400) c.skip(1); // metabolic equivalent
-  if (flags & 0x0800) {
-    const v = c.u16();
-    if (v !== null) out.elapsedS = v;
-  }
-  if (flags & 0x1000) c.skip(2); // remaining time
-  out.truncated = c.truncated;
-  return out;
 }
 
 // ---- FTMS Fitness Machine Feature 0x2ACC ---------------------------------------
@@ -537,6 +553,65 @@ export function encodeTargetPower(watts: number): ArrayBuffer {
   dv.setUint8(0, FTMS_OP.setTargetPower);
   dv.setInt16(1, clampI16(Math.round(watts)), true);
   return buf;
+}
+
+// ---- Start / Stop / Reset / Spin-Down control writes --------------------------
+// The workout-state opcodes: request-control / start / stop / reset / spin-down.
+// targets). LAAS keeps its own SIM/ERG encoders above; these add the workout-
+// Sent for descriptors flagged shouldSignalStartStop (SIM/ERG live above).
+
+/** Stop/Pause control-info byte (2ad9 op 0x08). */
+export const FTMS_CONTROL_INFO = { stop: 0x01, pause: 0x02 } as const;
+/** Spin-down opcode/status values (2ad9 op 0x13, 2ada status 0x14). */
+export const FTMS_SPIN_DOWN = {
+  startCommand: 0x01,
+  statusOpcode: 0x14,
+  requested: 0x01,
+  success: 0x02,
+  error: 0x03,
+  stopPedaling: 0x04,
+} as const;
+
+/** Reset (op 0x01). */
+export function encodeReset(): ArrayBuffer {
+  return new Uint8Array([FTMS_OP.reset]).buffer;
+}
+
+/** Start or Resume (op 0x07). */
+export function encodeStart(): ArrayBuffer {
+  return new Uint8Array([FTMS_OP.start]).buffer;
+}
+
+/** Stop or Pause (op 0x08 + control-info; default stop = 0x01). */
+export function encodeStop(controlInfo: number = FTMS_CONTROL_INFO.stop): ArrayBuffer {
+  return new Uint8Array([FTMS_OP.stop, controlInfo]).buffer;
+}
+
+/** Start Spin-Down calibration (op 0x13 + spin-down start command 0x01). */
+export function encodeSpinDownStart(): ArrayBuffer {
+  return new Uint8Array([FTMS_OP.spinDownControl, FTMS_SPIN_DOWN.startCommand]).buffer;
+}
+
+export interface SpinDownTargets {
+  targetSpeedHighKmh: number;
+  targetSpeedLowKmh: number;
+}
+
+/** Spin-down control-point response (7 bytes): [0x80, 0x13, 0x01, hiLSB, hiMSB,
+ *  loLSB, loMSB] → target speed band, km/h. */
+export function parseSpinDownResponse(dv: DataView): SpinDownTargets | null {
+  if (dv.byteLength < 7) return null;
+  if (dv.getUint8(0) !== FTMS_OP.responseCode || dv.getUint8(1) !== FTMS_OP.spinDownControl) return null;
+  return {
+    targetSpeedHighKmh: (dv.getUint8(3) * 256 + dv.getUint8(4)) / 100,
+    targetSpeedLowKmh: (dv.getUint8(5) * 256 + dv.getUint8(6)) / 100,
+  };
+}
+
+/** Spin-down status frame on 0x2ADA: [0x14, status] → status byte, or null. */
+export function parseSpinDownStatus(dv: DataView): number | null {
+  if (dv.byteLength < 2 || dv.getUint8(0) !== FTMS_SPIN_DOWN.statusOpcode) return null;
+  return dv.getUint8(1);
 }
 
 export interface FtmsCpResponse {
