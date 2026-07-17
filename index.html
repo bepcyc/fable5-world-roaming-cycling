@@ -434,6 +434,37 @@
         70%, 100% { transform: rotate(-90deg); }
       }
 
+      /* touch pause button (UX-10): mobile-only ⏸ in the top-left HUD corner
+         — the only phone path into the PAUSE card (Escape is desktop-only).
+         GameMenu toggles .on, shows it only while PLAYING on a touch device.
+         Top-left is the corner free of HUD metric cards (centered top),
+         the ⚙ FAB (bottom-right) and the BLE chip (top-right). Offset down
+         ~34px so it clears the always-on fps badge (debug/HUD.ts, top:10px
+         left:10px) instead of covering the owner's fps readout. */
+      #pause-fab {
+        position: fixed;
+        top: calc(44px + env(safe-area-inset-top, 0px));
+        left: max(10px, env(safe-area-inset-left));
+        z-index: 1400;
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        background: rgba(9, 13, 11, 0.62);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        color: var(--menu-text-bright);
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      }
+      #pause-fab.on { display: flex; }
+      #pause-fab:active { background: rgba(24, 32, 28, 0.8); }
+      #pause-fab svg { width: 22px; height: 22px; }
+
     </style>
   </head>
   <body>
@@ -508,6 +539,13 @@
         </div>
       </div>
     </div>
+
+    <!-- touch pause (UX-10): mobile ⏸ that opens the PAUSE card; GameMenu shows
+         it only while PLAYING on a touch device (Escape is the desktop path).
+         No data-i18n (it would replace the SVG) — aria-label is set in code. -->
+    <button id="pause-fab" type="button" aria-label="PAUSE">
+      <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
 
     <!-- in-game pause: ESC toggles; engine.paused freezes the frame beneath it -->
     <div id="pause">

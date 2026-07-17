@@ -17,6 +17,7 @@
  * flow, byte-for-byte.
  */
 
+import { isMobileDevice } from './BrowserGate';
 import type { Engine } from './Engine';
 import type { LaasHooks } from './Hooks';
 import { LANG, type Lang, storeLang, t } from './I18n';
@@ -65,6 +66,7 @@ export class GameMenu {
 
   private splash = el<HTMLDivElement>('splash');
   private pause = el<HTMLDivElement>('pause');
+  private pauseFab = el<HTMLButtonElement>('pause-fab');
   private splashContent = el<HTMLDivElement>('splash-content');
   private splashHint = el<HTMLDivElement>('splash-hint');
   private msettings = el<HTMLDivElement>('msettings');
@@ -97,8 +99,22 @@ export class GameMenu {
       else if (this.state === 'PAUSED') this.resume();
     });
 
+    // touch pause (UX-10): a phone has no Escape — this ⏸ is its only way
+    // into the PAUSE card. Shown only while PLAYING on a touch device.
+    this.pauseFab.setAttribute('aria-label', t('menu.pause'));
+    this.pauseFab.title = t('menu.pause');
+    this.pauseFab.addEventListener('click', () => {
+      if (this.state === 'PLAYING') this.openPause();
+    });
+
     this.buildMachineSettings();
     this.startProgressPolling();
+  }
+
+  /** the touch ⏸ lives only while PLAYING on a touch device (desktop uses
+   *  Escape); every state transition calls this */
+  private updatePauseFab(): void {
+    this.pauseFab.classList.toggle('on', this.state === 'PLAYING' && isMobileDevice());
   }
 
   /** Engine exists only after Engine.create() resolves — wire it in once available. */
@@ -150,6 +166,7 @@ export class GameMenu {
     if (this.engine) this.engine.paused = false;
     this.state = 'PLAYING';
     this.hasPlayedOnce = true;
+    this.updatePauseFab();
   }
 
   private onExitClick(): void {
@@ -166,6 +183,7 @@ export class GameMenu {
     this.engine.paused = true;
     this.state = 'PAUSED';
     this.pause.classList.add('on');
+    this.updatePauseFab();
   }
 
   private resume(): void {
@@ -173,6 +191,7 @@ export class GameMenu {
     this.engine.paused = false;
     this.state = 'PLAYING';
     this.pause.classList.remove('on');
+    this.updatePauseFab();
   }
 
   private onPauseSettingsClick(): void {
@@ -189,6 +208,7 @@ export class GameMenu {
     this.pause.classList.remove('on');
     this.splash.hidden = false;
     this.state = 'MENU';
+    this.updatePauseFab();
     this.updateStartLabel();
   }
 
