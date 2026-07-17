@@ -17,6 +17,7 @@
  * per-frame work while closed.
  */
 
+import { isMobileDevice } from '../core/BrowserGate';
 import type { LaasHooks } from '../core/Hooks';
 import { t } from '../core/I18n';
 import { MODE_ICON } from '../ride/RideHud';
@@ -340,18 +341,34 @@ export class OptionsMenu {
     this.hint.className = 'opt-hint';
     this.panel.appendChild(this.hint);
 
-    // KEYS
-    this.panel.appendChild(h(t('opt.keys')));
-    const keys = document.createElement('div');
-    keys.className = 'opt-keys';
-    keys.innerHTML =
-      `<b>M</b> ${t('opt.keyBikeMode')}    <b>V</b> ${t('opt.keyWalkFly')}\n` +
-      `<b>B</b> ${t('opt.keyDashboard')}    <b>O</b> ${t('opt.keyThisMenu')}\n` +
-      `<b>←/→</b> ${t('opt.keyPickTurn')}   <b>Space/S</b> ${t('opt.keyBrake')}\n` +
-      `<b>[ ]</b> ${t('opt.keyTime')}        <b>1..9</b> ${t('opt.keyViews')}\n` +
-      `<b>Shift+D</b> ${t('opt.keyDebug')}   <b>Ctrl+E</b> .fit\n` +
-      `<b>Shift+H</b> ${t('opt.keyHands')}`;
-    this.panel.appendChild(keys);
+    // KEYS on a keyboard device; GESTURES on touch (UX-04: a phone/tablet has
+    // no keyboard, so a keyboard cheatsheet there is noise — show the real
+    // touch verbs instead).
+    if (isMobileDevice()) {
+      this.panel.appendChild(h(t('opt.gestures')));
+      const g = document.createElement('div');
+      g.className = 'opt-keys';
+      g.innerHTML =
+        `<b>◀</b> ${t('opt.gesStick')}\n` +
+        `<b>↕</b> ${t('opt.gesDrag')}\n` +
+        `<b>JUMP</b> ${t('opt.gesJump')}\n` +
+        `<b>⭐</b> ${t('opt.gesTurnCard')}\n` +
+        `<b>BRAKE/U-TURN</b> ${t('opt.gesRide')}`;
+      this.panel.appendChild(g);
+    } else {
+      this.panel.appendChild(h(t('opt.keys')));
+      const keys = document.createElement('div');
+      keys.className = 'opt-keys';
+      keys.innerHTML =
+        `<b>M</b> ${t('opt.keyBikeMode')}    <b>V</b> ${t('opt.keyWalkFly')}\n` +
+        `<b>B</b> ${t('opt.keyDashboard')}    <b>O</b> ${t('opt.keyThisMenu')}\n` +
+        `<b>←/→</b> ${t('opt.keyPickTurn')}   <b>Space/S</b> ${t('opt.keyBrake')}\n` +
+        `<b>X</b> ${t('opt.keyDismount')}      <b>S hold</b> ${t('opt.keyUturn')}\n` +
+        `<b>[ ]</b> ${t('opt.keyTime')}        <b>1..9</b> ${t('opt.keyViews')}\n` +
+        `<b>Shift+D</b> ${t('opt.keyDebug')}   <b>Ctrl+E</b> .fit\n` +
+        `<b>Shift+H</b> ${t('opt.keyHands')}`;
+      this.panel.appendChild(keys);
+    }
 
     this.fab.addEventListener('click', (e) => {
       e.stopPropagation();

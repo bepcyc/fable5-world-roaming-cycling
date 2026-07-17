@@ -493,6 +493,17 @@ const DICT: Record<string, Entry> = {
   'opt.keyViews': { en: 'views', de: 'Ansichten', ru: 'виды' },
   'opt.keyDebug': { en: 'debug', de: 'Debug', ru: 'отладка' },
   'opt.keyHands': { en: 'hands', de: 'Hände', ru: 'руки' },
+  'opt.keyDismount': { en: 'dismount', de: 'absteigen', ru: 'спешиться' },
+  'opt.keyUturn': { en: 'U-turn', de: 'wenden', ru: 'разворот' },
+
+  // ---- GESTURES sheet (OptionsMenu.ts, shown instead of KEYS on touch —
+  // UX-04: a phone/tablet has no keyboard) ----
+  'opt.gestures': { en: 'gestures', de: 'Gesten', ru: 'жесты' },
+  'opt.gesStick': { en: 'left stick — move', de: 'linker Stick — gehen', ru: 'левый стик — идти' },
+  'opt.gesDrag': { en: 'drag — look', de: 'ziehen — umsehen', ru: 'драг — камера' },
+  'opt.gesJump': { en: 'button — jump', de: 'Taste — springen', ru: 'кнопка — прыжок' },
+  'opt.gesTurnCard': { en: 'tap card — pick turn', de: 'Karte tippen — abzweigen', ru: 'тап по карточке — поворот' },
+  'opt.gesRide': { en: 'ride buttons', de: 'Fahrtasten', ru: 'кнопки езды' },
 
   // ---- hands visibility (OptionsMenu.ts touch row + Cockpit.ts Shift+H) ----
   'opt.hands': { en: 'hands', de: 'Hände', ru: 'руки' },
