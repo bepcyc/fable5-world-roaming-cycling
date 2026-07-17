@@ -68,6 +68,8 @@ interface InboundMsg {
   chr?: string;
   data?: string;
   services?: string[] | GattService[];
+  /** 'alive' op reply: is this addr in the bridge's live connection map? */
+  alive?: boolean;
 }
 
 /** one discovered service and its characteristics, with the raw property
@@ -337,6 +339,17 @@ class NativeDeviceHandle implements BleDeviceHandle {
       /* already gone — the 'gone' event has done, or will do, the bookkeeping */
     });
   }
+
+  /** ground truth from the native side's connection map — a BT-stack restart
+   *  can swallow onConnectionStateChange and freeze `connected` at true
+   *  (zombie-READY, hit live 2026-07-17); the bridge's `conns` cannot lie */
+  async probeAlive(): Promise<boolean> {
+    try {
+      return (await bleClient().call('alive', { addr: this.id })).alive === true;
+    } catch {
+      return false; // bridge unreachable == link unusable either way
+    }
+  }
 }
 
 // ---- in-page chooser -----------------------------------------------------------
@@ -381,6 +394,19 @@ class ScanChooser {
   private empty: HTMLDivElement;
   private hits = new Map<string, ScanHit & { saved?: boolean }>();
   private onPick: (hit: ScanHit) => void;
+  /** wired by chooseAndConnect: stop + restart the native scan (the BLE
+   *  stack occasionally goes quiet mid-scan; the owner asked for an explicit
+   *  refresh instead of reopening the whole chooser) */
+  onRescan: (() => void) | null = null;
+
+  /** drop live hits back to the saved seed set (rescan restarts the radio —
+   *  stale rows must not linger looking fresh) */
+  resetLive(): void {
+    for (const [addr, hit] of [...this.hits]) {
+      if (!hit.saved) this.hits.delete(addr);
+    }
+    this.render();
+  }
 
   constructor(onPick: (hit: ScanHit) => void, onCancel: () => void, known: { addr: string; name: string }[] = []) {
     this.onPick = onPick;
@@ -412,12 +438,17 @@ class ScanChooser {
     this.empty.textContent = t('ble.scan.searching');
     this.list.appendChild(this.empty);
 
+    const rescan = document.createElement('div');
+    rescan.className = 'bs-btn';
+    rescan.textContent = t('ble.scan.rescan');
+    rescan.addEventListener('click', () => this.onRescan?.());
+
     const cancel = document.createElement('div');
     cancel.className = 'bs-btn';
     cancel.textContent = t('ble.scan.cancel');
     cancel.addEventListener('click', onCancel);
 
-    card.append(title, note, this.list, cancel);
+    card.append(title, note, this.list, rescan, cancel);
     this.root.appendChild(card);
     document.body.appendChild(this.root);
     if (this.hits.size > 0) this.render();
@@ -527,6 +558,16 @@ export class NativeBridgeTransport implements BleTransport {
         }
       };
       c.onScan((h) => chooser.add(h));
+      chooser.onRescan = () => {
+        chooser.resetLive();
+        void c
+          .call('stopScan')
+          .catch(() => {})
+          .then(() => c.call('scan', args))
+          .catch(() => {
+            /* scan restart failed — the picker stays usable with saved rows */
+          });
+      };
       const args: Record<string, unknown> = {};
       if (services) {
         args['services'] = services;

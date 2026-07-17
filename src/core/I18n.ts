@@ -134,6 +134,7 @@ const DICT: Record<string, Entry> = {
   },
   'ble.scan.cancel': { en: 'CANCEL', de: 'ABBRECHEN', ru: 'ОТМЕНА' },
   'ble.scan.saved': { en: 'saved', de: 'gespeichert', ru: 'сохранён' },
+  'ble.scan.rescan': { en: 'REFRESH', de: 'AKTUALISIEREN', ru: 'ОБНОВИТЬ' },
   'ble.err.off': {
     en: 'Bluetooth is switched off. Turn it on and try again.',
     de: 'Bluetooth ist ausgeschaltet. Schalte es ein und versuche es erneut.',

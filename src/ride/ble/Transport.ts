@@ -278,6 +278,12 @@ export interface BleDeviceHandle {
   onDisconnect(cb: () => void): void;
   /** tear the link down deliberately */
   disconnect(): void;
+  /** ground-truth liveness: ask the underlying stack whether the link is
+   *  REALLY up. `connected` above is event-derived and can zombie-freeze at
+   *  true when a stack restart swallows the disconnect callback (hit live
+   *  2026-07-17: UI showed READY for minutes over a dead link). Optional —
+   *  implementations without a cheap truth source simply omit it. */
+  probeAlive?(): Promise<boolean>;
 }
 
 export interface BleTransport {
@@ -413,6 +419,12 @@ class RealDeviceHandle implements BleDeviceHandle {
 
   disconnect(): void {
     this.server.disconnect();
+  }
+
+  /** ground truth straight from the browser's GATT object — unlike our
+   *  event-derived `connected`, this cannot zombie-freeze */
+  probeAlive(): Promise<boolean> {
+    return Promise.resolve(this.server.connected);
   }
 }
 

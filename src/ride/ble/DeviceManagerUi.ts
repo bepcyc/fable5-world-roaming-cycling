@@ -114,6 +114,13 @@ const STYLE = `
 #ble-mgr .bm-dot{width:7px;height:7px;border-radius:50%;flex:none;background:#5a6a61}
 #ble-mgr .bm-devcard.stage-ready .bm-dot{background:#7ee0a3;box-shadow:0 0 5px rgba(126,224,163,0.7)}
 #ble-mgr .bm-devcard.stage-lost .bm-dot{background:#ff8a70;box-shadow:0 0 5px rgba(255,138,112,0.6)}
+/* in-flight stages pulse AMBER — "connecting" must read as activity, not as
+   red-until-suddenly-green (owner UX rule, 2026-07-17) */
+#ble-mgr .bm-devcard.stage-connecting .bm-dot,
+#ble-mgr .bm-devcard.stage-discovering .bm-dot,
+#ble-mgr .bm-devcard.stage-subscribing .bm-dot{background:#ffd166;
+  box-shadow:0 0 5px rgba(255,209,102,0.7);animation:bmPulse 0.9s ease-in-out infinite}
+@keyframes bmPulse{0%,100%{opacity:1}50%{opacity:0.35}}
 #ble-mgr .bm-devname{font:bold 11px/1.3 ui-monospace,monospace;flex:1;min-width:0;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #ble-mgr .bm-stage{font:9px/1 ui-monospace,monospace;letter-spacing:0.06em;color:#8fb39e;flex:none}

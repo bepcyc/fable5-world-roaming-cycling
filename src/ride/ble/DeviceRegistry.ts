@@ -107,6 +107,9 @@ export class DeviceRegistry {
   private listeners: (() => void)[] = [];
   private transport: BleTransport;
   private generation = new Map<string, number>();
+  /** zombie-READY watchdog state (see update()) */
+  private aliveT = 0;
+  private aliveBusy = new Set<string>();
 
   constructor(transport: BleTransport) {
     this.transport = transport;
@@ -363,5 +366,36 @@ export class DeviceRegistry {
 
   update(dt: number): void {
     this.roleMux.update(dt);
+    // zombie-READY watchdog: a BT-stack restart can swallow the disconnect
+    // callback entirely, freezing a dead link at stage 'ready' (hit live
+    // 2026-07-17 — green card, every op failing "device not connected").
+    // Poll the transport's ground truth and run the normal loss path when
+    // it disagrees. Fire-and-forget with a re-entry guard; entries whose
+    // handle lacks probeAlive() keep the old event-only behavior.
+    this.aliveT += dt;
+    if (this.aliveT >= ALIVE_POLL_S) {
+      this.aliveT = 0;
+      for (const entry of this.devices.values()) {
+        const handle = entry.handle;
+        if (entry.stage !== 'ready' || !handle?.probeAlive || this.aliveBusy.has(entry.id)) continue;
+        this.aliveBusy.add(entry.id);
+        void handle
+          .probeAlive()
+          .then((alive) => {
+            if (alive) return;
+            const cur = this.devices.get(entry.id);
+            if (!cur || cur.handle !== handle || cur.stage !== 'ready') return; // superseded meanwhile
+            this.generation.set(entry.id, (this.generation.get(entry.id) ?? 0) + 1);
+            cur.stage = 'lost';
+            this.unregisterRoleMux(entry.id);
+            this.notify();
+          })
+          .catch(() => {})
+          .finally(() => this.aliveBusy.delete(entry.id));
+      }
+    }
   }
 }
+
+/** liveness poll cadence — cheap (one tiny bridge call per ready device) */
+const ALIVE_POLL_S = 4;

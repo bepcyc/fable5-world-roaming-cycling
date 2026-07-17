@@ -177,6 +177,10 @@ class BleBridge(
             "read" -> gattOp(id, o, PendingOp.KIND_READ)
             "write" -> gattOp(id, o, PendingOp.KIND_WRITE)
             "disconnect" -> { conns[o.getString("addr")]?.gatt?.disconnect(); replyOk(id) }
+            // liveness probe: the JS side can hold a stale "ready" after a BT
+            // stack restart that never delivered onConnectionStateChange (the
+            // zombie-READY the owner hit live, 2026-07-17). Truth is conns[].
+            "alive" -> reply(id, JSONObject().put("ok", true).put("alive", conns.containsKey(o.getString("addr"))))
             else -> replyErr(id, "badop", "unknown op: $op")
         }
     }
