@@ -1,7 +1,7 @@
 {
   "name": "laas",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "PROJECT LAAS — fully procedural open world in the browser (WebGPU)",
   "scripts": {
