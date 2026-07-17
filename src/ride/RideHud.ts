@@ -31,6 +31,7 @@ const TELEPORT_SPEED = 200; // m/s — faster than any ride ⇒ programmatic jum
 const MOVING_MS = 0.3; // m/s — demo "pedaling" threshold
 const REFRESH_S = 0.15; // text refresh cadence
 const MS_TO_KMH = 3.6;
+const UTURN_CONFIRM_MS = 500; // hold the U-turn button this long to confirm
 
 interface Card {
   root: HTMLDivElement;
@@ -123,6 +124,12 @@ const STYLE = `
 .rp-btn.brake{width:64px;height:64px;font-size:9px;color:#ffb09a;
   border-color:rgba(255,138,112,0.4)}
 .rp-btn.brake.active{background:rgba(255,138,112,0.38)}
+/* U-turn (UX-02): hold-to-confirm — the ring fills while held, so a stray
+   tap can't spin the rider round. Shown for ANY source while riding. */
+.rp-btn.uturn{width:64px;height:64px;font-size:8px;color:#bcd9ff;
+  border-color:rgba(140,190,255,0.4)}
+.rp-btn.uturn.active{background:rgba(140,190,255,0.34)}
+.rp-btn.uturn.armed{background:rgba(140,190,255,0.55);transform:scale(1.02)}
 `;
 
 /** `setPointerCapture()` throws NotFoundError once the browser no longer
@@ -202,12 +209,22 @@ export class RideHud {
   /** touch UI (mobile only): hold-to-pedal + hold-to-brake, the tap
    *  equivalent of the 'dev' keyboard source's W/S — see buildTouchPedal() */
   private pedalWrap: HTMLDivElement | null = null;
-  /** bound inside buildTouchPedal(); called from update() whenever the
-   *  pedal/brake controls transition from shown to hidden (dismount / source
-   *  swap away from 'dev') so a held finger can't latch state forever once
-   *  its buttons go display:none (codex review, scenario 1). */
-  private releasePedalBrake: (() => void) | null = null;
+  private pedalBtn: HTMLDivElement | null = null;
+  private brakeBtn: HTMLDivElement | null = null;
+  /** touch U-turn button (UX-02): hold-to-confirm; calls rig.uTurn() */
+  private uturnBtn: HTMLDivElement | null = null;
+  private uturnWasOn = false;
+  private releaseUturn: (() => void) | null = null;
+  /** bound inside buildTouchPedal(); called from update() whenever a
+   *  pedal/brake control transitions from shown to hidden (dismount / source
+   *  swap) so a held finger can't latch state forever once its button goes
+   *  display:none (codex review, scenario 1). Split per-button so the brake
+   *  (shown for ANY source, UX-08) and the dev-only pedal release
+   *  independently; the document/blur path releases both via a local closure. */
+  private releasePedal: (() => void) | null = null;
+  private releaseBrake: (() => void) | null = null;
   private pedalWasOn = false;
+  private brakeWasOn = false;
   private visible: boolean;
   private last: { x: number; z: number } | null = null;
   private speedMs = 0;
@@ -295,11 +312,16 @@ export class RideHud {
   }
 
   /**
-   * Touch UI: hold-to-pedal + hold-to-brake — the 'dev' power source (KEYS,
-   * picked from the touch-friendly OptionsMenu) reads W/S from a keydown
-   * listener with no touch path, so on a phone/tablet it mounted the bike
-   * and then produced zero watts forever. These two buttons are the tap
-   * equivalent, shown only while that source is actually mounted (update()).
+   * Touch UI: hold-to-pedal + hold-to-brake — the tap equivalents of the
+   * keyboard bike's W/S, which a phone/tablet has no way to press.
+   *
+   * BRAKE is shown for ANY power source while riding (UX-08): a rider on a
+   * real BLE trainer flying into a hairpin needs a finger brake — the old
+   * gate only showed these controls for the 'dev' keyboard source, so a
+   * touch player with real sensors had no way to stop. PEDAL emulation stays
+   * dev-only: injecting synthetic watts only means anything for the keyboard
+   * source (demo/BLE produce their own power). Per-button visibility is
+   * decided in update().
    */
   private buildTouchPedal(): void {
     const wrap = document.createElement('div');
@@ -314,14 +336,23 @@ export class RideHud {
     brake.textContent = t('ride.brakeBtn');
     brake.setAttribute('role', 'button');
     brake.setAttribute('aria-label', t('ride.brakeBtn'));
-    wrap.append(pedal, brake);
+    const uturn = document.createElement('div');
+    uturn.className = 'rp-btn uturn';
+    uturn.textContent = t('ride.uturnBtn');
+    uturn.setAttribute('role', 'button');
+    uturn.setAttribute('aria-label', t('ride.uturnBtn'));
+    wrap.append(pedal, brake, uturn);
     document.body.appendChild(wrap);
     this.pedalWrap = wrap;
+    this.pedalBtn = pedal;
+    this.brakeBtn = brake;
+    this.uturnBtn = uturn;
 
     const setPedal = (on: boolean): void => {
       pedal.classList.toggle('active', on);
       if (this.source?.kind === 'dev') (this.source as KeyboardPowerSource).setPedaling(on);
     };
+    this.releasePedal = () => setPedal(false);
     pedal.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       setPedal(true);
@@ -339,6 +370,7 @@ export class RideHud {
       brake.classList.toggle('active', on);
       this.rig?.setBrake(on);
     };
+    this.releaseBrake = () => setBrake(false);
     brake.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       setBrake(true);
@@ -348,6 +380,33 @@ export class RideHud {
     brake.addEventListener('pointercancel', () => setBrake(false));
     brake.addEventListener('lostpointercapture', () => setBrake(false));
 
+    // U-turn: hold-to-confirm (~0.5 s) so a stray tap can't spin the rider
+    // round. The timer arms the ring; on fire it calls rig.uTurn() (same
+    // reversal as the desktop hold-brake). Any release cancels a pending arm.
+    let uturnTimer = 0;
+    const cancelUturn = (): void => {
+      if (uturnTimer) {
+        clearTimeout(uturnTimer);
+        uturnTimer = 0;
+      }
+      uturn.classList.remove('active', 'armed');
+    };
+    this.releaseUturn = cancelUturn;
+    uturn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      uturn.classList.add('active');
+      safeCapture(uturn, e.pointerId);
+      uturnTimer = window.setTimeout(() => {
+        uturnTimer = 0;
+        uturn.classList.add('armed');
+        this.rig?.uTurn();
+        window.setTimeout(() => uturn.classList.remove('active', 'armed'), 220);
+      }, UTURN_CONFIRM_MS);
+    });
+    uturn.addEventListener('pointerup', cancelUturn);
+    uturn.addEventListener('pointercancel', cancelUturn);
+    uturn.addEventListener('lostpointercapture', cancelUturn);
+
     // document/activity transitions the pointer path never sees on Android
     // (Custom Tab backgrounded mid-hold — task switch, incoming call, the
     // system back gesture): without these a backgrounded tab can resume
@@ -355,8 +414,8 @@ export class RideHud {
     const releaseBoth = (): void => {
       setPedal(false);
       setBrake(false);
+      cancelUturn();
     };
-    this.releasePedalBrake = releaseBoth;
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) releaseBoth();
     });
@@ -377,19 +436,27 @@ export class RideHud {
     const dbg =
       (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
     dbg['rideSetSource'] = (kind: 'demo' | 'dev' | null): string => {
-      const src =
-        kind === 'demo' ? new DemoSensorSource() : kind === 'dev' ? new KeyboardPowerSource() : null;
-      this.source = src;
-      this.rig?.setSource(src);
-      this.applyBadge();
-      if (src && !this.visible) {
-        this.visible = true; // picking a source means "I want to ride"
-        this.applyVisibility();
-      }
+      this.setSource(
+        kind === 'demo' ? new DemoSensorSource() : kind === 'dev' ? new KeyboardPowerSource() : null,
+      );
       return this.source?.kind ?? 'none';
     };
     dbg['rideSourceKind'] = (): string => this.source?.kind ?? 'none';
     (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg;
+  }
+
+  /** swap the live power source — options-menu picks and the lazy BLE attach
+   *  (UX-15b: bring BLE up mid-ride without a page reload) both route here.
+   *  Propagates to the rig, refreshes the honesty badge, and reveals the HUD
+   *  (picking a source means "I want to ride"). */
+  setSource(src: SensorSource | null): void {
+    this.source = src;
+    this.rig?.setSource(src);
+    this.applyBadge();
+    if (src && !this.visible) {
+      this.visible = true;
+      this.applyVisibility();
+    }
   }
 
   /** (re)draw the honesty badge for the current source */
@@ -438,13 +505,27 @@ export class RideHud {
     if (!this.visible) return;
 
     const st = this.rig?.state() ?? null;
-    if (this.pedalWrap) {
-      const showPedal = this.source?.kind === 'dev' && (st?.riding ?? false);
-      // dismount / source swap away from 'dev' while a finger is still down
-      // on the (about to vanish) button — release now, not never
-      if (this.pedalWasOn && !showPedal) this.releasePedalBrake?.();
+    if (this.pedalWrap && this.pedalBtn && this.brakeBtn && this.uturnBtn) {
+      const riding = st?.riding ?? false;
+      // brake + U-turn work for ANY source while riding (UX-08/02: a rider on
+      // a real trainer must be able to stop AND reverse with a finger); pedal
+      // emulation is dev-only.
+      const showBrake = riding;
+      const showUturn = riding;
+      const showPedal = this.source?.kind === 'dev' && riding;
+      // a finger still down on a button that is about to vanish (dismount /
+      // source swap) — release now, not never; per-button so hiding the
+      // dev-only pedal never drops the brake and vice versa
+      if (this.pedalWasOn && !showPedal) this.releasePedal?.();
+      if (this.brakeWasOn && !showBrake) this.releaseBrake?.();
+      if (this.uturnWasOn && !showUturn) this.releaseUturn?.();
       this.pedalWasOn = showPedal;
-      this.pedalWrap.classList.toggle('on', showPedal);
+      this.brakeWasOn = showBrake;
+      this.uturnWasOn = showUturn;
+      this.pedalBtn.style.display = showPedal ? 'flex' : 'none';
+      this.brakeBtn.style.display = showBrake ? 'flex' : 'none';
+      this.uturnBtn.style.display = showUturn ? 'flex' : 'none';
+      this.pedalWrap.classList.toggle('on', showBrake || showPedal || showUturn);
     }
     const sample = this.source?.read() ?? { cadenceRpm: null, heartRateBpm: null, powerW: null };
     // session recording (1 Hz decimation inside; power is real solver input)

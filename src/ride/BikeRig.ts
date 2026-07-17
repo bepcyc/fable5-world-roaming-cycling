@@ -72,6 +72,13 @@ const BRIDGE_MIN_M = 0.05; // m — below this the endpoints coincide, no bridge
 const BRIDGE_STEP_M = 2; // m — bridge polyline sampling step
 const ARM_CHORD_M = 12; // m — chord length for junction arm directions
 const NOTE_TTL_S = 2.6;
+// UX-01/02 U-turn: reverse travel direction ON the current edge (no teleport).
+// Desktop trigger = hold the brake (S/↓/Space) for ~1 s while slow, Zwift's
+// hold-down-arrow; the mobile U-TURN button (RideHud) calls uTurn() directly.
+const UTURN_MAX_KMH = 25; // hold-brake U-turn only engages below this speed
+const UTURN_MAX_V = UTURN_MAX_KMH / 3.6; // m/s
+const UTURN_HOLD_S = 1.0; // s — brake held this long at low speed swings around
+const UTURN_SPEED_KEEP = 0.2; // fraction of speed kept through the swing
 const MODE_ORDER: readonly RideMode[] = ['hike', 'road', 'gravel', 'mtb'];
 
 export type Turn =
@@ -160,6 +167,9 @@ export interface RideState {
   /** B4: signed road bank at the ridden point (+ raises the outside) —
    *  the cockpit sits on the banked surface */
   bank: number;
+  /** current travel heading (rad; atan2(-x,-z) frame) — U-turn probes read
+   *  this to prove the ~180° reversal; 0 when on foot */
+  heading: number;
 }
 
 export class BikeRig {
@@ -186,6 +196,11 @@ export class BikeRig {
   private note: string | null = null;
   private noteT = 0;
   private brake = false;
+  // UX-01 desktop U-turn: frame-based hold timer (deterministic under
+  // settle()). Accumulates while the brake is held below UTURN_MAX_V; fires
+  // once at UTURN_HOLD_S, re-arms only after the brake releases.
+  private brakeHoldT = 0;
+  private uturnArmed = true;
   private hazard: HazardAhead | null = null;
   private hazardScanT = 0;
   // fixed-step pose pair — the camera interpolates between them with the
@@ -233,6 +248,11 @@ export class BikeRig {
         if (e.code === 'Space' || e.code === 'KeyS' || e.code === 'ArrowDown') this.brake = true;
         if (e.code === 'ArrowLeft') this.pick(-1);
         if (e.code === 'ArrowRight') this.pick(1);
+        // UX-07: a dedicated "dismount" — ALWAYS lands in hike in one press,
+        // unlike M which cycles through the other bikes first (panic anti-
+        // pattern: the same key meant "swap bike" or "get off" depending on
+        // how many times you hit it). One key, one meaning.
+        if (e.code === 'KeyX' && !e.repeat) this.dismount();
       }
     });
     window.addEventListener('keyup', (e) => {
@@ -337,6 +357,7 @@ export class BikeRig {
       note: this.note,
       hazard: this.hazard,
       bank: this.bank,
+      heading: this.riding ? this.poseCur.heading : 0,
     };
   }
 
@@ -428,6 +449,27 @@ export class BikeRig {
    *  Space/S/↓, which only fire from keydown/keyup listeners. */
   setBrake(on: boolean): void {
     this.brake = on;
+  }
+
+  /** U-turn on the current edge (UX-01 desktop hold-brake / UX-02 mobile
+   *  button): reverse travel direction IN PLACE. Position stays continuous —
+   *  the same point on the same polyline; only `dir` (and so the tangent
+   *  heading) flips. The rendered heading then swings smoothly through the
+   *  existing pure-pursuit resync (the look-ahead point is now behind, err
+   *  exceeds TRAJ_ERR_SNAP, the yaw-rate cap releases) — the very same
+   *  reversal a dead end already rides. Speed scrubs to a crawl, as a rider
+   *  slows to swing round. No teleport (no-teleport law, docs/TURN_PICKER.md).
+   *  Returns false when not riding. */
+  uTurn(): boolean {
+    if (!this.riding) return false;
+    this.dir = this.dir > 0 ? -1 : 1;
+    this.solver.v *= UTURN_SPEED_KEEP;
+    this.junction = null;
+    this.locked = null;
+    this.bridge = null;
+    this.brakeHoldT = 0;
+    this.flash(t('ride.uTurn'));
+    return true;
   }
 
   /** route graph accessor (bike-computer map, M1.5 owner ref) */
@@ -530,6 +572,22 @@ export class BikeRig {
     }
     if (!this.riding) return;
     const mode = this.mode as BikeMode;
+
+    // UX-01 desktop U-turn: holding the brake at low speed for ~1 s swings the
+    // bike around (Zwift's hold-down-arrow). Frame-based on the fixed step so
+    // it is deterministic under settle(). The brake is already slowing you;
+    // once under the cap and held long enough, reverse — then re-arm only
+    // after the finger/key lifts, so it fires at most once per hold.
+    if (this.brake && this.solver.v < UTURN_MAX_V) {
+      this.brakeHoldT += dt;
+      if (this.brakeHoldT >= UTURN_HOLD_S && this.uturnArmed) {
+        this.uturnArmed = false;
+        this.uTurn();
+      }
+    } else {
+      this.brakeHoldT = 0;
+    }
+    if (!this.brake) this.uturnArmed = true;
 
     const sm = this.curSample();
     const g = this.probe(sm.x, sm.z);

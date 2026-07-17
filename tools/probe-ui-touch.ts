@@ -239,6 +239,24 @@ const STATES: State[] = [
     },
   },
   {
+    name: 'playing',
+    url: '/?scene=world&seed=1&preset=min',
+    enter: async (page) => {
+      // The touch pause button (#pause-fab, UX-10) is static markup that
+      // GameMenu shows only while PLAYING on a touch device. Model that state
+      // the same way `pause` does: hide the splash (PLAYING hides it) and turn
+      // the fab on, then audit whether a finger can actually reach a 48px
+      // pause control in the top-left HUD corner.
+      await page.waitForSelector('#pause-fab', { state: 'attached', timeout: 45000 });
+      await page.evaluate(
+        "(() => { const s = document.getElementById('splash'); if (s) s.hidden = true;" +
+          "const f = document.getElementById('pause-fab'); if (f) f.classList.add('on'); })()",
+      );
+      await page.waitForSelector('#pause-fab.on', { state: 'visible', timeout: 5000 });
+      return true;
+    },
+  },
+  {
     name: 'boot',
     url: '/?scene=world&seed=1&preset=min',
     enter: async (page) => {

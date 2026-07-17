@@ -17,6 +17,7 @@
  * flow, byte-for-byte.
  */
 
+import { isMobileDevice } from './BrowserGate';
 import type { Engine } from './Engine';
 import type { LaasHooks } from './Hooks';
 import { LANG, type Lang, storeLang, t } from './I18n';
@@ -65,6 +66,7 @@ export class GameMenu {
 
   private splash = el<HTMLDivElement>('splash');
   private pause = el<HTMLDivElement>('pause');
+  private pauseFab = el<HTMLButtonElement>('pause-fab');
   private splashContent = el<HTMLDivElement>('splash-content');
   private splashHint = el<HTMLDivElement>('splash-hint');
   private msettings = el<HTMLDivElement>('msettings');
@@ -89,16 +91,36 @@ export class GameMenu {
 
     el<HTMLButtonElement>('btn-resume').addEventListener('click', () => this.resume());
     el<HTMLButtonElement>('btn-pause-settings').addEventListener('click', () => this.onPauseSettingsClick());
+    el<HTMLButtonElement>('btn-pause-graphics').addEventListener('click', () => this.onPauseGraphicsClick());
     el<HTMLButtonElement>('btn-mainmenu').addEventListener('click', () => this.onMainMenuClick());
 
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'Escape') return;
+      // UX-11 bug 2: the graphics sheet is a higher modal layer with its own
+      // Escape=close handler. Without this guard BOTH fired on one press —
+      // the sheet closed AND pause opened. The top open layer owns Escape;
+      // when the sheet is up, it closes itself and pause stays out of it.
+      if (document.getElementById('qset')?.classList.contains('on')) return;
       if (this.state === 'PLAYING') this.openPause();
       else if (this.state === 'PAUSED') this.resume();
     });
 
+    // touch pause (UX-10): a phone has no Escape — this ⏸ is its only way
+    // into the PAUSE card. Shown only while PLAYING on a touch device.
+    this.pauseFab.setAttribute('aria-label', t('menu.pause'));
+    this.pauseFab.title = t('menu.pause');
+    this.pauseFab.addEventListener('click', () => {
+      if (this.state === 'PLAYING') this.openPause();
+    });
+
     this.buildMachineSettings();
     this.startProgressPolling();
+  }
+
+  /** the touch ⏸ lives only while PLAYING on a touch device (desktop uses
+   *  Escape); every state transition calls this */
+  private updatePauseFab(): void {
+    this.pauseFab.classList.toggle('on', this.state === 'PLAYING' && isMobileDevice());
   }
 
   /** Engine exists only after Engine.create() resolves — wire it in once available. */
@@ -150,6 +172,7 @@ export class GameMenu {
     if (this.engine) this.engine.paused = false;
     this.state = 'PLAYING';
     this.hasPlayedOnce = true;
+    this.updatePauseFab();
   }
 
   private onExitClick(): void {
@@ -166,6 +189,7 @@ export class GameMenu {
     this.engine.paused = true;
     this.state = 'PAUSED';
     this.pause.classList.add('on');
+    this.updatePauseFab();
   }
 
   private resume(): void {
@@ -173,6 +197,7 @@ export class GameMenu {
     this.engine.paused = false;
     this.state = 'PLAYING';
     this.pause.classList.remove('on');
+    this.updatePauseFab();
   }
 
   private onPauseSettingsClick(): void {
@@ -184,11 +209,21 @@ export class GameMenu {
     this.hooks.openSettings?.();
   }
 
+  private onPauseGraphicsClick(): void {
+    // UX-11: a direct GRAPHICS door from the pause card — the world's most
+    // perf-sensitive knobs, one tap from a mid-ride pause (was: SETTINGS →
+    // OptionsMenu → GRAPHICS, two extra hops). The sheet (z 2401, above the
+    // pause card at 1500) floats over the still-visible pause chrome, so
+    // closing it returns straight to PAUSE — no dead frozen frame.
+    this.hooks.openGraphicsSettings?.();
+  }
+
   private onMainMenuClick(): void {
     // world stays paused; splash comes back with Start relabeled "Resume"
     this.pause.classList.remove('on');
     this.splash.hidden = false;
     this.state = 'MENU';
+    this.updatePauseFab();
     this.updateStartLabel();
   }
 

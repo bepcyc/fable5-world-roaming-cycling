@@ -17,6 +17,7 @@
  * per-frame work while closed.
  */
 
+import { isMobileDevice } from '../core/BrowserGate';
 import type { LaasHooks } from '../core/Hooks';
 import { t } from '../core/I18n';
 import { MODE_ICON } from '../ride/RideHud';
@@ -247,7 +248,18 @@ export class OptionsMenu {
       );
       b.addEventListener('click', () => {
         if (s.kind === 'ble') {
-          // BLE needs the boot-time connect flow (secure context + UI)
+          // UX-15b: bring BLE up lazily on this gesture — no page reload — and
+          // let the device manager open itself. Fall back to the old boot-flow
+          // reload only if the seam isn't wired (shouldn't happen in a ride).
+          const dbg = (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg;
+          const ensure = dbg?.['ensureBle'] as (() => void) | undefined;
+          if (ensure) {
+            ensure();
+            this.showHint(s.hint);
+            this.toggle(false); // close options; the BLE manager takes over
+            this.refresh();
+            return;
+          }
           const u = new URL(window.location.href);
           u.searchParams.set('ride', 'ble');
           u.searchParams.delete('ridedev');
@@ -329,18 +341,34 @@ export class OptionsMenu {
     this.hint.className = 'opt-hint';
     this.panel.appendChild(this.hint);
 
-    // KEYS
-    this.panel.appendChild(h(t('opt.keys')));
-    const keys = document.createElement('div');
-    keys.className = 'opt-keys';
-    keys.innerHTML =
-      `<b>M</b> ${t('opt.keyBikeMode')}    <b>V</b> ${t('opt.keyWalkFly')}\n` +
-      `<b>B</b> ${t('opt.keyDashboard')}    <b>O</b> ${t('opt.keyThisMenu')}\n` +
-      `<b>←/→</b> ${t('opt.keyPickTurn')}   <b>Space/S</b> ${t('opt.keyBrake')}\n` +
-      `<b>[ ]</b> ${t('opt.keyTime')}        <b>1..9</b> ${t('opt.keyViews')}\n` +
-      `<b>Shift+D</b> ${t('opt.keyDebug')}   <b>Ctrl+E</b> .fit\n` +
-      `<b>Shift+H</b> ${t('opt.keyHands')}`;
-    this.panel.appendChild(keys);
+    // KEYS on a keyboard device; GESTURES on touch (UX-04: a phone/tablet has
+    // no keyboard, so a keyboard cheatsheet there is noise — show the real
+    // touch verbs instead).
+    if (isMobileDevice()) {
+      this.panel.appendChild(h(t('opt.gestures')));
+      const g = document.createElement('div');
+      g.className = 'opt-keys';
+      g.innerHTML =
+        `<b>◀</b> ${t('opt.gesStick')}\n` +
+        `<b>↕</b> ${t('opt.gesDrag')}\n` +
+        `<b>JUMP</b> ${t('opt.gesJump')}\n` +
+        `<b>⭐</b> ${t('opt.gesTurnCard')}\n` +
+        `<b>BRAKE/U-TURN</b> ${t('opt.gesRide')}`;
+      this.panel.appendChild(g);
+    } else {
+      this.panel.appendChild(h(t('opt.keys')));
+      const keys = document.createElement('div');
+      keys.className = 'opt-keys';
+      keys.innerHTML =
+        `<b>M</b> ${t('opt.keyBikeMode')}    <b>V</b> ${t('opt.keyWalkFly')}\n` +
+        `<b>B</b> ${t('opt.keyDashboard')}    <b>O</b> ${t('opt.keyThisMenu')}\n` +
+        `<b>←/→</b> ${t('opt.keyPickTurn')}   <b>Space/S</b> ${t('opt.keyBrake')}\n` +
+        `<b>X</b> ${t('opt.keyDismount')}      <b>S hold</b> ${t('opt.keyUturn')}\n` +
+        `<b>[ ]</b> ${t('opt.keyTime')}        <b>1..9</b> ${t('opt.keyViews')}\n` +
+        `<b>Shift+D</b> ${t('opt.keyDebug')}   <b>Ctrl+E</b> .fit\n` +
+        `<b>Shift+H</b> ${t('opt.keyHands')}`;
+      this.panel.appendChild(keys);
+    }
 
     this.fab.addEventListener('click', (e) => {
       e.stopPropagation();

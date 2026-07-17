@@ -72,6 +72,7 @@ const DICT: Record<string, Entry> = {
   // which nothing ever read, so in practice these strings were ALWAYS English
   // no matter the language, and they also put Cyrillic outside this file.
   'menu.settings': { en: 'SETTINGS', de: 'EINSTELLUNGEN', ru: 'НАСТРОЙКИ' },
+  'menu.graphics': { en: 'GRAPHICS', de: 'GRAFIK', ru: 'ГРАФИКА' },
   'menu.exit': { en: 'EXIT', de: 'BEENDEN', ru: 'ВЫХОД' },
   'menu.mainMenu': { en: 'MAIN MENU', de: 'HAUPTMENÜ', ru: 'ГЛАВНОЕ МЕНЮ' },
   'menu.pause': { en: 'PAUSE', de: 'PAUSE', ru: 'ПАУЗА' },
@@ -151,6 +152,11 @@ const DICT: Record<string, Entry> = {
     en: "Don't see your device? Show all Bluetooth devices",
     de: 'Ger\u00e4t nicht dabei? Alle Bluetooth-Ger\u00e4te anzeigen',
     ru: '\u041d\u0435 \u0432\u0438\u0436\u0443 \u0441\u0432\u043e\u0451 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e? \u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0432\u0441\u0435 Bluetooth-\u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430',
+  },
+  'ble.sensorLost': {
+    en: 'Sensor lost \u2014 tap to reconnect',
+    de: 'Sensor verloren \u2014 zum Neuverbinden tippen',
+    ru: '\u0414\u0430\u0442\u0447\u0438\u043a \u043f\u043e\u0442\u0435\u0440\u044f\u043d \u2014 \u043a\u043e\u0441\u043d\u0438\u0441\u044c, \u0447\u0442\u043e\u0431\u044b \u043f\u0435\u0440\u0435\u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u044c',
   },
 
   'msettings.auto': { en: 'auto', de: 'auto', ru: '\u0430\u0432\u0442\u043e' },
@@ -488,6 +494,17 @@ const DICT: Record<string, Entry> = {
   'opt.keyViews': { en: 'views', de: 'Ansichten', ru: 'виды' },
   'opt.keyDebug': { en: 'debug', de: 'Debug', ru: 'отладка' },
   'opt.keyHands': { en: 'hands', de: 'Hände', ru: 'руки' },
+  'opt.keyDismount': { en: 'dismount', de: 'absteigen', ru: 'спешиться' },
+  'opt.keyUturn': { en: 'U-turn', de: 'wenden', ru: 'разворот' },
+
+  // ---- GESTURES sheet (OptionsMenu.ts, shown instead of KEYS on touch —
+  // UX-04: a phone/tablet has no keyboard) ----
+  'opt.gestures': { en: 'gestures', de: 'Gesten', ru: 'жесты' },
+  'opt.gesStick': { en: 'left stick — move', de: 'linker Stick — gehen', ru: 'левый стик — идти' },
+  'opt.gesDrag': { en: 'drag — look', de: 'ziehen — umsehen', ru: 'драг — камера' },
+  'opt.gesJump': { en: 'button — jump', de: 'Taste — springen', ru: 'кнопка — прыжок' },
+  'opt.gesTurnCard': { en: 'tap card — pick turn', de: 'Karte tippen — abzweigen', ru: 'тап по карточке — поворот' },
+  'opt.gesRide': { en: 'ride buttons', de: 'Fahrtasten', ru: 'кнопки езды' },
 
   // ---- hands visibility (OptionsMenu.ts touch row + Cockpit.ts Shift+H) ----
   'opt.hands': { en: 'hands', de: 'Hände', ru: 'руки' },
@@ -571,6 +588,8 @@ const DICT: Record<string, Entry> = {
     ru: 'нет дороги в радиусе {dist} м',
   },
   'ride.deadEndUturn': { en: 'dead end — U-turn', de: 'Sackgasse — wenden', ru: 'тупик — разворот' },
+  'ride.uTurn': { en: 'U-turn', de: 'Wende', ru: 'разворот' },
+  'ride.uturnBtn': { en: 'U-TURN', de: 'WENDE', ru: 'РАЗВОРОТ' },
 
   // ---- Cockpit.ts on-device screen (tiny canvas texture, no CSS/DOM —
   // keep short, the hazard strip has a fixed pixel width and no wrap) ----

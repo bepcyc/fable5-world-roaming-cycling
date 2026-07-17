@@ -434,6 +434,37 @@
         70%, 100% { transform: rotate(-90deg); }
       }
 
+      /* touch pause button (UX-10): mobile-only ⏸ in the top-left HUD corner
+         — the only phone path into the PAUSE card (Escape is desktop-only).
+         GameMenu toggles .on, shows it only while PLAYING on a touch device.
+         Top-left is the corner free of HUD metric cards (centered top),
+         the ⚙ FAB (bottom-right) and the BLE chip (top-right). Offset down
+         ~34px so it clears the always-on fps badge (debug/HUD.ts, top:10px
+         left:10px) instead of covering the owner's fps readout. */
+      #pause-fab {
+        position: fixed;
+        top: calc(44px + env(safe-area-inset-top, 0px));
+        left: max(10px, env(safe-area-inset-left));
+        z-index: 1400;
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        background: rgba(9, 13, 11, 0.62);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        color: var(--menu-text-bright);
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      }
+      #pause-fab.on { display: flex; }
+      #pause-fab:active { background: rgba(24, 32, 28, 0.8); }
+      #pause-fab svg { width: 22px; height: 22px; }
+
     </style>
   </head>
   <body>
@@ -509,6 +540,13 @@
       </div>
     </div>
 
+    <!-- touch pause (UX-10): mobile ⏸ that opens the PAUSE card; GameMenu shows
+         it only while PLAYING on a touch device (Escape is the desktop path).
+         No data-i18n (it would replace the SVG) — aria-label is set in code. -->
+    <button id="pause-fab" type="button" aria-label="PAUSE">
+      <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+
     <!-- in-game pause: ESC toggles; engine.paused freezes the frame beneath it -->
     <div id="pause">
       <div id="pause-card">
@@ -521,6 +559,10 @@
           <button class="menu-btn" id="btn-pause-settings" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.2 12a7.2 7.2 0 00-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 00-2.1-1.2L14.3 3h-4l-.4 2.7a7.4 7.4 0 00-2.1 1.2l-2.3-1-2 3.4 2 1.5a7.3 7.3 0 000 2.4l-2 1.5 2 3.4 2.3-1c.6.5 1.4.9 2.1 1.2l.4 2.7h4l.4-2.7a7.4 7.4 0 002.1-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>
             <span data-i18n="menu.settings">SETTINGS</span>
+          </button>
+          <button class="menu-btn" id="btn-pause-graphics" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="1.6"/><path d="M8 20h8M12 17v3"/></svg>
+            <span data-i18n="menu.graphics">GRAPHICS</span>
           </button>
           <button class="menu-btn" id="btn-mainmenu" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7M6 10v9h12v-9"/></svg>

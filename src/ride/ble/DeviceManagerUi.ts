@@ -17,8 +17,17 @@
  *
  * Persistent HUD chip (top-right, matches the pre-rebuild #ble-panel
  * position): 5 dots, one per role, green=live/amber=stale-or-lost/
- * gray=unassigned. Click it (or `B`) to open the full manager over the
- * still-rendering ride — nothing pauses.
+ * gray=unassigned. Click it (or `N`) to open the full manager over the
+ * still-rendering ride — nothing pauses. (`N`, not `B`: `B` toggles the
+ * ride HUD in RideHud, and one keycode driving both handlers hid the whole
+ * dashboard every time you opened the manager — UX-15a.)
+ *
+ * Sensor-loss watchdog: when an ASSIGNED role goes stale/disconnected mid-ride
+ * a tappable "Sensor lost — tap to reconnect" banner appears. Web Bluetooth
+ * has no silent reconnect we can depend on (getDevices()/watchAdvertisements
+ * are flag-gated), so honest recovery is a one-tap gesture that re-opens the
+ * chooser — this is the web's Zwift-path, surfaced instead of leaving the
+ * rider to notice "suddenly heavy and stopped" (UX-13/15c).
  */
 
 import { t } from '../../core/I18n';
@@ -130,6 +139,19 @@ const STYLE = `
   border:1px solid rgba(255,255,255,0.1);cursor:pointer;color:#dff0e6;display:flex;justify-content:space-between}
 #ble-mgr .bm-pickopt:hover{background:rgba(255,255,255,0.08)}
 #ble-mgr .bm-pickopt.sel{border-color:rgba(255,209,102,0.6);color:#ffe9b0}
+/* sensor-loss watchdog banner — tappable, top-center below the HUD (UX-15c).
+   min-height 48 so a finger can reliably hit it; the tap IS the Web-Bluetooth
+   reconnect gesture. */
+#ble-lost-banner{position:fixed;top:96px;left:50%;transform:translateX(-50%);
+  z-index:1002;display:none;align-items:center;gap:9px;cursor:pointer;
+  padding:11px 18px;border-radius:12px;min-height:48px;box-sizing:border-box;
+  font:bold 12px/1.25 ui-monospace,Menlo,Consolas,monospace;letter-spacing:0.04em;
+  color:#ffd9c9;background:rgba(44,12,8,0.86);border:1px solid rgba(255,120,90,0.6);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  box-shadow:0 3px 16px rgba(0,0,0,0.45);pointer-events:auto;text-transform:uppercase;
+  text-align:center;max-width:min(92vw,460px)}
+#ble-lost-banner.on{display:flex}
+#ble-lost-banner .bl-ico{width:18px;height:18px;flex:none}
 `;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] {
@@ -142,9 +164,16 @@ export class DeviceManagerUi {
   private source: BleSensorSource;
   private chip: HTMLDivElement;
   private root: HTMLDivElement;
+  private lostBanner!: HTMLDivElement;
   private visible: boolean;
   private openPicker: Role | null = null;
   private lastError = '';
+  /** test seam: force the loss condition on regardless of live role state,
+   *  so probes can exercise the banner + reconnect click without waiting out
+   *  a real 3 s staleness on a scripted device (see forceSensorLost) */
+  private forceLost = false;
+  /** how many times the reconnect gesture has fired (probe assertion) */
+  reconnectAttempts = 0;
 
   constructor(source: BleSensorSource, startVisible: boolean) {
     this.source = source;
@@ -176,12 +205,22 @@ export class DeviceManagerUi {
     document.body.appendChild(this.root);
 
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyB') {
+      // `N` (not `B`): `B` is RideHud's dashboard toggle. Two window-keydown
+      // handlers on one keycode hid the HUD every time the manager opened
+      // (UX-15a). `N` for "network"/sensors is otherwise unused.
+      if (e.code === 'KeyN') {
         this.visible = !this.visible;
         this.render();
       }
     });
-    source.onChange(() => this.render());
+    source.onChange(() => {
+      this.render();
+      this.updateWatchdog();
+    });
+    this.buildLostBanner();
+    // staleness is time-based (RoleMux marks a role stale ~3 s after its last
+    // packet) and may not fire onChange, so poll the watchdog too
+    window.setInterval(() => this.updateWatchdog(), 1200);
     this.render();
   }
 
@@ -195,6 +234,55 @@ export class DeviceManagerUi {
   close(): void {
     this.visible = false;
     this.render();
+  }
+
+  // ---- sensor-loss watchdog (UX-15c) ----------------------------------------
+
+  private buildLostBanner(): void {
+    this.lostBanner = el('div');
+    this.lostBanner.id = 'ble-lost-banner';
+    this.lostBanner.setAttribute('role', 'button');
+    this.lostBanner.innerHTML =
+      '<svg class="bl-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v17l4.5-4L9 9.5M12 12l4.5-4L12 3.5"/><path d="M4 4l16 16"/></svg>' +
+      `<span>${t('ble.sensorLost')}</span>`;
+    this.lostBanner.setAttribute('aria-label', t('ble.sensorLost'));
+    // the tap IS the Web-Bluetooth reconnect gesture
+    this.lostBanner.addEventListener('click', () => void this.reconnectLost());
+    document.body.appendChild(this.lostBanner);
+  }
+
+  /** any ASSIGNED role whose live provider has gone quiet/dropped */
+  private hasLostRole(): boolean {
+    return this.source.registry.roleMux
+      .rows()
+      .some(
+        (r) =>
+          r.assignment !== null &&
+          r.assignment !== 'none' &&
+          (r.state === 'stale' || r.state === 'disconnected'),
+      );
+  }
+
+  private updateWatchdog(): void {
+    const lost = this.forceLost || (this.source.available() && this.hasLostRole());
+    this.lostBanner.classList.toggle('on', lost);
+  }
+
+  /** the banner tap: a user gesture, so it's allowed to open the chooser.
+   *  Reconnect is a fresh chooser (Web Bluetooth has no silent path we depend
+   *  on) — DeviceRegistry.reconnect() re-matches the stable device id. */
+  private async reconnectLost(): Promise<void> {
+    this.reconnectAttempts++;
+    this.forceLost = false; // a real reconnect resolves the artificial trigger
+    this.lostBanner.classList.remove('on'); // optimistic; watchdog re-shows if still lost
+    await this.guarded(() => this.source.registry.reconnect());
+    this.updateWatchdog();
+  }
+
+  /** probe/test seam: force the loss banner on/off (see forceLost) */
+  forceSensorLost(on: boolean): void {
+    this.forceLost = on;
+    this.updateWatchdog();
   }
 
   private async guarded(action: () => Promise<void>): Promise<void> {
