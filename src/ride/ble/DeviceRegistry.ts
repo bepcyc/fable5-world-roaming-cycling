@@ -44,7 +44,10 @@ export interface PairedDevice {
   lastError: string | null;
 }
 
-const KNOWN_NAMES_KEY = 'laas.ble.knownDeviceNames.v1';
+/** exported for NativeBridgeTransport's chooser: the native picker seeds its
+ *  list with saved devices so a paired-but-not-currently-advertising trainer
+ *  (the owner's Tacx goes quiet after its first bond) stays reachable */
+export const KNOWN_NAMES_KEY = 'laas.ble.knownDeviceNames.v1';
 
 function loadKnownNames(): Record<string, string> {
   try {

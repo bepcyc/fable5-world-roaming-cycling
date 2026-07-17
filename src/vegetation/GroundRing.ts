@@ -32,6 +32,7 @@ import type { DataTexture, PerspectiveCamera } from 'three';
 import {
   IndirectStorageBufferAttribute,
   IrradianceNode,
+  MeshPhysicalNodeMaterial,
   MeshStandardNodeMaterial,
   type Renderer,
   type StorageBufferNode,
@@ -93,7 +94,9 @@ import { buildRock } from './RockBuilder';
 import { buildFlower } from './Understory';
 import type { WorldSeed } from '../core/Seed';
 import { prepassMode } from '../core/Params';
+import { quality } from '../core/Quality';
 import { runiform } from '../gpu/RenderUniform';
+import { RING_DBG, cssOf } from '../debug/DebugPalette';
 
 /**
  * Grass slot-density divisor. The cull dispatches GRASS_GRID² threads EVERY
@@ -111,24 +114,15 @@ import { runiform } from '../gpu/RenderUniform';
  * thinning: survivors widen by S (see `widen` in grassMaterial), which is the
  * same 1/sqrt(density) compensation applied to a constant instead of a curve.
  *
- * ?grassscale=N overrides on any preset (sweep knob). Desktop = preset=high = 1
- * = the shipped geometry, byte for byte.
+ * All grass axes resolve through Quality.ts (?grassscale legacy alias and
+ * ?q.grassScale both work). Desktop = preset=high = the shipped geometry,
+ * byte for byte.
  */
-function grassScale(search: string = window.location.search): number {
-  const q = new URLSearchParams(search);
-  const raw = q.get('grassscale');
-  if (raw !== null) {
-    const n = Number(raw);
-    // must divide 3072 into an integer grid; 1..8 covers every useful step
-    if (Number.isFinite(n) && n >= 1 && n <= 8 && 3072 % n === 0) return n;
-  }
-  return (q.get('preset') ?? 'high') === 'min' ? 2 : 1;
-}
-
-const G_SCALE = grassScale();
+const Q = quality();
+const G_SCALE = Q.grassScale;
 const GRASS_GRID = 3072 / G_SCALE;
 const GRASS_CELL = 0.105 * G_SCALE; // ±161 m ring at every scale, ~90/S² slots/m²
-const GRASS_R = 155;
+const GRASS_R = Q.grassRadius;
 const G_NEAR = 30;
 const G_MID = 70;
 /** crossfade half-width — cull overlap and material fade MUST share it */
@@ -139,6 +133,12 @@ const G_BAND = 12;
 const GRASS_CAPS = [524288, 1048576, 1835008].map((c) =>
   Math.ceil(c / (G_SCALE * G_SCALE)),
 );
+// silver-wash-cut (51e5d0d) missed grass: MeshStandardNodeMaterial hardcodes
+// dielectric F0 0.04, so Schlick saturates at glancing sun and paints the
+// sward with the sky sheen — after the sky/IBL went blue (65a1a68) the far
+// band reads as a pale blue frost carpet. Switching to a physical material
+// with a scaled specularIntensity tames that sheen back to green.
+const GRASS_SPEC = 0.25;
 
 /**
  * Continuous distance thinning, conserved by blade widening (1/√thin in the
@@ -162,9 +162,12 @@ const DEB_CAPS = [24576, 49152, 49152, 32768, 65536];
 // far super-tuft layer (g3, feedback 2.8): its own COARSE toroidal grid —
 // the fine grid physically ends at ±161 m. Wide merged tufts carry the
 // meadow silhouette 150→265 m; beyond that the terrain splat owns it.
+// FAR_R0 tracks a shortened fine ring so no bald gap opens between the
+// fine band's dissolve and the super-tuft fade-in (identity at default:
+// GRASS_R 155 keeps the shipped 150).
 const FAR_GRID = 768;
 const FAR_CELL = 0.7; // ±269 m ring, ~2 slots/m²
-const FAR_R0 = 150;
+const FAR_R0 = Math.min(150, GRASS_R - 5);
 const FAR_R = 265;
 const FAR_CAP = 196608;
 
@@ -201,13 +204,9 @@ const RING_DEBUG_GROUPS = [
   'road-grit',
 ] as const;
 
-const RING_DEBUG_COLORS: readonly (readonly [number, number, number])[] = [
-  [0.92, 0.08, 0.08], [0.95, 0.42, 0.04], [0.95, 0.9, 0.05],
-  [0.05, 0.75, 0.9], [0.04, 0.3, 0.95], [0.85, 0.06, 0.8],
-  [0.55, 0.15, 0.85], [0.9, 0.9, 0.9], [0.08, 0.85, 0.25],
-  [0.95, 0.95, 0.95], [0.45, 0.48, 0.52], [0.95, 0.78, 0.02],
-  [0.62, 0.12, 0.95], [0.02, 0.85, 0.68],
-];
+// Colors live in DebugPalette (single engine+tools source, anti-nature
+// hues, no near-white/near-black entries). See docs 2026-07-16 verdict.
+const RING_DEBUG_COLORS = RING_DBG;
 
 function installRingDebugLegend(filter: number | null): void {
   if (document.getElementById('ringdbg-legend')) return;
@@ -222,7 +221,7 @@ function installRingDebugLegend(filter: number | null): void {
   const rows = RING_DEBUG_GROUPS.map((name, g) => {
     if (filter !== null && filter !== g) return '';
     const c = RING_DEBUG_COLORS[g] as readonly [number, number, number];
-    const rgb = `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
+    const rgb = cssOf(c);
     return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:${rgb};border:1px solid #000"></span>g=${g} ${name}`;
   }).filter(Boolean);
   el.innerHTML = `<b>GroundRing draw id</b><br>${rows.join('<br>')}`;
@@ -934,7 +933,11 @@ export class GroundRing {
     // ---------------- draws -------------------------------------------------------
     const draws: { geo: BufferGeometry; mat: MeshStandardNodeMaterial; g: number }[] = [];
 
-    const grassGeos = [bladeClump(5, 4), bladeClump(3, 2), tuftGeometry()];
+    const grassGeos = [
+      bladeClump(Q.grassBladesNear, Q.grassSegsNear),
+      bladeClump(Q.grassBladesMid, Q.grassSegsMid),
+      tuftGeometry(),
+    ];
     const grassFades: [number | null, number | null][] = [
       [null, G_NEAR],
       [G_NEAR, G_MID],
@@ -955,7 +958,7 @@ export class GroundRing {
 
     // far super-tufts: one draw on the coarse list, wide cards, full
     // terrain-normal shading (mode 'far' in grassMaterial)
-    {
+    if (Q.grassFarLayer) {
       const bindF: RingBind = {
         cells,
         heights,
@@ -969,6 +972,7 @@ export class GroundRing {
     }
 
     const rng = this.seed.rng('groundring/geo');
+    if (Q.debris) {
     const debrisGeos: BufferGeometry[] = [
       buildRock('cobble', rng.fork('cobble'), 2).geometry,
       buildRock('cobble', rng.fork('pebble'), 1).geometry,
@@ -1036,12 +1040,15 @@ export class GroundRing {
     // alpine p.3 — verge bloom pools (groups 11/12): tiny golden trefoil and
     // purple thyme cushions along soft-track shoulders. Colors mirror
     // VegLibrary's FLOWER_COLOR entries for the same kinds.
+    // trefoil is scaled up and given a longer fade so the golden heads clear
+    // the ~0.21 m ring grass and read from the saddle (verge blooms were fully
+    // hidden at p7/p4); thyme stays a low ground-hugging cushion.
     const roadBloom = [
-      { g: 11, kind: 'trefoil' as const, petal: { r: 0.92, g: 0.66, b: 0.06 } },
-      { g: 12, kind: 'thyme' as const, petal: { r: 0.5, g: 0.17, b: 0.5 } },
+      { g: 11, kind: 'trefoil' as const, petal: { r: 0.92, g: 0.66, b: 0.06 }, scaleK: 1.6, fadeR: 60, glow: 0.4 },
+      { g: 12, kind: 'thyme' as const, petal: { r: 0.5, g: 0.17, b: 0.5 }, scaleK: 1, fadeR: 34, glow: 0 },
     ];
     for (const rb of roadBloom) {
-      const mat = flowerMaterial(rb.petal);
+      const mat = flowerMaterial(rb.petal, rb.glow);
       const bindF: RingBind = {
         cells,
         heights,
@@ -1049,7 +1056,7 @@ export class GroundRing {
         cell: DEB_CELL,
         salt: salt ^ 0x5dd5,
       };
-      this.debrisTransform(mat, bindF, 1, 0, 34);
+      this.debrisTransform(mat, bindF, rb.scaleK, 0, rb.fadeR);
       this.patchGI(mat);
       draws.push({
         geo: buildFlower(rb.kind, this.seed.rng(`groundring/bloom/${rb.kind}`)),
@@ -1057,6 +1064,7 @@ export class GroundRing {
         g: rb.g,
       });
     }
+    } // end if (Q.debris)
 
     const D = draws.length;
     const indirectData = new Uint32Array(D * 5);
@@ -1072,11 +1080,11 @@ export class GroundRing {
       if (ringDebugOn) {
         const c = RING_DEBUG_COLORS[spec.g] as readonly [number, number, number];
         const debugColor = vec3(c[0], c[1], c[2]);
-        spec.mat.colorNode = debugColor;
-        // Emissive makes ownership colors independent of sunlight, shadow,
-        // normals and AO. A black fragment in this mode is therefore from a
-        // different draw/depth failure, not merely dark lighting.
-        spec.mat.emissiveNode = debugColor.mul(0.65);
+        spec.mat.colorNode = vec3(0.0, 0.0, 0.0);
+        // PURE emissive ownership color: independent of sun/shadow/normals/AO
+        // and bit-exact against DebugPalette under ?dbgexact=1. A black fragment
+        // in this mode is a draw/depth failure by construction.
+        spec.mat.emissiveNode = debugColor;
         spec.mat.roughness = 1;
       }
       const mesh = new Mesh(geo, spec.mat);
@@ -1090,7 +1098,22 @@ export class GroundRing {
       // default OFF on preset=min — TBDR early-Z already does this job and the
       // twins cost 24% of GPU work (see prepassMode()).
       const noPrepass = prepassMode() === 'off';
-      if (!noPrepass && (spec.g <= 2 || spec.g === 8)) {
+      // RING-GRASS TWINS ARE RETIRED (owner frost bug, bisected 2026-07-16).
+      // The depth twin and the color pass disagree on some fragments of
+      // blades once they thin toward sub-pixel: the twin z-writes blades the
+      // color pass never draws, the orphan depth blocks the terrain behind,
+      // and the hole clears to SKY - TAA smears those sky pixels into the
+      // white-blue "frost" carpet across every meadow band. Measured at the
+      // frost camera (bluish share of the band crop, locked exposure):
+      // all twins 30.78% / g2+g8 excluded 25.41% / forest-only twins 25.34%
+      // (forest cards are innocent) / no ring twins 0.31%. Even the near
+      // rings paint the far band, so the whole family goes until the
+      // depth/color discard parity is ACTUALLY bit-stable; tree-card twins
+      // in Forests stay (proven clean). Perf: grass prepass was already
+      // default-off on min; the Quality axes can re-enable per-preset after
+      // a real fix.
+      const ringTwins = false;
+      if (ringTwins && !noPrepass && spec.g <= 1) {
         const matS = spec.mat as unknown as { positionNode: unknown; maskNode: unknown };
         this.prepassGroup.add(
           depthPrepassTwin(mesh, {
@@ -1117,7 +1140,12 @@ export class GroundRing {
     })().compute(D);
     indirectK.setName('ringIndirect');
 
-    this.kernels = [clearK, grassK, debrisK, farK, indirectK];
+    // debris/far culls only run when their draws exist — a skipped pool's
+    // counters stay 0 and its indirect slots are never read
+    this.kernels = [clearK, grassK];
+    if (Q.debris) this.kernels.push(debrisK);
+    if (Q.grassFarLayer) this.kernels.push(farK);
+    this.kernels.push(indirectK);
   }
 
   /** blade/tuft material — color matched to the terrain grass palette */
@@ -1127,7 +1155,12 @@ export class GroundRing {
     tuft: boolean,
     far = false,
   ): MeshStandardNodeMaterial {
-    const mat = new MeshStandardNodeMaterial();
+    // physical variant for specularIntensity (silver-wash-cut): a plain
+    // standard material bakes F0 0.04 and glazes the sward blue under the
+    // post-65a1a68 sky. Same PhysicalLightingModel, no extra cost with no
+    // physical features enabled.
+    const mat = new MeshPhysicalNodeMaterial();
+    mat.specularIntensity = GRASS_SPEC;
     const { wc, y, wpos } = fetchRing(bind);
     const h2 = cellHash2(wc, bind.salt ^ 0x9191);
     // patch-level (≈1.6 m) dryness/hue so meadows read as drifts, not noise
@@ -1262,8 +1295,17 @@ export class GroundRing {
     mat.emissiveNode = varying(
       grassTranslucency(albedo, t) as unknown as Parameters<typeof varying>[0],
     ) as unknown as typeof mat.emissiveNode;
+    // Indirect (IBL sky dome + probes) is gated by canopy SKY VISIBILITY on
+    // top of the blade-height ramp: crowns above a tuft occlude the dome, so
+    // shaded interiors read deep green instead of a pale sky-blue "frost"
+    // (crop-metric bisect 2026-07-16 — sky irradiance on fully-exposed tips
+    // was the last standing term; sunlit meadows have cov=0 and are
+    // untouched). 0.85 mirrors the albedo shade term above.
     mat.aoNode = varying(
-      smoothstep(0.0, 0.55, t).mul(0.55).add(0.45) as unknown as Parameters<typeof varying>[0],
+      smoothstep(0.0, 0.55, t)
+        .mul(0.55)
+        .add(0.45)
+        .mul(float(1).sub(cov.mul(0.85))) as unknown as Parameters<typeof varying>[0],
     ) as unknown as typeof mat.aoNode;
     mat.roughness = 0.88;
     mat.metalness = 0;

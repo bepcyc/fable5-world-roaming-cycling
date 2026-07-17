@@ -51,6 +51,7 @@ import type { NF, NV2, NV3, NV4 } from '../gpu/TSLTypes';
 import type { Atmosphere } from '../sky/Atmosphere';
 import { CLOUD_BOTTOM, CLOUD_TOP, type Clouds } from '../sky/Clouds';
 import { GradeUniforms, gradeParamsAt } from './ColorScript';
+import { quality } from '../core/Quality';
 import { runiform } from '../gpu/RenderUniform';
 import { cockpitVelU } from '../ride/cockpit/CockpitVelocity';
 import { gtaoLayer } from './Gtao';
@@ -72,11 +73,26 @@ export class PostStack {
     const { renderer, scene, camera } = engine;
     const q = new URLSearchParams(window.location.search);
     const cloudview = q.get('cloudview');
-    // perf attribution: ?ablate=clouds,ao,taa,bloom disables stages
+    // perf attribution: ?ablate=clouds,ao,taa,bloom disables stages.
+    // Quality post toggles reuse the exact same plumbing — a preset with
+    // ao:false takes the identical code path as ?ablate=ao.
     const ablate = new Set((q.get('ablate') ?? '').split(','));
+    const Q = quality();
+    if (!Q.ao) ablate.add('ao');
+    if (!Q.bounce) ablate.add('bounce');
+    if (!Q.taa) ablate.add('taa');
+    if (!Q.motionBlur) ablate.add('mblur');
+    if (!Q.bloom) ablate.add('bloom');
+    if (!Q.contactShadows) ablate.add('contact');
+    if (!Q.clouds) ablate.add('clouds');
     // debug probes need raw values — tone mapping would garble them
     const skyveldbg = q.get('skyveldbg') !== null && q.get('skyveldbg') !== '';
-    renderer.toneMapping = cloudview || skyveldbg ? NoToneMapping : AgXToneMapping;
+    // ?dbgexact=1 — palette-exact overlay debugging: output the raw scene
+    // color (no TAA/AO/bloom/aerial/grade/tonemap), so an emissive debug
+    // overlay pixel equals its DebugPalette constant exactly (one sRGB
+    // present-transform away). Owner verdict 2026-07-16: legends must not lie.
+    const dbgExact = q.get('dbgexact') === '1';
+    renderer.toneMapping = cloudview || skyveldbg || dbgExact ? NoToneMapping : AgXToneMapping;
     renderer.toneMappingExposure = 1.0;
     const frameU = runiform(0);
     // The post quad pass binds its own orthographic camera: `cameraPosition`,
@@ -173,13 +189,17 @@ export class PostStack {
       halfAo = runiform(new Vector2(2, 2));
       halfEntries.push({
         name: 'ao',
+        // r8unorm attachment instead of the rgba16f default: AO is a scalar,
+        // and the R8 path existed in HalfResMrt but was never wired (free
+        // bandwidth, PERF_MOBILE_KILLERS #6)
+        red: true,
         node: gtaoLayer(
           depthTex as unknown as Parameters<typeof gtaoLayer>[0],
           camera,
           halfAo,
           // GTAO defaults are mesh-viewer scale: 16 samples cost ~50 ms on
           // terrain vistas (Phase-2 finding) — 8 samples, 1.6 m radius
-          { samples: 8, radius: 1.6, distanceFallOff: 0.6 },
+          { samples: Q.aoSamples, radius: 1.6, distanceFallOff: 0.6 },
         ),
       });
     }
@@ -253,11 +273,16 @@ export class PostStack {
       const isSky = d.lessThanEqual(1e-7).or(d.greaterThanEqual(0.9999999));
       // froxel volumetrics first (local shafts/valley fog ≤ ~480 m), the
       // km-scale Hillaire haze integrates on top of the fogged radiance
-      if (froxels) {
+      // ?ablate=aerial — skip the froxel fog + Hillaire haze chain (Front A
+      // bisection): isolates whether the aerial/fog treatment of thin geometry
+      // paints sub-pixel blades black below the horizon.
+      if (froxels && !ablate.has('aerial')) {
         const fogDist = isSky.select(float(1e5), dist);
         col.assign(froxels.apply(col, fogDist, screenUV));
       }
-      const hazed = atmosphere.aerial(col, dirW, camAltKm, distKm);
+      const hazed = ablate.has('aerial')
+        ? col
+        : atmosphere.aerial(col, dirW, camAltKm, distKm);
       // reversed-z: far plane clears to 0 → sky already carries the atmosphere
       // Sky-only brightness lift (owner goal 2026-07-14: match ref-04 clear-sky
       // color + CCT within ±3%). Measured our clear sky rgb(68,102,134) vs ref
@@ -562,7 +587,12 @@ export class PostStack {
           acc.addAssign(texture(src.value, screenUV.add(dir.mul(t))).rgb);
         }
         const blurred = acc.div(TAPS);
-        const center = texture(src.value, screenUV).rgb;
+        // center tap references the TRAA NODE, not a raw texture read: the
+        // raw reads (src.value) do not keep TRAANode's updateBefore in the
+        // frame graph, so when bloom (the only other node reference) was
+        // ablated, TRAA never rendered and the whole frame sampled a dead
+        // RT — the ablate=bloom black-frame bug (war plan, Front A item 4).
+        const center = (taaed as unknown as NV4).rgb;
         return vec4(isCk.select(center, blurred), 1);
       })();
       taaedRgb = (mb as unknown as NV4).rgb;
@@ -644,7 +674,15 @@ export class PostStack {
       c = mix(c, c.mul(vec3(uHighlightTint)), hiMask);
       // saturation + gentle contrast around mid-gray
       c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, float(uSat));
-      c = c.div(0.18).pow(vec3(float(uContrast))).mul(0.18);
+      // NaN guard (Front A: black veg slivers). uSat>1 (1.4 at midday)
+      // EXTRAPOLATES away from luma, so a saturated hue's minor channel goes
+      // NEGATIVE; the very next pow() with a non-integer exponent evaluates
+      // pow(neg, 1.07) = NaN, and AgX's channel-mixing matrix smears that NaN
+      // across R/G/B → a pure-black fragment. It only bit thin saturated
+      // geometry (grass blades, flower stems) whose neighbours (bloom/aerial
+      // sky bleed) did NOT desaturate them enough to keep the channel positive.
+      // Negative radiance is unphysical anyway — clamp before the pow.
+      c = c.max(0).div(0.18).pow(vec3(float(uContrast))).mul(0.18);
       // restrained vignette + static grain (freeze-deterministic)
       const v = screenUV.sub(0.5);
       const vig = float(1).sub(dot(v, v).mul(0.42));
@@ -675,14 +713,22 @@ export class PostStack {
           })()
         : null;
 
+    // ?ablate=grade — output the exposure-scaled bloom result, skipping the
+    // filmic grade tail (white balance, shadow/highlight tint, saturation,
+    // contrast, vignette, grain). Front A bisection: isolates the grade math.
+    const gradedOut: NV3 = ablate.has('grade')
+      ? (withBloom.mul(this.exposureBuf.element(0)) as unknown as NV3)
+      : graded;
+
     this.post = new RenderPipeline(renderer);
     // chain bisect: 9 = constant at pipeline output, 8 = aerial only (no
     // AO/TRAA/bloom/exposure/grade), default = full chain
     this.post.outputNode =
       skyVelDbgView !== null ? skyVelDbgView
+      : dbgExact ? (beauty.rgb as unknown as NV3)
       : cloudview === '9' ? vec3(1, 0, 0)
       : cloudview !== null && cloudview !== '' ? aerialNode
-      : graded;
+      : gradedOut;
 
     this.setTimeOfDay(tod);
   }

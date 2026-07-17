@@ -4,13 +4,19 @@
  * (deviceId, protocol) assignment, or an explicit sticky "none".
  *
  * DEFAULT-ASSIGN POLICY: when a provider/controller registers and the role
- * it can serve has never been touched (assignment === null), auto-fill it
- * — visibly marked as an automatic default in the UI (DeviceManagerUi).
- * A role already assigned (even to a now-disconnected device, even to
- * explicit "none") is NEVER overridden by a later connection — this is
- * the exact mechanism behind the owner's acceptance case: connect the
- * trainer (auto-fills power+cadence+control) → connect the pedals
- * (capable of power+cadence; nothing changes automatically) → the rider
+ * it can serve has never been touched (assignment === null), auto-fill it.
+ * An AUTO-filled role (never touched by the user) may later be UPGRADED by
+ * a strictly better protocol for that role (ROLE_PROTO_RANK below): the
+ * concrete owner bug this exists for is Heart Rate — the trainer connects
+ * first, its FE-C tunnel claims HR (page 16 carries the field, the Tacx
+ * only ever sends the 0xFF invalid sentinel), heartRate auto-sticks to the
+ * trainer, and the real HR strap connecting later could never take the
+ * role. hrs outranks fec for heartRate, so the strap now claims it.
+ * A USER-assigned role (explicit pick, including "none") is NEVER
+ * overridden by a later connection — this is the exact mechanism behind
+ * the owner's acceptance case: connect the trainer (auto-fills
+ * power+cadence+control) → connect the pedals (capable of power+cadence;
+ * SAME protocol rank, so nothing changes automatically) → the rider
  * manually re-points Power and Cadence to the pedals → Control stays on
  * the trainer (pedals never register a controller) → the trainer's own
  * power/cadence providers keep streaming, visible on its card, dimmed as
@@ -50,22 +56,50 @@ export interface RoleRow {
 }
 
 const PROTOCOL_PRIORITY: Record<Protocol, number> = { ftms: 0, cps: 1, csc: 2, hrs: 3, fec: 4 };
-const LS_KEY = 'laas.ble.roleAssignments.v1';
 
-function loadPersisted(): Partial<Record<Role, Assignment>> {
+/** per-ROLE protocol preference for AUTO assignment (lower = better;
+ *  absent = this protocol never auto-claims the role). Dedicated/standard
+ *  channels outrank the FE-C tunnel everywhere; for heartRate the actual
+ *  HR service outranks a trainer's tunneled (and usually invalid) HR field. */
+const ROLE_PROTO_RANK: Record<Role, Partial<Record<Protocol, number>>> = {
+  power: { ftms: 0, cps: 1, fec: 2 },
+  cadence: { ftms: 0, cps: 1, csc: 2, fec: 3 },
+  speed: { ftms: 0, fec: 1 },
+  heartRate: { hrs: 0, ftms: 1, fec: 2 },
+  control: { ftms: 0, fec: 1 },
+};
+
+function roleRank(role: Role, protocol: Protocol): number {
+  return ROLE_PROTO_RANK[role][protocol] ?? Number.POSITIVE_INFINITY;
+}
+
+// v2: assignments + which of them are auto-filled (v1 stored assignments
+// only, so a bad auto-fill — heartRate stuck on the trainer — persisted as
+// if the user had chosen it; the shape change deliberately abandons v1 so
+// existing stuck states heal on first load with the new policy)
+const LS_KEY = 'laas.ble.roleAssignments.v2';
+
+interface PersistedV2 {
+  assignments: Partial<Record<Role, Assignment>>;
+  auto: Role[];
+}
+
+function loadPersisted(): PersistedV2 {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    return raw ? (JSON.parse(raw) as Partial<Record<Role, Assignment>>) : {};
+    if (!raw) return { assignments: {}, auto: [] };
+    const p = JSON.parse(raw) as PersistedV2;
+    return { assignments: p.assignments ?? {}, auto: Array.isArray(p.auto) ? p.auto : [] };
   } catch {
-    return {};
+    return { assignments: {}, auto: [] };
   }
 }
 
-function savePersisted(a: ReadonlyMap<Role, Assignment>): void {
+function savePersisted(a: ReadonlyMap<Role, Assignment>, auto: ReadonlySet<Role>): void {
   try {
     const obj: Partial<Record<Role, Assignment>> = {};
     for (const r of ROLES) obj[r] = a.get(r) ?? null;
-    localStorage.setItem(LS_KEY, JSON.stringify(obj));
+    localStorage.setItem(LS_KEY, JSON.stringify({ assignments: obj, auto: [...auto] } satisfies PersistedV2));
   } catch {
     /* storage disabled/full — non-fatal, this is a convenience cache */
   }
@@ -80,6 +114,9 @@ interface ControllerEntry {
 
 export class RoleMux {
   private assignments = new Map<Role, Assignment>(ROLES.map((r) => [r, null]));
+  /** roles whose CURRENT assignment was auto-filled (upgradeable);
+   *  user picks are removed from here and become permanent */
+  private autoRoles = new Set<Role>();
   private providers = new Map<string, TelemetryProvider>();
   private controllers = new Map<string, ControllerEntry>();
   private listeners: (() => void)[] = [];
@@ -99,9 +136,10 @@ export class RoleMux {
   constructor() {
     const persisted = loadPersisted();
     for (const r of ROLES) {
-      const a = persisted[r];
+      const a = persisted.assignments[r];
       if (a !== undefined) this.assignments.set(r, a);
     }
+    for (const r of persisted.auto) this.autoRoles.add(r);
   }
 
   onChange(cb: () => void): void {
@@ -109,8 +147,25 @@ export class RoleMux {
   }
 
   private notify(): void {
-    savePersisted(this.assignments);
+    savePersisted(this.assignments, this.autoRoles);
     for (const cb of this.listeners) cb();
+  }
+
+  /** auto-fill/upgrade policy shared by provider and controller
+   *  registration: an untouched role is claimed; an AUTO-held role is
+   *  re-pointed only to a strictly better protocol for that role; a
+   *  user-held role (including explicit "none") is never touched. */
+  private autoClaim(role: Role, deviceId: string, protocol: Protocol): void {
+    const cur = this.assignments.get(role) ?? null;
+    if (cur === null) {
+      this.assignments.set(role, { deviceId, protocol });
+      this.autoRoles.add(role);
+      return;
+    }
+    if (cur === 'none' || !this.autoRoles.has(role)) return;
+    if (roleRank(role, protocol) < roleRank(role, cur.protocol)) {
+      this.assignments.set(role, { deviceId, protocol });
+    }
   }
 
   // ---- registration (DeviceRegistry) -------------------------------------------
@@ -119,9 +174,7 @@ export class RoleMux {
     this.providers.set(deviceProfileKey(provider.deviceId, provider.protocol), provider);
     for (const m of ['power', 'cadence', 'speed', 'heartRate'] as Metric[]) {
       if (!provider.capabilities[m]) continue;
-      if (this.assignments.get(m) === null) {
-        this.assignments.set(m, { deviceId: provider.deviceId, protocol: provider.protocol });
-      }
+      this.autoClaim(m, provider.deviceId, provider.protocol);
     }
     this.notify();
   }
@@ -136,8 +189,18 @@ export class RoleMux {
   registerController(deviceId: string, deviceName: string, controller: TrainerController): void {
     const key = deviceProfileKey(deviceId, controller.protocol);
     this.controllers.set(key, { deviceId, deviceName, protocol: controller.protocol, controller });
-    if (this.assignments.get('control') === null) {
-      this.assignments.set('control', { deviceId, protocol: controller.protocol });
+    const before = this.assignments.get('control');
+    this.autoClaim('control', deviceId, controller.protocol);
+    // if the auto-upgrade re-pointed a LIVE control assignment (only possible
+    // mid-ride when a better-ranked controller registers), migrate activation
+    // exactly like a user reassignment would — never leave the old controller
+    // holding a stale control point
+    if (this.controlActive && this.assignments.get('control') !== before) {
+      this.controlGen++;
+      void this.activeController?.release();
+      this.activeController = null;
+      this.controlActive = false;
+      void this.activateControl();
     }
     this.notify();
   }
@@ -170,6 +233,7 @@ export class RoleMux {
     const wasActiveControl = role === 'control' && this.controlActive;
     if (role === 'control') this.controlGen++; // invalidate any in-flight activateControl() from before this reassignment
     this.assignments.set(role, target);
+    this.autoRoles.delete(role); // explicit user pick — permanent, never auto-upgraded
     if (wasActiveControl) {
       // reassigning the live controller away mid-ride must release the old
       // one — never leave a stale GATT control-point lock behind

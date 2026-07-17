@@ -72,6 +72,7 @@ const DICT: Record<string, Entry> = {
   // which nothing ever read, so in practice these strings were ALWAYS English
   // no matter the language, and they also put Cyrillic outside this file.
   'menu.settings': { en: 'SETTINGS', de: 'EINSTELLUNGEN', ru: 'НАСТРОЙКИ' },
+  'menu.graphics': { en: 'GRAPHICS', de: 'GRAFIK', ru: 'ГРАФИКА' },
   'menu.exit': { en: 'EXIT', de: 'BEENDEN', ru: 'ВЫХОД' },
   'menu.mainMenu': { en: 'MAIN MENU', de: 'HAUPTMENÜ', ru: 'ГЛАВНОЕ МЕНЮ' },
   'menu.pause': { en: 'PAUSE', de: 'PAUSE', ru: 'ПАУЗА' },
@@ -132,6 +133,7 @@ const DICT: Record<string, Entry> = {
     ru: 'Поиск…',
   },
   'ble.scan.cancel': { en: 'CANCEL', de: 'ABBRECHEN', ru: 'ОТМЕНА' },
+  'ble.scan.saved': { en: 'saved', de: 'gespeichert', ru: 'сохранён' },
   'ble.err.off': {
     en: 'Bluetooth is switched off. Turn it on and try again.',
     de: 'Bluetooth ist ausgeschaltet. Schalte es ein und versuche es erneut.',
@@ -152,16 +154,253 @@ const DICT: Record<string, Entry> = {
     de: 'Ger\u00e4t nicht dabei? Alle Bluetooth-Ger\u00e4te anzeigen',
     ru: '\u041d\u0435 \u0432\u0438\u0436\u0443 \u0441\u0432\u043e\u0451 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e? \u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0432\u0441\u0435 Bluetooth-\u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430',
   },
+  'ble.sensorLost': {
+    en: 'Sensor lost \u2014 tap to reconnect',
+    de: 'Sensor verloren \u2014 zum Neuverbinden tippen',
+    ru: '\u0414\u0430\u0442\u0447\u0438\u043a \u043f\u043e\u0442\u0435\u0440\u044f\u043d \u2014 \u043a\u043e\u0441\u043d\u0438\u0441\u044c, \u0447\u0442\u043e\u0431\u044b \u043f\u0435\u0440\u0435\u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u044c',
+  },
 
   'msettings.auto': { en: 'auto', de: 'auto', ru: '\u0430\u0432\u0442\u043e' },
   'msettings.seed': { en: 'seed', de: 'Seed', ru: 'сид' },
   'msettings.seedApply': { en: 'apply', de: 'anwenden', ru: 'применить' },
   'msettings.seedRandom': { en: 'random seed', de: 'zufälliger Seed', ru: 'случайный сид' },
 
-  // ---- graphics preset (GameMenu.ts, QualityPreset enum) ----
+  // ---- graphics preset (GameMenu.ts + SettingsMenu.ts, QualityPreset enum) ----
+  'preset.min': { en: 'min', de: 'minimal', ru: 'минимум' },
   'preset.low': { en: 'low', de: 'niedrig', ru: 'низкая' },
+  'preset.mid': { en: 'medium', de: 'mittel', ru: 'средняя' },
   'preset.high': { en: 'high', de: 'hoch', ru: 'высокая' },
   'preset.ultra': { en: 'ultra', de: 'ultra', ru: 'ультра' },
+  'preset.custom': { en: 'custom', de: 'eigene', ru: 'своя' },
+
+  // ---- graphics settings screen (SettingsMenu.ts) ----
+  'settings.title': { en: 'GRAPHICS SETTINGS', de: 'GRAFIK-EINSTELLUNGEN', ru: 'НАСТРОЙКИ ГРАФИКИ' },
+  'settings.advanced': { en: 'advanced mode', de: 'Experten-Modus', ru: 'расширенный режим' },
+  'settings.reset': { en: 'reset', de: 'zurücksetzen', ru: 'сбросить' },
+  'settings.restart': { en: 'apply & restart', de: 'anwenden & neu starten', ru: 'применить и перезапустить' },
+  'settings.restartNote': {
+    en: 'changes are saved; a restart applies them to the world',
+    de: 'Änderungen sind gespeichert; ein Neustart wendet sie auf die Welt an',
+    ru: 'изменения сохранены; перезапуск применит их к миру',
+  },
+  'settings.savedNote': {
+    en: 'settings match the running world',
+    de: 'Einstellungen entsprechen der laufenden Welt',
+    ru: 'настройки совпадают с запущенным миром',
+  },
+  'settings.reloadBadge': { en: 'RESTART', de: 'NEUSTART', ru: 'РЕСТАРТ' },
+  'settings.auto': { en: 'auto', de: 'auto', ru: 'авто' },
+  'settings.tab.display': { en: 'display', de: 'Anzeige', ru: 'экран' },
+  'settings.tab.vegetation': { en: 'vegetation', de: 'Vegetation', ru: 'растительность' },
+  'settings.tab.shadows': { en: 'shadows', de: 'Schatten', ru: 'тени' },
+  'settings.tab.atmosphere': { en: 'atmosphere', de: 'Atmosphäre', ru: 'атмосфера' },
+  'settings.tab.effects': { en: 'effects', de: 'Effekte', ru: 'эффекты' },
+  'settings.tab.world': { en: 'world detail', de: 'Welt-Detail', ru: 'детализация мира' },
+
+  'settings.renderScale': { en: 'render scale', de: 'Render-Auflösung', ru: 'масштаб рендера' },
+  'settings.renderScale.hint': {
+    en: 'resolution multiplier; 0 = auto (device, capped)',
+    de: 'Auflösungsfaktor; 0 = auto (Gerät, begrenzt)',
+    ru: 'множитель разрешения; 0 = авто (устройство, с потолком)',
+  },
+  'settings.grassScale': { en: 'grass density divisor', de: 'Gras-Dichteteiler', ru: 'делитель плотности травы' },
+  'settings.grassScale.hint': {
+    en: 'higher = fewer, wider blades (coverage is preserved)',
+    de: 'höher = weniger, breitere Halme (Deckung bleibt erhalten)',
+    ru: 'выше = меньше, но шире травинки (покрытие сохраняется)',
+  },
+  'settings.grassBladesNear': { en: 'near clump blades', de: 'Halme pro Büschel (nah)', ru: 'травинок в пучке (близко)' },
+  'settings.grassBladesNear.hint': {
+    en: 'blades per grass clump within 26 m',
+    de: 'Halme pro Grasbüschel innerhalb von 26 m',
+    ru: 'травинок в пучке в радиусе 26 м',
+  },
+  'settings.grassSegsNear': { en: 'near blade segments', de: 'Halm-Segmente (nah)', ru: 'сегментов травинки (близко)' },
+  'settings.grassSegsNear.hint': {
+    en: 'triangles per near blade — bend smoothness',
+    de: 'Dreiecke pro nahem Halm — Biegungsglätte',
+    ru: 'треугольники ближней травинки — плавность изгиба',
+  },
+  'settings.grassBladesMid': { en: 'mid clump blades', de: 'Halme pro Büschel (mittel)', ru: 'травинок в пучке (средне)' },
+  'settings.grassBladesMid.hint': {
+    en: 'blades per clump in the 26-70 m band',
+    de: 'Halme pro Büschel im 26-70-m-Band',
+    ru: 'травинок в пучке в поясе 26-70 м',
+  },
+  'settings.grassSegsMid': { en: 'mid blade segments', de: 'Halm-Segmente (mittel)', ru: 'сегментов травинки (средне)' },
+  'settings.grassSegsMid.hint': {
+    en: 'triangles per mid-band blade',
+    de: 'Dreiecke pro Halm im Mittelband',
+    ru: 'треугольники травинки среднего пояса',
+  },
+  'settings.grassRadius': { en: 'grass ring reach', de: 'Gras-Ring-Reichweite', ru: 'радиус кольца травы' },
+  'settings.grassRadius.hint': {
+    en: 'meters of full blade grass around the camera',
+    de: 'Meter volles Halmgras um die Kamera',
+    ru: 'метры полной травы вокруг камеры',
+  },
+  'settings.grassFarLayer': { en: 'far meadow tufts', de: 'ferne Wiesenbüschel', ru: 'дальние пучки луга' },
+  'settings.grassFarLayer.hint': {
+    en: 'super-tuft silhouette layer 150-265 m',
+    de: 'Silhouettenschicht 150-265 m',
+    ru: 'слой силуэта луга 150-265 м',
+  },
+  'settings.debris': { en: 'ground debris', de: 'Bodenstreu', ru: 'мусор на земле' },
+  'settings.debris.hint': {
+    en: 'cobbles, twigs, litter, road grit and verge blooms',
+    de: 'Steine, Zweige, Laub, Wegschotter und Randblüten',
+    ru: 'галька, ветки, листва, дорожная крошка и цветы обочин',
+  },
+  'settings.treeRingScale': { en: 'tree detail distance', de: 'Baum-Detaildistanz', ru: 'дальность детализации деревьев' },
+  'settings.treeRingScale.hint': {
+    en: 'scales every tree LOD ring (cards, impostors)',
+    de: 'skaliert alle Baum-LOD-Ringe (Karten, Impostor)',
+    ru: 'масштабирует все LOD-кольца деревьев (карты, импосторы)',
+  },
+  'settings.vegShadowCasters': { en: 'vegetation shadows', de: 'Vegetationsschatten', ru: 'тени растительности' },
+  'settings.vegShadowCasters.hint': {
+    en: 'trees and rocks cast sun shadows',
+    de: 'Bäume und Felsen werfen Sonnenschatten',
+    ru: 'деревья и камни отбрасывают тени',
+  },
+  'settings.shadowCascades': { en: 'shadow cascades', de: 'Schatten-Kaskaden', ru: 'каскады теней' },
+  'settings.shadowCascades.hint': {
+    en: 'CSM splits; fewer = shorter shadow reach',
+    de: 'CSM-Stufen; weniger = kürzere Schattenreichweite',
+    ru: 'ступени CSM; меньше = короче дальность теней',
+  },
+  'settings.shadowMapSize': { en: 'shadow map size', de: 'Schattenkarten-Größe', ru: 'размер карты теней' },
+  'settings.shadowMapSize.hint': {
+    en: 'texels per cascade; sharpness of shadow edges',
+    de: 'Texel pro Kaskade; Schärfe der Schattenkanten',
+    ru: 'текселей на каскад; резкость краёв теней',
+  },
+  'settings.shadowMaxFar': { en: 'shadow distance', de: 'Schattendistanz', ru: 'дальность теней' },
+  'settings.shadowMaxFar.hint': {
+    en: 'meters the cascades cover',
+    de: 'Meter, die die Kaskaden abdecken',
+    ru: 'метры, покрываемые каскадами',
+  },
+  'settings.pcss': { en: 'soft shadows (PCSS)', de: 'weiche Schatten (PCSS)', ru: 'мягкие тени (PCSS)' },
+  'settings.pcss.hint': {
+    en: 'contact-hardening penumbra; off = simple filter',
+    de: 'kontaktabhängige Halbschatten; aus = einfacher Filter',
+    ru: 'контактная полутень; выкл = простой фильтр',
+  },
+  'settings.contactShadows': { en: 'contact shadows', de: 'Kontaktschatten', ru: 'контактные тени' },
+  'settings.contactShadows.hint': {
+    en: 'screen-space grounding under blades and stones',
+    de: 'Screen-Space-Verankerung unter Halmen und Steinen',
+    ru: 'экранное заземление травы и камней',
+  },
+  'settings.froxels': { en: 'volumetric fog', de: 'volumetrischer Nebel', ru: 'объёмный туман' },
+  'settings.froxels.hint': {
+    en: 'valley mist and canopy light shafts',
+    de: 'Talnebel und Lichtschächte im Blätterdach',
+    ru: 'туман долин и световые шахты крон',
+  },
+  'settings.froxelScale': { en: 'fog grid divisor', de: 'Nebelgitter-Teiler', ru: 'делитель сетки тумана' },
+  'settings.froxelScale.hint': {
+    en: '2 = 8x fewer fog cells (softer shafts)',
+    de: '2 = 8x weniger Nebelzellen (weichere Schächte)',
+    ru: '2 = в 8 раз меньше ячеек (мягче шахты)',
+  },
+  'settings.clouds': { en: 'volumetric clouds', de: 'volumetrische Wolken', ru: 'объёмные облака' },
+  'settings.clouds.hint': {
+    en: 'raymarched cloud layer and its ground shadows',
+    de: 'Raymarching-Wolkenschicht und ihre Bodenschatten',
+    ru: 'облачный слой и его тени на земле',
+  },
+  'settings.cloudMarchSteps': { en: 'cloud march steps', de: 'Wolken-March-Schritte', ru: 'шаги марша облаков' },
+  'settings.cloudMarchSteps.hint': {
+    en: 'samples per cloud ray; density detail',
+    de: 'Samples pro Wolkenstrahl; Dichtedetail',
+    ru: 'сэмплов на луч; детальность плотности',
+  },
+  'settings.cloudShadowRes': { en: 'cloud shadow map', de: 'Wolkenschatten-Karte', ru: 'карта теней облаков' },
+  'settings.cloudShadowRes.hint': {
+    en: 'resolution of the drifting cloud shadow',
+    de: 'Auflösung des ziehenden Wolkenschattens',
+    ru: 'разрешение плывущей тени облаков',
+  },
+  'settings.caustics': { en: 'water caustics', de: 'Wasser-Kaustiken', ru: 'каустика воды' },
+  'settings.caustics.hint': {
+    en: 'sun ripples on stream and lake beds',
+    de: 'Sonnenmuster auf Bach- und Seeböden',
+    ru: 'солнечная рябь на дне ручьёв и озёр',
+  },
+  'settings.giProbesPerFrame': { en: 'GI refresh budget', de: 'GI-Aktualisierungsbudget', ru: 'бюджет обновления GI' },
+  'settings.giProbesPerFrame.hint': {
+    en: 'probes re-lit per frame; lower = slower light updates',
+    de: 'Probes pro Frame; niedriger = langsamere Lichtupdates',
+    ru: 'проб на кадр; меньше = медленнее обновление света',
+  },
+  'settings.particleCount': { en: 'particles', de: 'Partikel', ru: 'частицы' },
+  'settings.particleCount.hint': {
+    en: 'pollen, leaves and snow motes; 0 = off',
+    de: 'Pollen, Blätter und Schneeflocken; 0 = aus',
+    ru: 'пыльца, листья и снег; 0 = выкл',
+  },
+  'settings.ao': { en: 'ambient occlusion', de: 'Umgebungsverdeckung', ru: 'фоновое затенение (AO)' },
+  'settings.ao.hint': {
+    en: 'GTAO; also carries contact shadows',
+    de: 'GTAO; trägt auch die Kontaktschatten',
+    ru: 'GTAO; несёт и контактные тени',
+  },
+  'settings.aoSamples': { en: 'AO samples', de: 'AO-Samples', ru: 'сэмплы AO' },
+  'settings.aoSamples.hint': {
+    en: 'quality of the occlusion cone',
+    de: 'Qualität des Verdeckungskegels',
+    ru: 'качество конуса затенения',
+  },
+  'settings.bounce': { en: 'local color bounce', de: 'lokale Farbreflexion', ru: 'локальный отскок цвета' },
+  'settings.bounce.hint': {
+    en: 'green-on-trunk / warm-on-rock bleed',
+    de: 'Grün auf Stämmen / Wärme auf Fels',
+    ru: 'зелень на стволах / тепло на камне',
+  },
+  'settings.taa': { en: 'temporal AA', de: 'temporales AA', ru: 'временное сглаживание (TAA)' },
+  'settings.taa.hint': {
+    en: 'off shimmers heavily; also disables motion blur',
+    de: 'aus flimmert stark; deaktiviert auch Motion Blur',
+    ru: 'выкл сильно мерцает; отключает и размытие движения',
+  },
+  'settings.motionBlur': { en: 'motion blur', de: 'Bewegungsunschärfe', ru: 'размытие движения' },
+  'settings.motionBlur.hint': {
+    en: 'road-speed streaking; cockpit stays sharp',
+    de: 'Geschwindigkeitsstreifen; Cockpit bleibt scharf',
+    ru: 'смаз скорости; кокпит остаётся резким',
+  },
+  'settings.bloom': { en: 'bloom', de: 'Bloom', ru: 'свечение (bloom)' },
+  'settings.bloom.hint': {
+    en: 'HDR glow around bright sky and water',
+    de: 'HDR-Glühen um hellen Himmel und Wasser',
+    ru: 'HDR-ореол вокруг яркого неба и воды',
+  },
+  'settings.heightRes': { en: 'terrain resolution', de: 'Gelände-Auflösung', ru: 'разрешение рельефа' },
+  'settings.heightRes.hint': {
+    en: 'heightfield texels (bake time and VRAM)',
+    de: 'Höhenfeld-Texel (Bake-Zeit und VRAM)',
+    ru: 'тексели высот (время генерации и VRAM)',
+  },
+  'settings.simRes': { en: 'erosion grid', de: 'Erosionsgitter', ru: 'сетка эрозии' },
+  'settings.simRes.hint': {
+    en: 'hydrology simulation resolution (bake)',
+    de: 'Auflösung der Hydrologie-Simulation (Bake)',
+    ru: 'разрешение симуляции гидрологии (генерация)',
+  },
+  'settings.erosionIters': { en: 'erosion iterations', de: 'Erosions-Iterationen', ru: 'итерации эрозии' },
+  'settings.erosionIters.hint': {
+    en: 'terrain aging passes (bake time)',
+    de: 'Gelände-Alterungsdurchläufe (Bake-Zeit)',
+    ru: 'проходы старения рельефа (генерация)',
+  },
+  'settings.tileVerts': { en: 'terrain mesh density', de: 'Gelände-Mesh-Dichte', ru: 'плотность меша рельефа' },
+  'settings.tileVerts.hint': {
+    en: 'vertices per terrain tile edge',
+    de: 'Vertices pro Geländekachel-Kante',
+    ru: 'вершин на грань тайла рельефа',
+  },
 
   // ---- bike mode (OptionsMenu.ts + RideHud.ts, shared ride-mode enum) ----
   'mode.hike': { en: 'hike', de: 'Wandern', ru: 'пешком' },
@@ -256,6 +495,17 @@ const DICT: Record<string, Entry> = {
   'opt.keyViews': { en: 'views', de: 'Ansichten', ru: 'виды' },
   'opt.keyDebug': { en: 'debug', de: 'Debug', ru: 'отладка' },
   'opt.keyHands': { en: 'hands', de: 'Hände', ru: 'руки' },
+  'opt.keyDismount': { en: 'dismount', de: 'absteigen', ru: 'спешиться' },
+  'opt.keyUturn': { en: 'U-turn', de: 'wenden', ru: 'разворот' },
+
+  // ---- GESTURES sheet (OptionsMenu.ts, shown instead of KEYS on touch —
+  // UX-04: a phone/tablet has no keyboard) ----
+  'opt.gestures': { en: 'gestures', de: 'Gesten', ru: 'жесты' },
+  'opt.gesStick': { en: 'left stick — move', de: 'linker Stick — gehen', ru: 'левый стик — идти' },
+  'opt.gesDrag': { en: 'drag — look', de: 'ziehen — umsehen', ru: 'драг — камера' },
+  'opt.gesJump': { en: 'button — jump', de: 'Taste — springen', ru: 'кнопка — прыжок' },
+  'opt.gesTurnCard': { en: 'tap card — pick turn', de: 'Karte tippen — abzweigen', ru: 'тап по карточке — поворот' },
+  'opt.gesRide': { en: 'ride buttons', de: 'Fahrtasten', ru: 'кнопки езды' },
 
   // ---- hands visibility (OptionsMenu.ts touch row + Cockpit.ts Shift+H) ----
   'opt.hands': { en: 'hands', de: 'Hände', ru: 'руки' },
@@ -317,6 +567,8 @@ const DICT: Record<string, Entry> = {
   },
   'ride.turnAhead': { en: 'turn ahead', de: 'Abzweigung voraus', ru: 'поворот впереди' },
   'ride.turnHint': { en: '← / → choose', de: '← / → wählen', ru: '← / → выбор' },
+  'ride.turnHintTouch': { en: 'tap to choose', de: 'zum Wählen tippen', ru: 'коснись для выбора' },
+  'ride.turnLocked': { en: 'turn locked', de: 'Abzweig fixiert', ru: 'поворот зафиксирован' },
 
   // ---- BikeRig.ts flash() notes (surfaced verbatim through RideHud's banner) ----
   'ride.lockedNoPower': {
@@ -337,6 +589,9 @@ const DICT: Record<string, Entry> = {
     ru: 'нет дороги в радиусе {dist} м',
   },
   'ride.deadEndUturn': { en: 'dead end — U-turn', de: 'Sackgasse — wenden', ru: 'тупик — разворот' },
+  'ride.uTurn': { en: 'U-turn', de: 'Wende', ru: 'разворот' },
+  'ride.uturnBtn': { en: 'U-TURN', de: 'WENDE', ru: 'РАЗВОРОТ' },
+  'ride.dismountBtn': { en: 'GET OFF', de: 'ABSTEIGEN', ru: 'СПЕШИТЬСЯ' },
 
   // ---- Cockpit.ts on-device screen (tiny canvas texture, no CSS/DOM —
   // keep short, the hazard strip has a fixed pixel width and no wrap) ----

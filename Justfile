@@ -190,3 +190,66 @@ android-apk:
     ./gradlew assembleDebug
     echo "── android-apk built ──"
     ls -la app/build/outputs/apk/debug/app-debug.apk 2>/dev/null || true
+
+# ── DEPLOY to every adb-connected device (web + APK) ────────────────────────
+# One artifact serves all three surfaces: `just android-apk` produces the
+# root-base ('/') dist that goes inside the APK, and serve-dist serves that
+# SAME dist over 127.0.0.1 for desktop Chrome and for devices via adb reverse.
+# Never bundle the plain `build` dist into the APK: its '/laas/' base makes
+# every asset URL 404 on the loopback origin (black screen, found 2026-07-17).
+#
+# Device rules (CLAUDE.md lessons): stay-awake FIRST, never KEYCODE_SLEEP;
+# multiple devices are the normal case, so every recipe loops over `adb devices`.
+
+adb := env_var_or_default("ADB", home_dir() + "/Android/Sdk/platform-tools/adb")
+dist_port := "5190"
+device_port := "5176"
+
+# serve the root-base dist on 127.0.0.1:5190. ANDROID_APK=1 makes vite preview
+# mount it at '/' (matching the root-absolute asset URLs inside that dist);
+# --host 127.0.0.1 is load-bearing — the default bind is [::1] only, and every
+# IPv4 client (adb reverse, curl, headless Chrome) gets connection refused.
+serve-dist:
+    ANDROID_APK=1 npx vite preview --host 127.0.0.1 --port {{dist_port}} --strictPort
+
+# point every connected device's Chrome at the dist server (serve-dist must be
+# running): reverse-tunnel device:5176 -> host:5190, then open the URL.
+deploy-web:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for S in $({{adb}} devices | awk 'NR>1 && $2=="device" {print $1}'); do
+      {{adb}} -s "$S" shell svc power stayon true
+      {{adb}} -s "$S" shell settings put global stay_on_while_plugged_in 7
+      {{adb}} -s "$S" reverse tcp:{{device_port}} tcp:{{dist_port}}
+      {{adb}} -s "$S" shell am start -a android.intent.action.VIEW \
+        -d "http://127.0.0.1:{{device_port}}/" com.android.chrome
+      echo "$S: web -> Chrome @ 127.0.0.1:{{device_port}} (host :{{dist_port}})"
+    done
+
+# install + launch the freshly built APK on every connected device
+deploy-apk:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    APK=android/app/build/outputs/apk/debug/app-debug.apk
+    for S in $({{adb}} devices | awk 'NR>1 && $2=="device" {print $1}'); do
+      {{adb}} -s "$S" shell svc power stayon true
+      {{adb}} -s "$S" shell settings put global stay_on_while_plugged_in 7
+      {{adb}} -s "$S" install -r "$APK"
+      {{adb}} -s "$S" shell am start -n com.bepcyc.laas/.MainActivity
+      echo "$S: apk installed + launched"
+    done
+
+# screencap every connected device into shots/wip/device-<serial>.png
+shots:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p shots/wip
+    for S in $({{adb}} devices | awk 'NR>1 && $2=="device" {print $1}'); do
+      {{adb}} -s "$S" exec-out screencap -p > "shots/wip/device-$S.png"
+      echo "shots/wip/device-$S.png"
+    done
+
+# full release pipeline: artifact + deploy everywhere (run `just serve-dist`
+# in another terminal first for the web half; version bump/tag stay reviewed)
+release: android-apk deploy-web deploy-apk
+    @echo "release artifacts deployed; version $(node -p "require('./package.json').version")"

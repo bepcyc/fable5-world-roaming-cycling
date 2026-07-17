@@ -36,7 +36,6 @@
 import {
   BufferAttribute,
   BufferGeometry,
-  Color,
   Group,
   IcosahedronGeometry,
   Mesh,
@@ -80,6 +79,8 @@ import {
 } from 'three/tsl';
 import type { Heightfield } from '../world/Heightfield';
 import { prepassMode } from '../core/Params';
+import { VEG_DBG, cssOf } from '../debug/DebugPalette';
+import { quality } from '../core/Quality';
 import { hash12 } from '../gpu/noise/NoiseTSL';
 import type { ProbeGI } from '../gpu/passes/ProbeGI';
 import { canopyAt, type ScatterLayer, type ScatterResult } from '../gpu/passes/Scatter';
@@ -93,13 +94,17 @@ import type { VegLib } from './VegLibrary';
 // close — full-card trees hold to 150 m, impostors start at 460 m).
 // Hero ring 0 (≤26 m): full bark + cards + REAL mesh leaves — the nanite-
 // equivalence near field (spec floor: hero tree ≥100k tris).
-const R0_FAR = 26;
+// Quality.treeRingScale multiplies every ring DISTANCE (bands stay fixed —
+// they are crossfade widths, not reach); 1 = the shipped geometry.
+const Q = quality();
+const RING_K = Q.treeRingScale;
+const R0_FAR = 26 * RING_K;
 const BAND0 = 5;
-const R1_FAR = 150;
+const R1_FAR = 150 * RING_K;
 const BAND1 = 14;
-const R2_FAR = 460;
+const R2_FAR = 460 * RING_K;
 const BAND2 = 36;
-const EX_R1_FAR = 120;
+const EX_R1_FAR = 120 * RING_K;
 const EX_BAND = 15;
 
 // per-group compact-region capacities
@@ -131,8 +136,8 @@ function installClassDebugLegend(): void {
     'columns:2', 'column-gap:14px',
   ].join(';');
   el.innerHTML = '<b>VegClass draw id</b><br>' + Object.entries(VEG_CLASS_NAMES).map(([id, name]) => {
-    const hue = (Number(id) * 47) % 360;
-    return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:hsl(${hue} 95% 55%);border:1px solid #000"></span>cls=${id} ${name}`;
+    const c = VEG_DBG[Number(id)] ?? [0.5, 0.5, 0.5];
+    return `<span style="display:inline-block;width:10px;height:10px;margin-right:5px;background:${cssOf(c)};border:1px solid #000"></span>cls=${id} ${name}`;
   }).join('<br>');
   document.body.appendChild(el);
 }
@@ -145,11 +150,12 @@ const MAIN_GROUPS = 170;
  * they fade out by IMP_CAST_FAR instead.
  */
 const CASC_LOCALS = 142;
-const CASCADES = 4;
+/** MUST match ShadowSetup's CSM cascade count — both read Quality */
+const CASCADES = Q.shadowCascades;
 const GROUPS = MAIN_GROUPS + CASCADES * CASC_LOCALS;
 /** crown-proxy shadows fade out across this band (m from camera) */
-const IMP_CAST_FADE0 = 620;
-const IMP_CAST_FAR = 1100;
+const IMP_CAST_FADE0 = 620 * RING_K;
+const IMP_CAST_FAR = 1100 * RING_K;
 
 function groupOf(cls: number, variant: number, ring: 0 | 1 | 2 | 3): number {
   if (cls < 6) {
@@ -377,7 +383,7 @@ export class Forests {
     for (let c = 0; c < 24; c++) {
       clsInfo[c * 4 + 0] = this.lib.clsHeight[c] ?? 1;
       clsInfo[c * 4 + 1] = this.lib.clsRadius[c] ?? 1;
-      clsInfo[c * 4 + 2] = this.lib.clsMaxDist[c] ?? 150;
+      clsInfo[c * 4 + 2] = (this.lib.clsMaxDist[c] ?? 150) * RING_K;
       const hasR2 = c < 6 || c === 18 || c === 19 || c === 20 || c === 21 || c === 23;
       clsInfo[c * 4 + 3] = hasR2 ? 1 : 0;
     }
@@ -511,7 +517,8 @@ export class Forests {
           return { fadeInAt: R1_FAR, inBand: BAND1, fadeOutAt: R2_FAR, band: BAND2 };
         return { fadeInAt: R2_FAR, band: BAND2 };
       }
-      const maxD = this.lib.clsMaxDist[cls] ?? 150;
+      // material fade must match the cull reach (clsInfo above) — same scale
+      const maxD = (this.lib.clsMaxDist[cls] ?? 150) * RING_K;
       if (cls < 15) return { fadeOutAt: maxD - 15, band: 15 };
       const hasR2 = cls === 18 || cls === 19 || cls === 20 || cls === 21 || cls === 23;
       if (ring === 1)
@@ -531,11 +538,11 @@ export class Forests {
       // shadow budget: tree rings 0–2 cast (per-cascade caster lists);
       // understory is grounded by contact shadows + AO instead.
       // ?ablate=casters drops ALL veg caster draws (perf attribution).
-      const ablateCasters = (
-        new URLSearchParams(window.location.search).get('ablate') ?? ''
-      )
-        .split(',')
-        .includes('casters');
+      const ablateCasters =
+        !Q.vegShadowCasters ||
+        (new URLSearchParams(window.location.search).get('ablate') ?? '')
+          .split(',')
+          .includes('casters');
       const ringCasts =
         !ablateCasters && (pool.cls < 6 ? true : pool.cls < 15 ? false : true);
       const crownDensity = pool.cls < 6 ? CROWN_SHADOW_DENSITY[pool.cls] ?? 0 : 0;
@@ -598,11 +605,14 @@ export class Forests {
           // ?clsdbg=1 — flat-color every draw by VegClass (artifact triage:
           // "which pool is that?"); keeps alpha cutouts so silhouettes read
           if (classDebug) {
-            const hue = (pool.cls * 47) % 360;
-            const cdbg = new Color().setHSL(hue / 360, 0.95, 0.55);
+            // DebugPalette flat color as PURE emissive (albedo black): the
+            // pixel is the palette constant regardless of sun/shadow/GI, so
+            // ?dbgexact=1 frames match the palette bit-exactly. Alpha cutouts
+            // are preserved so silhouettes still read.
+            const cdbg = VEG_DBG[pool.cls] ?? [0.5, 0.5, 0.5];
             const op = mat.opacityNode as unknown as NF | null;
-            mat.colorNode = vec4(vec3(cdbg.r, cdbg.g, cdbg.b), 1);
-            mat.emissiveNode = vec3(cdbg.r, cdbg.g, cdbg.b).mul(0.65);
+            mat.colorNode = vec4(vec3(0.0, 0.0, 0.0), 1);
+            mat.emissiveNode = vec3(cdbg[0], cdbg[1], cdbg[2]);
             if (op) mat.opacityNode = op;
           }
           addDraw(part.geo, mat, g, part.tris);

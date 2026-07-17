@@ -1,6 +1,6 @@
 /** URL parameter parsing — every run is fully described by its URL. */
 
-export type QualityPreset = 'min' | 'low' | 'high' | 'ultra';
+export type QualityPreset = 'min' | 'low' | 'mid' | 'high' | 'ultra';
 
 export interface LaasParams {
   /** world seed — reproduces the entire world */
@@ -9,7 +9,9 @@ export interface LaasParams {
   scene: string;
   /** time of day, hours 0..24 */
   timeOfDay: number;
-  /** quality preset: low (iGPU floor), high (default), ultra (max grids) */
+  /** quality preset: min (phone floor) | low | mid | high (default) | ultra —
+   *  rendering axes in core/Quality.ts, world-gen grids in
+   *  world/WorldConst.ts qualityConfig() */
   preset: QualityPreset;
   /** HUD visible at boot */
   hud: boolean;
@@ -62,7 +64,9 @@ export function parseParams(search: string = window.location.search): LaasParams
   const q = new URLSearchParams(search);
   const presetRaw = q.get('preset') ?? 'high';
   const preset: QualityPreset =
-    presetRaw === 'min' || presetRaw === 'low' || presetRaw === 'ultra' ? presetRaw : 'high';
+    presetRaw === 'min' || presetRaw === 'low' || presetRaw === 'mid' || presetRaw === 'ultra'
+      ? presetRaw
+      : 'high';
   const shotN = num(q.get('shot'), 0);
   return {
     seed: Math.floor(num(q.get('seed'), 1)) >>> 0,

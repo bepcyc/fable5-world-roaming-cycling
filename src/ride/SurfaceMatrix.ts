@@ -118,7 +118,11 @@ export const SURFACE_MATRIX: readonly SurfaceDef[] = [
     weatherSensitivity: 0.7,
     modes: {
       hike: m('allowed', 0.05, 1.7, 0.8, 0.05),
-      road: m('degraded', 0.055, 4.5, 0.5, 0.35),
+      // road on meadow sward: 23 mm slicks sink into soft turf — high Crr
+      // AND latch-grade stallRisk, so the road bike bogs down off-road
+      // instead of touring the meadows (movement-model law: asphalt + fine
+      // gravel only, anything worse grinds toward a stop)
+      road: m('degraded', 0.07, 3.5, 0.5, 0.55),
       gravel: m('degraded', 0.038, 6, 0.55, 0.2),
       mtb: m('degraded', 0.028, 7, 0.6, 0.12),
     },
@@ -190,11 +194,15 @@ export const SURFACE_MATRIX: readonly SurfaceDef[] = [
     weatherSensitivity: 1,
     modes: {
       // P1 mud-stop: the road bike ENTERS (degraded, not blocked) and the
-      // honest Crr + solver decelerate it to a stop within tolerance
+      // honest Crr + solver decelerate it to a stop within tolerance.
+      // MTB stallRisk sits BELOW the solver's latch threshold (0.5) on
+      // purpose: the best off-road machine slogs through mud slowly but
+      // never freezes in it — a bogged MTB while the road bike rolled on
+      // was the owner's (justified) laugh line.
       hike: m('degraded', 0.13, 0.8, 0.4, 0.45),
       road: m('degraded', 0.28, 2, 0.25, 0.9),
       gravel: m('degraded', 0.12, 3, 0.3, 0.6),
-      mtb: m('degraded', 0.09, 3.5, 0.35, 0.5),
+      mtb: m('degraded', 0.09, 3.5, 0.35, 0.4),
     },
   },
   {

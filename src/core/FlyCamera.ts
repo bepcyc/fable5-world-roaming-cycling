@@ -45,6 +45,23 @@ const TOUCH_STYLE = `
   background:rgba(207,227,214,0.38);border:1px solid rgba(255,255,255,0.35);
   transition:background 0.12s}
 #laas-touch-joy.on .thumb{background:rgba(255,209,102,0.55)}
+/* UX-04: JUMP button (walk mode only) — a phone has no Space key. Right
+   thumb, mirrors the left-thumb joystick. Deliberately NOT a "control" the
+   layout gate audits (no role/cursor:pointer, like the joystick): a
+   pointerdown handler drives it, and it sits behind the splash/pause
+   overlays in menu states so hit-testing it there would be a false alarm. */
+/* sits LEFT of the ⚙ FAB (right:16 bottom:16 48px) — never under it */
+#laas-touch-jump{position:fixed;right:calc(76px + env(safe-area-inset-right,0px));
+  bottom:max(16px,env(safe-area-inset-bottom));z-index:900;
+  width:72px;height:72px;border-radius:50%;display:none;
+  align-items:center;justify-content:center;
+  background:rgba(9,13,11,0.34);border:1px solid rgba(255,255,255,0.16);
+  color:#cfe3d6;font:bold 11px/1.1 ui-monospace,Menlo,monospace;
+  letter-spacing:0.08em;text-transform:uppercase;
+  touch-action:none;-webkit-user-select:none;user-select:none;
+  transition:background 0.12s,transform 0.12s}
+#laas-touch-jump.on{display:flex}
+#laas-touch-jump.active{background:rgba(255,209,102,0.42);transform:scale(0.94)}
 `;
 
 function setKeyState(keys: Set<string>, code: string, on: boolean): void {
@@ -170,8 +187,15 @@ export class FlyCamera {
   private touchKeys = new Set<string>();
   private touchJoyEl: HTMLDivElement | null = null;
   private touchJoyThumb: HTMLDivElement | null = null;
+  private touchJumpEl: HTMLDivElement | null = null;
   private touchJoyId: number | null = null;
   private touchJoyCenter = { x: 0, y: 0 };
+  // UX-04 analog joystick: fraction of full deflection (0 below the deadzone,
+  // 1 at the rim) throttles walk speed; a full push sets the sprint flag —
+  // the digital 8-way bits alone can express neither "walk slowly" nor sprint
+  // on touch. Reset with the joystick.
+  private touchWalkFrac = 0;
+  private touchSprint = false;
   private touchLookId: number | null = null;
   private touchLookLast = { x: 0, y: 0 };
   // bound once inside initTouchControls (closures over `base`/`thumb`); null
@@ -311,10 +335,31 @@ export class FlyCamera {
     // hidden while riding a bike — the bike drives itself, WASD does nothing
     base.style.display = this.modeV === 'ride' ? 'none' : 'flex';
 
+    // JUMP button (UX-04) — walk mode only; the tap equivalent of Space
+    const jump = document.createElement('div');
+    jump.id = 'laas-touch-jump';
+    jump.textContent = 'JUMP';
+    jump.setAttribute('aria-label', 'jump');
+    document.body.appendChild(jump);
+    this.touchJumpEl = jump;
+    jump.classList.toggle('on', this.modeV === 'walk');
+    jump.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      jump.classList.add('active');
+      this.triggerJump();
+      safeCapture(jump, e.pointerId);
+    });
+    const releaseJump = (): void => jump.classList.remove('active');
+    jump.addEventListener('pointerup', releaseJump);
+    jump.addEventListener('pointercancel', releaseJump);
+    jump.addEventListener('lostpointercapture', releaseJump);
+
     this.touchJoyReset = () => {
       this.touchJoyId = null;
       base.classList.remove('on');
       thumb.style.transform = 'translate(0,0)';
+      this.touchWalkFrac = 0;
+      this.touchSprint = false;
       for (const code of TOUCH_WASD) this.touchKeys.delete(code);
     };
     this.touchLookReset = () => {
@@ -379,11 +424,13 @@ export class FlyCamera {
       if (document.hidden) {
         this.resetTouchJoy();
         this.resetTouchLook();
+        this.touchJumpEl?.classList.remove('active');
       }
     });
     window.addEventListener('pagehide', () => {
       this.resetTouchJoy();
       this.resetTouchLook();
+      this.touchJumpEl?.classList.remove('active');
     });
   }
 
@@ -413,6 +460,17 @@ export class FlyCamera {
     setKeyState(this.touchKeys, 'KeyD', dx > JOY_DEADZONE);
     setKeyState(this.touchKeys, 'KeyW', dy < -JOY_DEADZONE);
     setKeyState(this.touchKeys, 'KeyS', dy > JOY_DEADZONE);
+    // analog throttle: 0 at the deadzone, 1 at the rim; full push = sprint
+    this.touchWalkFrac =
+      clamped <= JOY_DEADZONE ? 0 : Math.min((clamped - JOY_DEADZONE) / (JOY_MAX - JOY_DEADZONE), 1);
+    this.touchSprint = this.touchWalkFrac > 0.9;
+  }
+
+  /** touch JUMP button (UX-04): the tap equivalent of Space — a phone has no
+   *  keyboard. Buffers exactly like a keydown tap so a sub-frame press still
+   *  jumps on the next grounded update (≤150 ms grace). */
+  triggerJump(): void {
+    this.jumpAt = performance.now();
   }
 
   /** true if either the keyboard or the touch joystick currently holds
@@ -462,6 +520,8 @@ export class FlyCamera {
     }
     this.modeV = mode;
     if (this.touchJoyEl) this.touchJoyEl.style.display = mode === 'ride' ? 'none' : 'flex';
+    // JUMP is a walk-only affordance (no jump in fly/ride)
+    if (this.touchJumpEl) this.touchJumpEl.classList.toggle('on', mode === 'walk');
     // hiding the joystick mid-drag (mounting a bike while holding it) used to
     // leave WASD stuck "on" forever — nothing left to fire its own pointerup
     // once the element is display:none (codex review, scenario 1)
@@ -628,12 +688,17 @@ export class FlyCamera {
     if (this.keyHeld('KeyD')) MOVE.add(RIGHT);
     if (this.keyHeld('KeyA')) MOVE.sub(RIGHT);
     const sprinting =
-      (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && MOVE.lengthSq() > 0;
+      (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.touchSprint) &&
+      MOVE.lengthSq() > 0;
     let target = 0;
     if (MOVE.lengthSq() > 0) {
       MOVE.normalize();
       target = WALK_SPEED * (sprinting ? SPRINT_MULT : 1);
       if (this.keys.has('AltLeft')) target *= 0.35;
+      // UX-04 analog throttle (touch only): below a full push the joystick
+      // magnitude scales walk speed, so "walk slowly" exists on a phone.
+      // Keyboard (touchWalkFrac stays 0) and sprint are untouched.
+      if (this.touchWalkFrac > 0 && !sprinting) target *= Math.max(this.touchWalkFrac, 0.35);
     }
     const accel = this.grounded ? GROUND_ACCEL : AIR_ACCEL;
     const damp = 1 - Math.exp(-dt * accel);

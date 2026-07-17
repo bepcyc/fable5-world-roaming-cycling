@@ -7,11 +7,11 @@
  * brakes — degraded surfaces slow the bike because their Crr is honest.
  *
  * Model (Wilson, "Bicycling Science" ch. 4–6; Martin et al. 1998):
- *   m·dv/dt = η·P/max(v, V_TORQUE) − m·g·(Crr·cosθ + sinθ)
+ *   m·dv/dt = min(η·P/v, F_DRIVE_MAX) − m·g·(Crr·cosθ + sinθ)
  *             − ½·ρ·CdA·v² − F_brake
- * with θ = atan(grade). Semi-implicit Euler on v; the propulsion clamp
- * V_TORQUE caps standing-start torque (a real rider cannot deliver 250 W
- * at 0 m/s — pedal force limits torque, ≈ P/1.4 N here).
+ * with θ = atan(grade). Semi-implicit Euler on v; F_DRIVE_MAX caps
+ * standing-start torque as a FORCE (what a low gear can put on the ground),
+ * so low power still starts on steep grades — just slowly.
  *
  * Mode-level caps from the matrix are CONTROL behavior, not physics: when
  * v exceeds the surface's maxSpeed for the mode, the rider brakes toward
@@ -46,7 +46,20 @@ export const BIKE_SPECS: Record<BikeMode, BikeSpec> = {
 
 export const G = 9.81; // m/s² — Pillar B, non-negotiable
 export const RHO = 1.225; // kg/m³ sea-level air
-const V_TORQUE = 1.4; // m/s — standing-start propulsion clamp
+/** propulsion force cap (N) — standing-start torque limit expressed as
+ *  FORCE, not as a velocity floor. A low gear (≈1:1) with 172.5 mm cranks
+ *  on a ~0.34 m wheel radius turns a rider's ~600 N pedal stomp into
+ *  ≈300 N at the contact patch. The old formulation (drive = P/max(v,1.4))
+ *  capped force at P/1.4 — at 100 W that is 70 N, which cannot climb even
+ *  an 8.5 % grade from a stop: the bike sat at exactly 0 m/s showing
+ *  honest watts, the owner's "stood still at 100 W after a U-turn". A real
+ *  rider grinds up 15 %+ at 100 W slowly; the force cap allows exactly that. */
+const F_DRIVE_MAX = 300; // N
+const V_DRIVE_EPS = 0.15; // m/s — divide-by-zero guard under the force cap
+/** pedaling at/above this releases (and prevents) the bog-down latch —
+ *  standing on the pedals grinds the wheel out of soft ground instead of
+ *  freezing the rider forever with the only exit being dismount-and-walk */
+const STALL_ESCAPE_W = 180;
 /** braking: μ = MU_BRAKE·grip; grip=1 (dry asphalt) ⇒ ~0.66 g full brake */
 const MU_BRAKE = 0.66;
 /** rider governor: fraction of full brake used to hold the surface cap */
@@ -102,13 +115,22 @@ export function stepBike(state: SolverState, inp: SolverStep): SolverOut {
   let v = state.v;
   let stalled = state.stalled;
 
-  // stall latch: released only by leaving the surface (dismount & walk out)
-  if (stalled && (p.stallRisk < STALL_RISK_MIN || p.status === 'allowed')) {
+  // stall latch: released by leaving the surface OR by grinding out at
+  // high power (standing on the pedals) — never a permanent trap
+  if (
+    stalled &&
+    (p.stallRisk < STALL_RISK_MIN || p.status === 'allowed' || inp.powerW >= STALL_ESCAPE_W)
+  ) {
     stalled = false;
   }
 
-  // propulsion is cut when blocked/stalled — the mode simply cannot ride here
-  const drive = blocked || stalled ? 0 : (spec.eff * Math.max(inp.powerW, 0)) / Math.max(v, V_TORQUE);
+  // propulsion is cut when blocked/stalled — the mode simply cannot ride here.
+  // Force-capped (see F_DRIVE_MAX): power over velocity, clamped to what a
+  // low gear can physically put on the ground at a standing start.
+  const drive =
+    blocked || stalled
+      ? 0
+      : Math.min((spec.eff * Math.max(inp.powerW, 0)) / Math.max(v, V_DRIVE_EPS), F_DRIVE_MAX);
 
   const rollDrag = m * G * (p.crr * cosT + sinT); // signed: + resists uphill
   const aero = 0.5 * RHO * spec.cda * v * v;
@@ -124,10 +146,17 @@ export function stepBike(state: SolverState, inp: SolverStep): SolverOut {
   // brakes hold on a climb: no rolling backwards (trackstand floor)
   if (v < 0) v = 0;
 
-  // bog-down: crawling on a high-stall degraded surface latches to a stop
-  if (!stalled && p.status === 'degraded' && p.stallRisk >= STALL_RISK_MIN && v < STALL_V) {
-    // only latch when the rider is actually trying (or was moving) — a
-    // clean coast-down to zero on firm ground must not read as a stall
+  // bog-down: crawling on a high-stall degraded surface latches to a stop —
+  // unless the rider is putting down escape-level power (the same threshold
+  // that releases the latch; latching at 250 W just to un-latch next step
+  // would flicker the banner)
+  if (
+    !stalled &&
+    p.status === 'degraded' &&
+    p.stallRisk >= STALL_RISK_MIN &&
+    v < STALL_V &&
+    inp.powerW < STALL_ESCAPE_W
+  ) {
     v = 0;
     stalled = true;
   }

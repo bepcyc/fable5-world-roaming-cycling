@@ -17,9 +17,11 @@
  * flow, byte-for-byte.
  */
 
+import { isMobileDevice } from './BrowserGate';
 import type { Engine } from './Engine';
 import type { LaasHooks } from './Hooks';
 import { LANG, type Lang, storeLang, t } from './I18n';
+import { announceMenuOpen, onOtherMenuOpen } from './MenuBus';
 import type { LaasParams, QualityPreset } from './Params';
 import { hardwareThreads, storeThreads, THREADS_LS_KEY } from './Threads';
 
@@ -38,7 +40,7 @@ export function shouldBypass(params: LaasParams): boolean {
   return false;
 }
 
-const PRESETS: QualityPreset[] = ['low', 'high', 'ultra'];
+const PRESETS: QualityPreset[] = ['min', 'low', 'mid', 'high', 'ultra'];
 // Labels come from I18n, which is the only file allowed to hold non-Latin
 // text. A language picker names each language in its OWN language, so 'ru'
 // must name itself in Cyrillic — that string therefore lives in the dictionary.
@@ -65,6 +67,7 @@ export class GameMenu {
 
   private splash = el<HTMLDivElement>('splash');
   private pause = el<HTMLDivElement>('pause');
+  private pauseFab = el<HTMLButtonElement>('pause-fab');
   private splashContent = el<HTMLDivElement>('splash-content');
   private splashHint = el<HTMLDivElement>('splash-hint');
   private msettings = el<HTMLDivElement>('msettings');
@@ -89,16 +92,44 @@ export class GameMenu {
 
     el<HTMLButtonElement>('btn-resume').addEventListener('click', () => this.resume());
     el<HTMLButtonElement>('btn-pause-settings').addEventListener('click', () => this.onPauseSettingsClick());
+    el<HTMLButtonElement>('btn-pause-graphics').addEventListener('click', () => this.onPauseGraphicsClick());
     el<HTMLButtonElement>('btn-mainmenu').addEventListener('click', () => this.onMainMenuClick());
 
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'Escape') return;
+      // UX-11 bug 2 (generalized): the TOP open overlay owns Escape. Each of
+      // these layers has its own Escape=close handler firing on this same
+      // press — without the guard BOTH fired: the overlay closed AND pause
+      // opened/resumed on top of it (the owner's "menus stack on each other").
+      if (document.getElementById('qset')?.classList.contains('on')) return;
+      if (document.getElementById('ble-mgr')?.classList.contains('on')) return;
+      if (document.getElementById('opt-panel')?.classList.contains('on')) return;
+      if (document.getElementById('ble-scan')) return; // native BLE chooser (its Cancel owns dismissal)
       if (this.state === 'PLAYING') this.openPause();
       else if (this.state === 'PAUSED') this.resume();
+    });
+    // one-overlay rule (MenuBus): another overlay opening while the pause
+    // card is up hides the card exactly like the SETTINGS door already does
+    // (world stays paused; Esc/⏸ still resumes). 'qset' is ignored — the
+    // graphics sheet deliberately stacks over pause and returns to it (UX-11).
+    onOtherMenuOpen('pause', () => this.pause.classList.remove('on'), ['qset']);
+
+    // touch pause (UX-10): a phone has no Escape — this ⏸ is its only way
+    // into the PAUSE card. Shown only while PLAYING on a touch device.
+    this.pauseFab.setAttribute('aria-label', t('menu.pause'));
+    this.pauseFab.title = t('menu.pause');
+    this.pauseFab.addEventListener('click', () => {
+      if (this.state === 'PLAYING') this.openPause();
     });
 
     this.buildMachineSettings();
     this.startProgressPolling();
+  }
+
+  /** the touch ⏸ lives only while PLAYING on a touch device (desktop uses
+   *  Escape); every state transition calls this */
+  private updatePauseFab(): void {
+    this.pauseFab.classList.toggle('on', this.state === 'PLAYING' && isMobileDevice());
   }
 
   /** Engine exists only after Engine.create() resolves — wire it in once available. */
@@ -150,6 +181,7 @@ export class GameMenu {
     if (this.engine) this.engine.paused = false;
     this.state = 'PLAYING';
     this.hasPlayedOnce = true;
+    this.updatePauseFab();
   }
 
   private onExitClick(): void {
@@ -163,9 +195,11 @@ export class GameMenu {
 
   private openPause(): void {
     if (!this.engine) return;
+    announceMenuOpen('pause'); // one-overlay rule: closes options/BLE manager
     this.engine.paused = true;
     this.state = 'PAUSED';
     this.pause.classList.add('on');
+    this.updatePauseFab();
   }
 
   private resume(): void {
@@ -173,6 +207,7 @@ export class GameMenu {
     this.engine.paused = false;
     this.state = 'PLAYING';
     this.pause.classList.remove('on');
+    this.updatePauseFab();
   }
 
   private onPauseSettingsClick(): void {
@@ -184,11 +219,21 @@ export class GameMenu {
     this.hooks.openSettings?.();
   }
 
+  private onPauseGraphicsClick(): void {
+    // UX-11: a direct GRAPHICS door from the pause card — the world's most
+    // perf-sensitive knobs, one tap from a mid-ride pause (was: SETTINGS →
+    // OptionsMenu → GRAPHICS, two extra hops). The sheet (z 2401, above the
+    // pause card at 1500) floats over the still-visible pause chrome, so
+    // closing it returns straight to PAUSE — no dead frozen frame.
+    this.hooks.openGraphicsSettings?.();
+  }
+
   private onMainMenuClick(): void {
     // world stays paused; splash comes back with Start relabeled "Resume"
     this.pause.classList.remove('on');
     this.splash.hidden = false;
     this.state = 'MENU';
+    this.updatePauseFab();
     this.updateStartLabel();
   }
 
@@ -214,6 +259,14 @@ export class GameMenu {
       card.addEventListener('click', () => this.applyPreset(p));
       presetRow.appendChild(card);
     }
+    // full per-axis graphics screen (SettingsMenu) — sits under the preset
+    // row; presets stay the one-click path, this is the god-mode door
+    const gfx = document.createElement('div');
+    gfx.className = 'msettings-card-item';
+    gfx.style.gridColumn = '1 / -1';
+    gfx.textContent = t('settings.title') + ' …';
+    gfx.addEventListener('click', () => this.hooks.openGraphicsSettings?.());
+    presetRow.appendChild(gfx);
 
     const max = hardwareThreads();
     const current = (() => {

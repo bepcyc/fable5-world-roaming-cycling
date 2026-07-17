@@ -12,6 +12,7 @@ import {
 import { Engine } from './core/Engine';
 import { FlyCamera } from './core/FlyCamera';
 import { GameMenu } from './core/GameMenu';
+import { SettingsMenu } from './core/SettingsMenu';
 import { applyStaticI18n } from './core/I18n';
 import { initHooks } from './core/Hooks';
 import { initImmersiveMobile } from './core/ImmersiveMobile';
@@ -64,6 +65,17 @@ async function boot(): Promise<void> {
   // of whether the user has clicked Start yet
   const gameMenu = new GameMenu(hooks, params);
   const bootUI = new BootUI(hooks, params);
+  // full graphics settings screen (quality axes; persists to localStorage,
+  // applies on reload). Lazy: built on first open, from splash or in-game.
+  let settingsMenu: SettingsMenu | null = null;
+  let engineForSettings: Engine | null = null;
+  hooks.openGraphicsSettings = () => {
+    settingsMenu ??= new SettingsMenu((s) => {
+      // live axes only — everything else applies on the restart it asks for
+      if (s.renderScale > 0) engineForSettings?.renderer.setPixelRatio(s.renderScale);
+    });
+    settingsMenu.show();
+  };
 
   bootUI.set(0.02, 'probing WebGPU');
   const diag = await probeWebGPU();
@@ -113,6 +125,7 @@ async function boot(): Promise<void> {
   bootUI.set(0.08, 'creating renderer');
   const engine = await Engine.create(params, hooks);
   gameMenu.bindEngine(engine);
+  engineForSettings = engine;
 
   // FlyCamera's update MUST register before any scene system: updateFns run
   // in registration order, and subsystems copy camera state in their own
@@ -126,7 +139,8 @@ async function boot(): Promise<void> {
   registerScene('terrain', buildTerrainScene);
   registerScene('gallery', buildGalleryScene);
   registerScene('shadowtest', buildShadowTestScene);
-  // 'world' becomes the streamed open world once terrain tiles land.
+  // 'world' IS the terrain scene: the world is boot-generated and fully
+  // resident (4x4 km, no streaming by design) — see TerrainScene.ts.
   registerScene('world', buildTerrainScene);
 
   const ctx: WorldContext = {
@@ -244,6 +258,38 @@ async function boot(): Promise<void> {
       const mode = cls === 'asphalt' ? 'road' : cls.startsWith('gravel') ? 'gravel' : 'mtb';
       rig.setMode(mode);
     }
+  }
+
+  // UX-15b: attach BLE mid-ride WITHOUT a page reload. The OptionsMenu BLE
+  // button used to location.assign(?ride=ble) purely to bring the transport up
+  // at boot — but the secure-context requirement is identical either way, so a
+  // user gesture can build the source + device manager lazily and swap it onto
+  // the live rig/HUD. Idempotent: a second call just opens the existing
+  // manager. (No-op wiring cost until the gesture fires.)
+  {
+    const dbgRoot =
+      (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
+    dbgRoot['ensureBle'] = (): void => {
+      if (!bleSource) {
+        bleSource = new BleSensorSource(
+          nativeBleAvailable() ? new NativeBridgeTransport() : new WebBluetoothTransport(),
+        );
+        bleUi = new DeviceManagerUi(bleSource, true); // start open — the user just asked for it
+        rideHud.setSource(bleSource); // propagates to the rig + refreshes badge/visibility
+        const d =
+          (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
+        d['bleSource'] = bleSource;
+        d['bleUi'] = bleUi;
+        (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = d;
+      } else {
+        // the source may have been swapped away (demo/dev picked mid-session) —
+        // picking BLE again must actually re-route the rig/HUD to the live BLE
+        // source, not just show the manager over an unchanged demo ride
+        rideHud.setSource(bleSource);
+        bleUi?.open();
+      }
+    };
+    (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbgRoot;
   }
 
   hooks.setPose = (p) => fly.setPose(p);

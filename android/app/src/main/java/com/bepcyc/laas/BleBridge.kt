@@ -255,13 +255,27 @@ class BleBridge(
                 )
             }
         }
+        // Saved-device MAC filters, OR'd alongside the service filters: a
+        // bonded trainer may drop the service UUIDs from its advertisement
+        // (the owner's Tacx does after its first connect), which makes every
+        // service filter miss it forever — the address filter still matches.
+        val addrs = o.optJSONArray("addrs")
+        if (addrs != null) {
+            for (i in 0 until addrs.length()) {
+                try {
+                    filters.add(ScanFilter.Builder().setDeviceAddress(addrs.getString(i)).build())
+                } catch (e: IllegalArgumentException) {
+                    Log.w(TAG, "bad addr filter: ${addrs.optString(i)}")
+                }
+            }
+        }
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
             .build()
         scanner.startScan(if (filters.isEmpty()) null else filters, settings, scanCallback)
         scanning = true
-        Log.i(TAG, "scan started (${filters.size} service filters)")
+        Log.i(TAG, "scan started (${filters.size} filters incl. saved-addr)")
         replyOk(id)
     }
 

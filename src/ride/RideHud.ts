@@ -31,6 +31,7 @@ const TELEPORT_SPEED = 200; // m/s — faster than any ride ⇒ programmatic jum
 const MOVING_MS = 0.3; // m/s — demo "pedaling" threshold
 const REFRESH_S = 0.15; // text refresh cadence
 const MS_TO_KMH = 3.6;
+const UTURN_CONFIRM_MS = 500; // hold the U-turn button this long to confirm
 
 interface Card {
   root: HTMLDivElement;
@@ -103,6 +104,11 @@ const STYLE = `
 .rj-hint{margin-top:8px;font:10px/1.2 ui-monospace,Menlo,monospace;
   color:#b9cdc1;text-shadow:0 1px 5px rgba(0,0,0,0.8);letter-spacing:0.08em}
 .rj-hint b{color:#ffd166}
+/* committed turn (window closed): a status chip, not a menu — the single
+   card must NOT read as a control (probe-ui-touch audits cursor:pointer) */
+#ride-junction.locked .rj-hint{visibility:hidden}
+#ride-junction.locked .rj-label{color:#ffd166}
+.rj-opt.ro{pointer-events:none;cursor:default}
 #ride-pedal{position:fixed;left:max(18px,env(safe-area-inset-left));
   bottom:max(18px,env(safe-area-inset-bottom));z-index:950;display:none;
   flex-direction:row;gap:12px;align-items:flex-end;
@@ -118,6 +124,18 @@ const STYLE = `
 .rp-btn.brake{width:64px;height:64px;font-size:9px;color:#ffb09a;
   border-color:rgba(255,138,112,0.4)}
 .rp-btn.brake.active{background:rgba(255,138,112,0.38)}
+/* U-turn (UX-02): hold-to-confirm — the ring fills while held, so a stray
+   tap can't spin the rider round. Shown for ANY source while riding. */
+.rp-btn.uturn{width:64px;height:64px;font-size:8px;color:#bcd9ff;
+  border-color:rgba(140,190,255,0.4)}
+.rp-btn.uturn.active{background:rgba(140,190,255,0.34)}
+.rp-btn.uturn.armed{background:rgba(140,190,255,0.55);transform:scale(1.02)}
+/* dismount: the touch equivalent of X — a phone has no keyboard, and "get
+   off the bike" must never require one (owner release rule). Plain tap:
+   dismounting is safe and instantly reversible via the options menu. */
+.rp-btn.dismount{width:64px;height:64px;font-size:8px;color:#d8e8c9;
+  border-color:rgba(180,220,150,0.4)}
+.rp-btn.dismount.active{background:rgba(180,220,150,0.32)}
 `;
 
 /** `setPointerCapture()` throws NotFoundError once the browser no longer
@@ -153,10 +171,14 @@ export const MODE_ICON: Record<string, string> = {
   mtb: '<circle cx="6" cy="16.5" r="3.4" fill="none" stroke-width="1.9"/><circle cx="18" cy="16.5" r="3.4" fill="none" stroke-width="1.9"/><path d="M6 16.5l3.2-6.4h6l2.8 6.4M9.2 10.1L7.6 7.4h2.6M14.4 9.4l-3.2 7.1" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.5 5.5l3.2-2.2 2.6 2.6 3-2 2.6 2.4 3.2-2.2 2.9 2.2" fill="none" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>',
 };
 
-/** arrow glyphs for the chooser (24×24, stroke drawn) */
+/** arrow glyphs for the chooser (24×24, stroke drawn) — one glyph per
+ *  angle bucket (BikeRig.classifyTurn): a slight bend, a 90° corner, a
+ *  hairpin and a U-turn read as DIFFERENT signs, matching the real angle */
 function turnSvg(turn: Turn, color: string): string {
   const arrow: Record<Turn, string> = {
     straight: '<path d="M12 20V6M7.5 10.5L12 5.5l4.5 5"/>',
+    'slight-left': '<path d="M14 20v-7L10 6M8.7 10.8L10 6l4.8 1.3"/>',
+    'slight-right': '<path d="M10 20v-7L14 6M15.3 10.8L14 6l-4.8 1.3"/>',
     left: '<path d="M16.5 20v-8.5a3 3 0 00-3-3H6M9.5 4.5L5.5 8.5l4 4"/>',
     right: '<path d="M7.5 20v-8.5a3 3 0 013-3H18M14.5 4.5l4 4-4 4"/>',
     'sharp-left': '<path d="M15 20V9L7 13.5M7.5 7.5L6.5 14l6-1"/>',
@@ -188,16 +210,29 @@ export class RideHud {
   private junctionEl: HTMLDivElement;
   private junctionRow: HTMLDivElement;
   private junctionTitle: HTMLDivElement;
+  private junctionLabel: HTMLSpanElement;
   private junctionKey = '';
   /** touch UI (mobile only): hold-to-pedal + hold-to-brake, the tap
    *  equivalent of the 'dev' keyboard source's W/S — see buildTouchPedal() */
   private pedalWrap: HTMLDivElement | null = null;
-  /** bound inside buildTouchPedal(); called from update() whenever the
-   *  pedal/brake controls transition from shown to hidden (dismount / source
-   *  swap away from 'dev') so a held finger can't latch state forever once
-   *  its buttons go display:none (codex review, scenario 1). */
-  private releasePedalBrake: (() => void) | null = null;
+  private pedalBtn: HTMLDivElement | null = null;
+  private brakeBtn: HTMLDivElement | null = null;
+  /** touch U-turn button (UX-02): hold-to-confirm; calls rig.uTurn() */
+  private uturnBtn: HTMLDivElement | null = null;
+  private uturnWasOn = false;
+  private releaseUturn: (() => void) | null = null;
+  /** touch dismount button — the tap equivalent of X (keyboard-only before) */
+  private dismountBtn: HTMLDivElement | null = null;
+  /** bound inside buildTouchPedal(); called from update() whenever a
+   *  pedal/brake control transitions from shown to hidden (dismount / source
+   *  swap) so a held finger can't latch state forever once its button goes
+   *  display:none (codex review, scenario 1). Split per-button so the brake
+   *  (shown for ANY source, UX-08) and the dev-only pedal release
+   *  independently; the document/blur path releases both via a local closure. */
+  private releasePedal: (() => void) | null = null;
+  private releaseBrake: (() => void) | null = null;
   private pedalWasOn = false;
+  private brakeWasOn = false;
   private visible: boolean;
   private last: { x: number; z: number } | null = null;
   private speedMs = 0;
@@ -259,7 +294,8 @@ export class RideHud {
 
     this.junctionEl = document.createElement('div');
     this.junctionEl.id = 'ride-junction';
-    this.junctionEl.innerHTML = `<div class="rj-title">${t('ride.turnAhead')} · <span class="rj-dist">0 m</span></div><div class="rj-row"></div><div class="rj-hint">${t('ride.turnHint')}</div>`;
+    this.junctionEl.innerHTML = `<div class="rj-title"><span class="rj-label">${t('ride.turnAhead')}</span> · <span class="rj-dist">0 m</span></div><div class="rj-row"></div><div class="rj-hint">${isMobileDevice() ? t('ride.turnHintTouch') : t('ride.turnHint')}</div>`;
+    this.junctionLabel = this.junctionEl.querySelector('.rj-label') as HTMLSpanElement;
     this.junctionTitle = this.junctionEl.querySelector('.rj-dist') as HTMLDivElement;
     this.junctionRow = this.junctionEl.querySelector('.rj-row') as HTMLDivElement;
     document.body.appendChild(this.junctionEl);
@@ -284,11 +320,16 @@ export class RideHud {
   }
 
   /**
-   * Touch UI: hold-to-pedal + hold-to-brake — the 'dev' power source (KEYS,
-   * picked from the touch-friendly OptionsMenu) reads W/S from a keydown
-   * listener with no touch path, so on a phone/tablet it mounted the bike
-   * and then produced zero watts forever. These two buttons are the tap
-   * equivalent, shown only while that source is actually mounted (update()).
+   * Touch UI: hold-to-pedal + hold-to-brake — the tap equivalents of the
+   * keyboard bike's W/S, which a phone/tablet has no way to press.
+   *
+   * BRAKE is shown for ANY power source while riding (UX-08): a rider on a
+   * real BLE trainer flying into a hairpin needs a finger brake — the old
+   * gate only showed these controls for the 'dev' keyboard source, so a
+   * touch player with real sensors had no way to stop. PEDAL emulation stays
+   * dev-only: injecting synthetic watts only means anything for the keyboard
+   * source (demo/BLE produce their own power). Per-button visibility is
+   * decided in update().
    */
   private buildTouchPedal(): void {
     const wrap = document.createElement('div');
@@ -303,14 +344,36 @@ export class RideHud {
     brake.textContent = t('ride.brakeBtn');
     brake.setAttribute('role', 'button');
     brake.setAttribute('aria-label', t('ride.brakeBtn'));
-    wrap.append(pedal, brake);
+    const uturn = document.createElement('div');
+    uturn.className = 'rp-btn uturn';
+    uturn.textContent = t('ride.uturnBtn');
+    uturn.setAttribute('role', 'button');
+    uturn.setAttribute('aria-label', t('ride.uturnBtn'));
+    const dismount = document.createElement('div');
+    dismount.className = 'rp-btn dismount';
+    dismount.textContent = t('ride.dismountBtn');
+    dismount.setAttribute('role', 'button');
+    dismount.setAttribute('aria-label', t('ride.dismountBtn'));
+    wrap.append(pedal, brake, uturn, dismount);
     document.body.appendChild(wrap);
     this.pedalWrap = wrap;
+    this.pedalBtn = pedal;
+    this.brakeBtn = brake;
+    this.uturnBtn = uturn;
+    this.dismountBtn = dismount;
+
+    dismount.addEventListener('pointerdown', () => dismount.classList.add('active'));
+    dismount.addEventListener('pointerup', () => {
+      dismount.classList.remove('active');
+      this.rig?.setMode('hike');
+    });
+    dismount.addEventListener('pointercancel', () => dismount.classList.remove('active'));
 
     const setPedal = (on: boolean): void => {
       pedal.classList.toggle('active', on);
       if (this.source?.kind === 'dev') (this.source as KeyboardPowerSource).setPedaling(on);
     };
+    this.releasePedal = () => setPedal(false);
     pedal.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       setPedal(true);
@@ -328,6 +391,7 @@ export class RideHud {
       brake.classList.toggle('active', on);
       this.rig?.setBrake(on);
     };
+    this.releaseBrake = () => setBrake(false);
     brake.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       setBrake(true);
@@ -337,6 +401,33 @@ export class RideHud {
     brake.addEventListener('pointercancel', () => setBrake(false));
     brake.addEventListener('lostpointercapture', () => setBrake(false));
 
+    // U-turn: hold-to-confirm (~0.5 s) so a stray tap can't spin the rider
+    // round. The timer arms the ring; on fire it calls rig.uTurn() (same
+    // reversal as the desktop hold-brake). Any release cancels a pending arm.
+    let uturnTimer = 0;
+    const cancelUturn = (): void => {
+      if (uturnTimer) {
+        clearTimeout(uturnTimer);
+        uturnTimer = 0;
+      }
+      uturn.classList.remove('active', 'armed');
+    };
+    this.releaseUturn = cancelUturn;
+    uturn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      uturn.classList.add('active');
+      safeCapture(uturn, e.pointerId);
+      uturnTimer = window.setTimeout(() => {
+        uturnTimer = 0;
+        uturn.classList.add('armed');
+        this.rig?.uTurn();
+        window.setTimeout(() => uturn.classList.remove('active', 'armed'), 220);
+      }, UTURN_CONFIRM_MS);
+    });
+    uturn.addEventListener('pointerup', cancelUturn);
+    uturn.addEventListener('pointercancel', cancelUturn);
+    uturn.addEventListener('lostpointercapture', cancelUturn);
+
     // document/activity transitions the pointer path never sees on Android
     // (Custom Tab backgrounded mid-hold — task switch, incoming call, the
     // system back gesture): without these a backgrounded tab can resume
@@ -344,8 +435,8 @@ export class RideHud {
     const releaseBoth = (): void => {
       setPedal(false);
       setBrake(false);
+      cancelUturn();
     };
-    this.releasePedalBrake = releaseBoth;
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) releaseBoth();
     });
@@ -366,19 +457,27 @@ export class RideHud {
     const dbg =
       (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg ?? {};
     dbg['rideSetSource'] = (kind: 'demo' | 'dev' | null): string => {
-      const src =
-        kind === 'demo' ? new DemoSensorSource() : kind === 'dev' ? new KeyboardPowerSource() : null;
-      this.source = src;
-      this.rig?.setSource(src);
-      this.applyBadge();
-      if (src && !this.visible) {
-        this.visible = true; // picking a source means "I want to ride"
-        this.applyVisibility();
-      }
+      this.setSource(
+        kind === 'demo' ? new DemoSensorSource() : kind === 'dev' ? new KeyboardPowerSource() : null,
+      );
       return this.source?.kind ?? 'none';
     };
     dbg['rideSourceKind'] = (): string => this.source?.kind ?? 'none';
     (window as unknown as { __laasDbg?: Record<string, unknown> }).__laasDbg = dbg;
+  }
+
+  /** swap the live power source — options-menu picks and the lazy BLE attach
+   *  (UX-15b: bring BLE up mid-ride without a page reload) both route here.
+   *  Propagates to the rig, refreshes the honesty badge, and reveals the HUD
+   *  (picking a source means "I want to ride"). */
+  setSource(src: SensorSource | null): void {
+    this.source = src;
+    this.rig?.setSource(src);
+    this.applyBadge();
+    if (src && !this.visible) {
+      this.visible = true;
+      this.applyVisibility();
+    }
   }
 
   /** (re)draw the honesty badge for the current source */
@@ -427,13 +526,29 @@ export class RideHud {
     if (!this.visible) return;
 
     const st = this.rig?.state() ?? null;
-    if (this.pedalWrap) {
-      const showPedal = this.source?.kind === 'dev' && (st?.riding ?? false);
-      // dismount / source swap away from 'dev' while a finger is still down
-      // on the (about to vanish) button — release now, not never
-      if (this.pedalWasOn && !showPedal) this.releasePedalBrake?.();
+    if (this.pedalWrap && this.pedalBtn && this.brakeBtn && this.uturnBtn && this.dismountBtn) {
+      const riding = st?.riding ?? false;
+      // brake + U-turn + dismount work for ANY source while riding (UX-08/02:
+      // a rider on a real trainer must be able to stop, reverse AND get off
+      // with a finger); pedal emulation is dev-only.
+      const showBrake = riding;
+      const showUturn = riding;
+      const showDismount = riding;
+      const showPedal = this.source?.kind === 'dev' && riding;
+      // a finger still down on a button that is about to vanish (dismount /
+      // source swap) — release now, not never; per-button so hiding the
+      // dev-only pedal never drops the brake and vice versa
+      if (this.pedalWasOn && !showPedal) this.releasePedal?.();
+      if (this.brakeWasOn && !showBrake) this.releaseBrake?.();
+      if (this.uturnWasOn && !showUturn) this.releaseUturn?.();
       this.pedalWasOn = showPedal;
-      this.pedalWrap.classList.toggle('on', showPedal);
+      this.brakeWasOn = showBrake;
+      this.uturnWasOn = showUturn;
+      this.pedalBtn.style.display = showPedal ? 'flex' : 'none';
+      this.brakeBtn.style.display = showBrake ? 'flex' : 'none';
+      this.uturnBtn.style.display = showUturn ? 'flex' : 'none';
+      this.dismountBtn.style.display = showDismount ? 'flex' : 'none';
+      this.pedalWrap.classList.toggle('on', showBrake || showPedal || showUturn || showDismount);
     }
     const sample = this.source?.read() ?? { cadenceRpm: null, heartRateBpm: null, powerW: null };
     // session recording (1 Hz decimation inside; power is real solver input)
@@ -513,7 +628,7 @@ export class RideHud {
       this.banner.style.opacity = '0';
     }
 
-    this.renderJunction(st?.junction ?? null);
+    this.renderJunction(st?.junction ?? null, st?.turnLocked ?? null);
   }
 
   private showBanner(text: string, info: boolean): void {
@@ -522,33 +637,65 @@ export class RideHud {
     this.banner.style.opacity = '1';
   }
 
-  private renderJunction(j: JunctionPreview | null): void {
-    if (!j || j.options.length < 2) {
-      this.junctionEl.classList.remove('on');
-      this.junctionKey = '';
+  private renderJunction(
+    j: JunctionPreview | null,
+    locked: { turn: Turn; cls: string; angle: number; distM: number } | null,
+  ): void {
+    if (j && j.options.length >= 2) {
+      // pickable window — cards left→right by real exit angle (BikeRig sorts)
+      this.junctionEl.classList.remove('locked');
+      this.junctionLabel.textContent = t('ride.turnAhead');
+      this.junctionTitle.textContent = `${Math.max(Math.round(j.distM / 5) * 5, 0)} m`;
+      const key =
+        'pick|' +
+        j.options
+          .map((o) => o.turn + o.cls + String(Math.round((o.angle * 36) / Math.PI)))
+          .join('|');
+      if (key !== this.junctionKey) {
+        this.junctionKey = key;
+        this.junctionRow.innerHTML = '';
+        j.options.forEach((o, i) => {
+          const el = document.createElement('div');
+          el.className = 'rj-opt';
+          const color = CLS_COLOR[o.cls] ?? '#cfe3d6';
+          const deg = Math.round((o.angle * 180) / Math.PI);
+          // exact signed exit angle for anyone hovering (L+ / R−)
+          el.title = deg === 0 ? '0°' : `${deg > 0 ? 'L' : 'R'} ${Math.abs(deg)}°`;
+          el.innerHTML = `${turnSvg(o.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${t('surface.' + o.cls)}</div>`;
+          // tap/click picks this turn — the only path before was ←/→, a
+          // keydown listener with nothing to fire it on a phone/tablet
+          el.addEventListener('click', () => this.rig?.pickJunctionOption(i));
+          this.junctionRow.appendChild(el);
+        });
+      }
+      const kids = this.junctionRow.children;
+      for (let i = 0; i < kids.length; i++) {
+        (kids[i] as HTMLElement).classList.toggle('sel', i === j.selected);
+      }
+      this.junctionEl.classList.add('on');
       return;
     }
-    this.junctionTitle.textContent = `${Math.max(Math.round(j.distM / 5) * 5, 0)} m`;
-    const key = j.options.map((o) => o.turn + o.cls).join('|');
-    if (key !== this.junctionKey) {
-      this.junctionKey = key;
-      this.junctionRow.innerHTML = '';
-      j.options.forEach((o, i) => {
+    if (locked) {
+      // committed: the window is CLOSED before the node (docs/TURN_PICKER.md)
+      // — show the frozen turn, not a menu; nothing here is tappable
+      this.junctionEl.classList.add('locked');
+      this.junctionLabel.textContent = t('ride.turnLocked');
+      this.junctionTitle.textContent = `${Math.max(Math.round(locked.distM / 5) * 5, 0)} m`;
+      const key = 'locked|' + locked.turn + locked.cls;
+      if (key !== this.junctionKey) {
+        this.junctionKey = key;
+        this.junctionRow.innerHTML = '';
         const el = document.createElement('div');
-        el.className = 'rj-opt';
-        const color = CLS_COLOR[o.cls] ?? '#cfe3d6';
-        el.innerHTML = `${turnSvg(o.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${t('surface.' + o.cls)}</div>`;
-        // tap/click picks this turn — the only path before was ←/→, a
-        // keydown listener with nothing to fire it on a phone/tablet
-        el.addEventListener('click', () => this.rig?.pickJunctionOption(i));
+        el.className = 'rj-opt sel ro';
+        const color = CLS_COLOR[locked.cls] ?? '#cfe3d6';
+        el.innerHTML = `${turnSvg(locked.turn, 'currentColor')}<div class="rj-cls" style="color:${color}">${t('surface.' + locked.cls)}</div>`;
         this.junctionRow.appendChild(el);
-      });
+      }
+      this.junctionEl.classList.add('on');
+      return;
     }
-    const kids = this.junctionRow.children;
-    for (let i = 0; i < kids.length; i++) {
-      (kids[i] as HTMLElement).classList.toggle('sel', i === j.selected);
-    }
-    this.junctionEl.classList.add('on');
+    this.junctionEl.classList.remove('on', 'locked');
+    this.junctionKey = '';
   }
 }
 

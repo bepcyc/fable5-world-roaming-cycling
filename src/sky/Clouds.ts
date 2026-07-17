@@ -39,12 +39,13 @@ import {
 import type { NF, NI, NV2, NV3 } from '../gpu/TSLTypes';
 import { windU } from '../render/Wind';
 import { WORLD_SIZE } from '../world/WorldConst';
+import { quality } from '../core/Quality';
 import type { Atmosphere } from './Atmosphere';
 import { SUN_E } from './Atmosphere';
 
 const BASE_RES = 96;
 const DETAIL_RES = 32;
-const SHADOW_RES = 768;
+const SHADOW_RES = quality().cloudShadowRes;
 const WEATHER_RES = 512;
 /** weather field world span (m) — tiles beyond this, far past the playable area */
 const WEATHER_WORLD = 26000;
@@ -300,7 +301,9 @@ export class Clouds {
 
     const valid = tExit.greaterThan(tEnter).and(dir.y.abs().greaterThan(1e-4));
 
-    const STEPS = 32;
+    // Quality-driven march budget (shipped 32); jitter + the TRAA history
+    // absorb the coarser stepping at lower counts
+    const STEPS = quality().cloudMarchSteps;
     const seg = tExit.sub(tEnter).div(STEPS);
     const trans = float(1).toVar();
     const light = vec3(0).toVar();

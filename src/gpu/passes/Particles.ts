@@ -19,6 +19,7 @@
 
 import { DoubleSide, InstancedMesh, PlaneGeometry, Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
+import { quality } from '../../core/Quality';
 import { IrradianceNode, MeshStandardNodeMaterial } from 'three/webgpu';
 import type { ComputeNode, Renderer, StorageTexture } from 'three/webgpu';
 import {
@@ -51,7 +52,9 @@ import type { ProbeGI } from './ProbeGI';
 import { gustAt, windContext, windU } from '../../render/Wind';
 import { weatherU } from '../../sky/Weather';
 
-export const PARTICLE_COUNT = 131072;
+// Quality-driven pool size (min can zero the whole system; measured 0.4% of
+// the tablet frame at the shipped 131072, so this is a knob, not a lever)
+export const PARTICLE_COUNT = quality().particleCount;
 const BOX_R = 36; // m, horizontal half-extent around the camera
 const BOX_H = 24; // m, vertical half-extent
 
@@ -89,8 +92,17 @@ export class Particles {
         float(T_SNOW),
         leafRoll.select(float(T_LEAF), float(T_POLLEN)),
       );
-      // M1.6: precipitation claims its share of the pool everywhere
-      const rain = (weatherU.rainAmt as unknown as NF);
+      // M1.6: precipitation claims its share of the pool everywhere.
+      // ?ablate=rain zeroes the claim (streaks + splashes) while keeping the
+      // rest of the weather state — isolates precipitation draws from the
+      // rain LIGHTING when hunting pale-canopy noise (2026-07-17).
+      const ablateRain = new URLSearchParams(window.location.search)
+        .get('ablate')
+        ?.split(',')
+        .includes('rain');
+      const rain = ablateRain
+        ? (float(0) as NF)
+        : (weatherU.rainAmt as unknown as NF);
       const isRain = hash13(p.mul(3.17)).lessThan(rain).and(rain.greaterThan(0.02));
       return isRain.select(float(T_RAIN), envType);
     };
@@ -291,7 +303,21 @@ export class Particles {
     // fade rain within arm's reach (world-space camera distance)
     const camDist = positionWorld.sub(vec3(this.uCam)).length();
     const nearFade = isRainR.select(smoothstep(0.6, 2.2, camDist), float(1));
-    mat.opacityNode = softSel.mul(lifeSel).mul(aK).mul(nearFade);
+    // streaks over/inside tree crowns: a bright 0.42-alpha thread against
+    // ~0.1-albedo conifer reads near-white, and TAA+motion blur smear the
+    // moving threads into a frost-like veil on every canopy (owner report
+    // 2026-07-17, 76 km/h rain descent). Kill the veil exactly where crowns
+    // are — canopy coverage dims rain to a third; open road/meadow/sky keep
+    // full rain read.
+    const canopyDim = isRainR.select(
+      mix(
+        float(1),
+        float(0.3),
+        smoothstep(0.15, 0.5, canopyTex ? canopyAt(canopyTex, positionWorld.xz) : (float(0) as NF)),
+      ),
+      float(1),
+    );
+    mat.opacityNode = softSel.mul(lifeSel).mul(aK).mul(nearFade).mul(canopyDim);
 
     const leafTint = mix(
       vec3(0.28, 0.16, 0.05),
