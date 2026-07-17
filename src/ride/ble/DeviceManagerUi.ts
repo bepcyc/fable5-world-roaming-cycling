@@ -402,7 +402,11 @@ export class DeviceManagerUi {
   }
 
   private updateWatchdog(): void {
-    const lost = this.forceLost || (this.source.available() && this.hasLostRole());
+    // suppressed while the hub is open: the role cards already show the lost
+    // state there, and the banner physically overlapped the hub title
+    // (caught on the first live screenshot of the redesign)
+    const lost =
+      !this.visible && (this.forceLost || (this.source.available() && this.hasLostRole()));
     this.lostBanner.classList.toggle('on', lost);
   }
 
