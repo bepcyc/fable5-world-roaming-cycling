@@ -354,34 +354,72 @@ class NativeDeviceHandle implements BleDeviceHandle {
 
 // ---- in-page chooser -----------------------------------------------------------
 
+// Styled to the same PAIR-modal shape as DeviceManagerUi's per-role modal
+// (reference/zwift-ux/*): a dark title bar, two filter pills, a live device
+// list with an animated spinner + "Looking for devices…", a wake-the-sensor
+// hint box, and REFRESH / CLOSE actions — in OUR dark-glass language, not
+// Zwift's branding.
 const CHOOSER_STYLE = `
 #ble-scan{position:fixed;inset:0;z-index:1002;display:flex;align-items:center;justify-content:center;
-  background:rgba(4,6,5,0.8);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+  padding:14px;background:rgba(4,6,5,0.8);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
   font-family:ui-monospace,Menlo,Consolas,monospace}
-#ble-scan .bs-card{width:min(420px,94vw);max-height:90vh;display:flex;flex-direction:column;
-  color:#dff0e6;background:rgba(12,16,14,0.96);border:1px solid rgba(255,255,255,0.12);
-  border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5)}
-#ble-scan .bs-title{font:bold 12px/1.2 ui-monospace,monospace;letter-spacing:0.14em;color:#ffe9b0;margin-bottom:8px}
-#ble-scan .bs-note{font:10px/1.5 ui-monospace,monospace;color:#c9b9a4;margin-bottom:10px}
-#ble-scan .bs-list{overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:60px}
-#ble-scan .bs-item{display:flex;align-items:center;gap:8px;padding:10px;border-radius:8px;cursor:pointer;
-  border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03)}
+#ble-scan .bs-card{width:min(440px,94vw);max-height:90vh;display:flex;flex-direction:column;overflow:hidden;
+  color:#dff0e6;background:rgba(12,16,14,0.98);border:1px solid rgba(255,255,255,0.14);
+  border-radius:15px;box-shadow:0 10px 34px rgba(0,0,0,0.6)}
+#ble-scan .bs-bar{flex:none;padding:12px 15px;background:rgba(0,0,0,0.4);
+  border-bottom:1px solid rgba(255,255,255,0.08);
+  font:bold 12px/1.2 ui-monospace,monospace;letter-spacing:0.14em;color:#ffe9b0}
+#ble-scan .bs-body{padding:14px 15px 16px;overflow-y:auto;display:flex;flex-direction:column}
+#ble-scan .bs-filters-lbl{font:bold 8px/1 ui-monospace,monospace;letter-spacing:0.14em;color:#8fb39e;margin-bottom:7px}
+#ble-scan .bs-pillrow{display:flex;gap:7px;margin-bottom:13px}
+#ble-scan .bs-pill{flex:1;text-align:center;padding:9px;border-radius:9px;cursor:pointer;
+  font:bold 10px/1 ui-monospace,monospace;letter-spacing:0.08em;color:#a9bfb2;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.16)}
+#ble-scan .bs-pill:hover{border-color:rgba(255,255,255,0.32)}
+#ble-scan .bs-pill.on{color:#1a1410;background:#ffd166;border-color:#ffd166}
+#ble-scan .bs-list{overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:74px;margin-bottom:12px}
+#ble-scan .bs-looking{display:flex;align-items:center;gap:10px;padding:8px 2px;color:#8fb39e;
+  font:10px/1 ui-monospace,monospace;letter-spacing:0.05em}
+#ble-scan .bs-spinner{width:20px;height:20px;border-radius:50%;flex:none;
+  border:3px solid rgba(255,255,255,0.14);border-top-color:#ffd166;animation:bsSpin 0.8s linear infinite}
+@keyframes bsSpin{to{transform:rotate(360deg)}}
+#ble-scan .bs-item{display:flex;align-items:center;gap:9px;padding:11px;border-radius:9px;cursor:pointer;
+  border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.03)}
 #ble-scan .bs-item:hover{background:rgba(255,255,255,0.1)}
+#ble-scan .bs-radio{width:14px;height:14px;border-radius:50%;flex:none;box-sizing:border-box;
+  border:2px solid rgba(188,217,255,0.55)}
 #ble-scan .bs-nm{font:bold 11px/1.3 ui-monospace,monospace;flex:1;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
+#ble-scan .bs-ble{width:9px;height:12px;flex:none;color:#bcd9ff;opacity:0.85}
 #ble-scan .bs-rssi{font:9px/1 ui-monospace,monospace;color:#8fb39e;flex:none}
 #ble-scan .bs-empty{font:10px/1.5 ui-monospace,monospace;color:#8fb39e;padding:8px 2px}
-#ble-scan .bs-btn{margin-top:12px;font:bold 10px/1 ui-monospace,monospace;letter-spacing:0.06em;
+#ble-scan .bs-hint{display:flex;gap:9px;align-items:flex-start;padding:10px 11px;border-radius:10px;
+  background:rgba(0,0,0,0.32);border:1px solid rgba(255,255,255,0.08);margin-bottom:13px}
+#ble-scan .bs-hint svg{width:16px;height:16px;flex:none;color:#8fb39e;margin-top:1px}
+#ble-scan .bs-hint .bs-hint-t{font:9px/1.5 ui-monospace,monospace;color:#c9b9a4}
+#ble-scan .bs-actions{display:flex;gap:8px}
+#ble-scan .bs-btn{flex:1;font:bold 10px/1 ui-monospace,monospace;letter-spacing:0.06em;
   color:#dff0e6;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);
-  border-radius:8px;padding:10px;cursor:pointer;text-align:center}
+  border-radius:9px;padding:11px;cursor:pointer;text-align:center}
 #ble-scan .bs-btn:hover{background:rgba(255,255,255,0.15)}
+#ble-scan .bs-btn.primary{color:#1a1410;background:#ffd166;border-color:#ffd166}
+#ble-scan .bs-btn.primary:hover{background:#ffdb85}
 `;
 
 let styleInjected = false;
 
-/** The chooser Web Bluetooth would have drawn for us. Live-updating list: a
- *  BLE scan streams the same device repeatedly, so hits are keyed by MAC and
- *  the row is refreshed in place rather than appended.
+const BS_BLE_GLYPH =
+  '<svg class="bs-ble" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7.5 16 16.5 12 20V4l4 3.5L8 16.5"/></svg>';
+const BS_SEARCH_GLYPH =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg>';
+
+/** The chooser Web Bluetooth would have drawn for us, in the PAIR-modal shape
+ *  of DeviceManagerUi (reference/zwift-ux/*): title bar, RECOMMENDED/ALL filter
+ *  pills, a live device list with a spinner + "Looking for devices…", the
+ *  wake-the-sensor hint, and REFRESH / CLOSE actions.
+ *
+ *  Live-updating list: a BLE scan streams the same device repeatedly, so hits
+ *  are keyed by MAC and the row is refreshed in place rather than appended.
  *
  *  SEEDED with saved devices (DeviceRegistry's known-names cache): a trainer
  *  that stops advertising its service list after the first bond (the owner's
@@ -391,16 +429,22 @@ let styleInjected = false;
 class ScanChooser {
   private root: HTMLDivElement;
   private list: HTMLDivElement;
-  private empty: HTMLDivElement;
+  private pillRec: HTMLDivElement;
+  private pillAll: HTMLDivElement;
   private hits = new Map<string, ScanHit & { saved?: boolean }>();
   private onPick: (hit: ScanHit) => void;
+  private allMode: boolean;
   /** wired by chooseAndConnect: stop + restart the native scan (the BLE
    *  stack occasionally goes quiet mid-scan; the owner asked for an explicit
    *  refresh instead of reopening the whole chooser) */
   onRescan: (() => void) | null = null;
+  /** switch the LIVE scan between service-filtered (RECOMMENDED) and every-
+   *  sensor (ALL) without tearing the chooser down — chooseAndConnect owns the
+   *  native scan args and does the actual restart. */
+  onModeChange: ((all: boolean) => void) | null = null;
 
-  /** drop live hits back to the saved seed set (rescan restarts the radio —
-   *  stale rows must not linger looking fresh) */
+  /** drop live hits back to the saved seed set (rescan/mode-switch restarts the
+   *  radio — stale rows must not linger looking fresh) */
   resetLive(): void {
     for (const [addr, hit] of [...this.hits]) {
       if (!hit.saved) this.hits.delete(addr);
@@ -408,8 +452,21 @@ class ScanChooser {
     this.render();
   }
 
-  constructor(onPick: (hit: ScanHit) => void, onCancel: () => void, known: { addr: string; name: string }[] = []) {
+  /** reflect a mode flip in the pills (the caller performs the rescan) */
+  setMode(all: boolean): void {
+    this.allMode = all;
+    this.pillRec.classList.toggle('on', !all);
+    this.pillAll.classList.toggle('on', all);
+  }
+
+  constructor(
+    onPick: (hit: ScanHit) => void,
+    onCancel: () => void,
+    known: { addr: string; name: string }[] = [],
+    initialAll = false,
+  ) {
     this.onPick = onPick;
+    this.allMode = initialAll;
     for (const k of known) {
       this.hits.set(k.addr, { addr: k.addr, name: k.name, rssi: 0, services: [], saved: true });
     }
@@ -424,41 +481,68 @@ class ScanChooser {
     const card = document.createElement('div');
     card.className = 'bs-card';
 
-    const title = document.createElement('div');
-    title.className = 'bs-title';
-    title.textContent = t('ble.scan.title');
-    const note = document.createElement('div');
-    note.className = 'bs-note';
-    note.textContent = t('ble.scan.hint');
+    const bar = document.createElement('div');
+    bar.className = 'bs-bar';
+    bar.textContent = t('ble.scan.title');
+
+    const body = document.createElement('div');
+    body.className = 'bs-body';
+
+    const flabel = document.createElement('div');
+    flabel.className = 'bs-filters-lbl';
+    flabel.textContent = t('ble.pair.filters');
+    const pillRow = document.createElement('div');
+    pillRow.className = 'bs-pillrow';
+    this.pillRec = document.createElement('div');
+    this.pillRec.className = `bs-pill${initialAll ? '' : ' on'}`;
+    this.pillRec.textContent = t('ble.pair.recommended');
+    this.pillRec.addEventListener('click', () => {
+      if (this.allMode) this.onModeChange?.(false);
+    });
+    this.pillAll = document.createElement('div');
+    this.pillAll.className = `bs-pill${initialAll ? ' on' : ''}`;
+    this.pillAll.textContent = t('ble.pair.all');
+    this.pillAll.addEventListener('click', () => {
+      if (!this.allMode) this.onModeChange?.(true);
+    });
+    pillRow.append(this.pillRec, this.pillAll);
 
     this.list = document.createElement('div');
     this.list.className = 'bs-list';
-    this.empty = document.createElement('div');
-    this.empty.className = 'bs-empty';
-    this.empty.textContent = t('ble.scan.searching');
-    this.list.appendChild(this.empty);
 
+    const hint = document.createElement('div');
+    hint.className = 'bs-hint';
+    hint.innerHTML = BS_SEARCH_GLYPH;
+    const hintT = document.createElement('div');
+    hintT.className = 'bs-hint-t';
+    hintT.textContent = t('ble.scan.hint');
+    hint.appendChild(hintT);
+
+    const actions = document.createElement('div');
+    actions.className = 'bs-actions';
     const rescan = document.createElement('div');
     rescan.className = 'bs-btn';
     rescan.textContent = t('ble.scan.rescan');
     rescan.addEventListener('click', () => this.onRescan?.());
-
     const cancel = document.createElement('div');
-    cancel.className = 'bs-btn';
+    cancel.className = 'bs-btn primary';
     cancel.textContent = t('ble.scan.cancel');
     cancel.addEventListener('click', onCancel);
+    actions.append(rescan, cancel);
 
-    card.append(title, note, this.list, rescan, cancel);
+    body.append(flabel, pillRow, this.list, hint, actions);
+    card.append(bar, body);
     this.root.appendChild(card);
     document.body.appendChild(this.root);
-    if (this.hits.size > 0) this.render();
+    this.render();
   }
 
   add(hit: ScanHit): void {
     const prev = this.hits.get(hit.addr);
     this.hits.set(hit.addr, hit);
     // fresh device or a saved seed just proven live — the row set/order
-    // changes, re-render; a repeat hit only refreshes its dBm in place
+    // changes (and the "looking" spinner clears), re-render; a repeat hit only
+    // refreshes its dBm in place
     if (!prev || prev.saved) this.render();
     else {
       const rssi = this.list.querySelector<HTMLDivElement>(`[data-addr="${CSS.escape(hit.addr)}"] .bs-rssi`);
@@ -468,27 +552,41 @@ class ScanChooser {
 
   private render(): void {
     this.list.replaceChildren();
-    if (this.hits.size === 0) {
-      this.list.appendChild(this.empty);
-      return;
-    }
     // live hits strongest-first (the sensor the rider sits on is the near
     // one); saved-but-silent devices after — present, tappable, honest
     const rows = [...this.hits.values()].sort((a, b) => {
       if (!!a.saved !== !!b.saved) return a.saved ? 1 : -1;
       return b.rssi - a.rssi;
     });
+    // spinner + "Looking for devices…" until a genuinely LIVE (advertising)
+    // device appears — saved-but-silent seed rows do not count as "found", so
+    // the rider keeps seeing the scan work (reference zwift-2/3 → zwift-4)
+    const hasLive = rows.some((r) => !r.saved);
+    if (!hasLive) {
+      const looking = document.createElement('div');
+      looking.className = 'bs-looking';
+      const spin = document.createElement('div');
+      spin.className = 'bs-spinner';
+      const txt = document.createElement('span');
+      txt.textContent = t('ble.pair.looking');
+      looking.append(spin, txt);
+      this.list.appendChild(looking);
+    }
     for (const hit of rows) {
       const row = document.createElement('div');
       row.className = 'bs-item';
       row.dataset['addr'] = hit.addr;
+      const radio = document.createElement('div');
+      radio.className = 'bs-radio';
       const nm = document.createElement('div');
       nm.className = 'bs-nm';
       nm.textContent = hit.name;
+      const ble = document.createElement('span');
+      ble.innerHTML = BS_BLE_GLYPH;
       const rssi = document.createElement('div');
       rssi.className = 'bs-rssi';
       rssi.textContent = hit.saved ? t('ble.scan.saved') : `${hit.rssi} dBm`;
-      row.append(nm, rssi);
+      row.append(radio, nm, ble, rssi);
       row.addEventListener('click', () => this.onPick(hit));
       this.list.appendChild(row);
     }
@@ -508,19 +606,24 @@ export class NativeBridgeTransport implements BleTransport {
 
   /** the "cycling devices" chooser: one scan filter PER known cycling service
    *  = OR across filters, matching the Web Bluetooth chooser's shape (a single
-   *  multi-service filter would be AND, which is what once hid the Tacx). */
+   *  multi-service filter would be AND, which is what once hid the Tacx). The
+   *  RECOMMENDED/ALL pills flip this at runtime — no second chooser session. */
   requestAnyDevice(): Promise<BleDeviceHandle> {
-    return this.chooseAndConnect(
-      KNOWN_SERVICES.filter((s) => s.chooserFilter).map((s) => canonicalUuid(s.uuid)),
-    );
+    return this.chooseAndConnect(false);
   }
 
   /** the literal "all sensors" escape hatch — no service filter at all */
   requestAllDevices(): Promise<BleDeviceHandle> {
-    return this.chooseAndConnect(null);
+    return this.chooseAndConnect(true);
   }
 
-  private async chooseAndConnect(services: string[] | null): Promise<BleDeviceHandle> {
+  /** one chooser session that serves BOTH scan modes: `all=false` filters by
+   *  KNOWN_SERVICES (OR across entries) + saved MACs; `all=true` accepts every
+   *  advertiser. The two entry points above only seed the initial mode — the
+   *  chooser's filter pills switch it live via onModeChange, which restarts the
+   *  native scan with fresh args (BleTransport's interface is untouched; this
+   *  is all internal to the native transport). */
+  private async chooseAndConnect(initialAll: boolean): Promise<BleDeviceHandle> {
     const c = bleClient();
     // saved devices (registry's known-names cache): seeded into the picker AND
     // sent as per-address scan filters. A bonded trainer that stops putting
@@ -534,6 +637,25 @@ export class NativeBridgeTransport implements BleTransport {
     } catch {
       /* storage disabled/corrupt — the picker just starts empty */
     }
+    let allMode = initialAll;
+    // scan args for the CURRENT mode. RECOMMENDED = one filter per cycling
+    // service (OR) + saved MACs. saved-MAC filters are an ADDITION to the
+    // service filters (a bonded trainer that hides its services from the
+    // advertisement still matches by address). They must NEVER ride along in
+    // the show-all path: with services==null they would become the ONLY
+    // filters and silently shrink "every sensor in the world" down to the
+    // saved two (found live by the owner, 2026-07-17).
+    const buildArgs = (): Record<string, unknown> => {
+      const services = allMode
+        ? null
+        : KNOWN_SERVICES.filter((s) => s.chooserFilter).map((s) => canonicalUuid(s.uuid));
+      const args: Record<string, unknown> = {};
+      if (services) {
+        args['services'] = services;
+        if (known.length > 0) args['addrs'] = known.map((k) => k.addr);
+      }
+      return args;
+    };
     const hit = await new Promise<ScanHit>((resolve, reject) => {
       const chooser = new ScanChooser(
         (h) => {
@@ -547,6 +669,7 @@ export class NativeBridgeTransport implements BleTransport {
           reject(new Error('cancelled'));
         },
         known,
+        initialAll,
       );
       const stop = async (): Promise<void> => {
         c.onScan(null);
@@ -557,29 +680,27 @@ export class NativeBridgeTransport implements BleTransport {
           /* scan already stopped */
         }
       };
-      c.onScan((h) => chooser.add(h));
-      chooser.onRescan = () => {
-        chooser.resetLive();
+      const restart = (): void => {
         void c
           .call('stopScan')
           .catch(() => {})
-          .then(() => c.call('scan', args))
+          .then(() => c.call('scan', buildArgs()))
           .catch(() => {
             /* scan restart failed — the picker stays usable with saved rows */
           });
       };
-      const args: Record<string, unknown> = {};
-      if (services) {
-        args['services'] = services;
-        // saved-MAC filters are an ADDITION to the service filters (a bonded
-        // trainer that hides its services from the advertisement still
-        // matches by address). They must NEVER ride along in the show-all
-        // path: with services==null they would become the ONLY filters and
-        // silently shrink "every sensor in the world" down to the saved two
-        // (found live by the owner, 2026-07-17).
-        if (known.length > 0) args['addrs'] = known.map((k) => k.addr);
-      }
-      c.call('scan', args).catch((e: unknown) => {
+      c.onScan((h) => chooser.add(h));
+      chooser.onRescan = () => {
+        chooser.resetLive();
+        restart();
+      };
+      chooser.onModeChange = (all) => {
+        allMode = all;
+        chooser.setMode(all);
+        chooser.resetLive();
+        restart();
+      };
+      c.call('scan', buildArgs()).catch((e: unknown) => {
         void stop();
         reject(e instanceof Error ? e : new Error(String(e)));
       });
