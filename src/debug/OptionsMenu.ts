@@ -128,7 +128,10 @@ const MODES = ['hike', 'road', 'gravel', 'mtb'];
 const SOURCES: { kind: SourceKind; label: string; icon: string; hint: string }[] = [
   { kind: 'none', label: t('source.off'), hint: t('source.offHint'), icon: '<circle cx="12" cy="12" r="7.5" fill="none" stroke-width="1.7"/><path d="M7 17L17 7" stroke-width="1.7" stroke-linecap="round"/>' },
   { kind: 'demo', label: t('source.demo'), hint: t('source.demoHint'), icon: '<path d="M5 17V9.5M9.5 17V6M14 17v-6.5M18.5 17V8" stroke-width="1.9" stroke-linecap="round"/>' },
-  { kind: 'dev', label: t('source.keys'), hint: t('source.keysHint'), icon: '<rect x="3.5" y="7" width="17" height="10" rx="2" fill="none" stroke-width="1.6"/><path d="M6.5 10h1M9.5 10h1M12.5 10h1M15.5 10h1M7.5 13.5h9" stroke-width="1.6" stroke-linecap="round"/>' },
+  // hint per input reality: a touch device cannot press W/Shift — its hint
+  // must point at the on-screen PEDAL button instead (owner rule: no
+  // keyboard-key suggestions where there is no keyboard)
+  { kind: 'dev', label: t('source.keys'), hint: isMobileDevice() ? t('source.keysHintTouch') : t('source.keysHint'), icon: '<rect x="3.5" y="7" width="17" height="10" rx="2" fill="none" stroke-width="1.6"/><path d="M6.5 10h1M9.5 10h1M12.5 10h1M15.5 10h1M7.5 13.5h9" stroke-width="1.6" stroke-linecap="round"/>' },
   { kind: 'ble', label: t('source.ble'), hint: t('source.bleHint'), icon: '<path d="M12 3.5v17l4.5-4L9 9.5M12 12l4.5-4L12 3.5" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' },
 ];
 

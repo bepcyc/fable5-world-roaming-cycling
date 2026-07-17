@@ -454,6 +454,13 @@ const DICT: Record<string, Entry> = {
     de: 'Tastatur-Bike: W treten, Shift Antritt, +/- Watt',
     ru: 'клавиатурный байк: W педалирование, Shift рывок, +/- ватты',
   },
+  // touch devices have no W/Shift — the same source is driven by the
+  // on-screen PEDAL button (hold to pedal), so the hint must say THAT
+  'source.keysHintTouch': {
+    en: 'manual bike: hold the on-screen PEDAL button to pedal',
+    de: 'manuelles Bike: PEDAL-Taste auf dem Bildschirm halten',
+    ru: 'ручной байк: держите экранную кнопку ПЕДАЛИ',
+  },
   'source.bleHint': {
     en: 'real sensors — reloads with the connect panel',
     de: 'echte Sensoren — lädt mit dem Verbindungs-Panel neu',
