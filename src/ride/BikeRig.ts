@@ -203,6 +203,15 @@ export class BikeRig {
   private uturnArmed = true;
   private hazard: HazardAhead | null = null;
   private hazardScanT = 0;
+  // ---- trainer control state (standard SIM/ERG commands, no invention) ----
+  // SIM: the trainer mirrors terrain grade (scaled by the virtual gear and
+  // stiffened while braking, so shifting and braking are FELT in the legs —
+  // app-level control, the same mechanism big platforms use). ERG: fixed
+  // target watts regardless of terrain.
+  private trainerMode: 'sim' | 'erg' = 'sim';
+  private ergTargetW = 150;
+  /** virtual gear 1..VIRTUAL_GEARS (index into a geometric factor ladder) */
+  private virtualGear = 5;
   // fixed-step pose pair — the camera interpolates between them with the
   // engine's fixedAlpha (render smoothness AND dashboard==solver parity at
   // coarse ?dt values: pose-delta speed integrates exactly)
@@ -612,8 +621,15 @@ export class BikeRig {
     this.solver = { v: out.v, stalled: out.stalled };
     this.status = out.params.status;
     // BLE trainers mirror the terrain: live grade + honest surface Crr →
-    // FTMS SIM writes (rate-limited inside the source)
-    this.source?.setSimState?.(grade, out.params.crr);
+    // FTMS SIM writes (rate-limited inside the source). ERG instead holds
+    // fixed watts. In SIM the virtual gear scales the slope the trainer
+    // feels and a held brake adds a resistance surge (legs feel the stop).
+    if (this.trainerMode === 'erg') {
+      this.source?.setErgTarget?.(this.ergTargetW);
+    } else {
+      const feltGrade = grade * this.gearFactor() + (this.brake ? BRAKE_FEEL_GRADE : 0);
+      this.source?.setSimState?.(feltGrade, out.params.crr);
+    }
     this.lastOut = {
       blocked: out.blocked,
       stalled: out.stalled,
@@ -1231,7 +1247,45 @@ export class BikeRig {
   modeMaxSlope(): number {
     return MODE_LIMITS[this.mode].maxSlope;
   }
+
+  // ---- trainer control surface (touch UI + options menu) --------------------
+
+  private gearFactor(): number {
+    return VIRTUAL_GEAR_BASE * Math.pow(VIRTUAL_GEAR_STEP, this.virtualGear - 1);
+  }
+
+  /** shift the virtual gear (SIM mode); returns the new gear number */
+  shiftVirtualGear(d: -1 | 1): number {
+    this.virtualGear = Math.min(Math.max(this.virtualGear + d, 1), VIRTUAL_GEARS);
+    this.flash(t('ride.gearShift', { gear: this.virtualGear }));
+    return this.virtualGear;
+  }
+
+  /** switch SIM (terrain mirroring) vs ERG (fixed watts); optional watts */
+  setTrainerMode(mode: 'sim' | 'erg', watts?: number): void {
+    this.trainerMode = mode;
+    if (watts !== undefined) this.ergTargetW = Math.min(Math.max(Math.round(watts), 30), 500);
+  }
+
+  adjustErgTarget(deltaW: number): number {
+    this.ergTargetW = Math.min(Math.max(this.ergTargetW + deltaW, 30), 500);
+    return this.ergTargetW;
+  }
+
+  trainerState(): { mode: 'sim' | 'erg'; ergW: number; gear: number; gears: number } {
+    return { mode: this.trainerMode, ergW: this.ergTargetW, gear: this.virtualGear, gears: VIRTUAL_GEARS };
+  }
 }
+
+// virtual-gear ladder: 10 geometric steps, ~15 % apart, gear 5 ≈ 1.0 so the
+// default feels like the bare terrain; low gears soften the felt slope,
+// high gears stiffen it (app-level shifting on a SIM-controlled trainer)
+const VIRTUAL_GEARS = 10;
+const VIRTUAL_GEAR_STEP = 1.15;
+const VIRTUAL_GEAR_BASE = 1.0 / Math.pow(VIRTUAL_GEAR_STEP, 4);
+/** extra felt slope while the brake is held — the resistance surge that
+ *  makes braking physical on a controllable trainer */
+const BRAKE_FEEL_GRADE = 0.1;
 
 /** |angle| buckets, each side-signed: <14° straight, 14–38° slight,
  *  38–100° normal, 100–150° sharp, ≥150° U-turn (+ = left) */

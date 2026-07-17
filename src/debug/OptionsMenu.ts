@@ -28,6 +28,9 @@ interface RideCtl {
   setMode(m: string): boolean;
   teleportEdge(edgeId: number, s: number, dir: 1 | -1): boolean;
   state(): { mode: string; note: string | null };
+  setTrainerMode?(mode: 'sim' | 'erg', watts?: number): void;
+  adjustErgTarget?(deltaW: number): number;
+  trainerState?(): { mode: 'sim' | 'erg'; ergW: number; gear: number; gears: number };
 }
 
 interface GraphLite {
@@ -142,6 +145,7 @@ export class OptionsMenu {
   private modeBtns = new Map<string, HTMLDivElement>();
   private srcBtns = new Map<string, HTMLDivElement>();
   private handBtns = new Map<boolean, HTMLDivElement>();
+  private trainerBtns = new Map<string, HTMLDivElement>();
   private srcRow: HTMLDivElement | null = null;
   private hint: HTMLDivElement | null = null;
   private open = false;
@@ -318,6 +322,46 @@ export class OptionsMenu {
     }
     this.panel.appendChild(modeRow);
 
+    // TRAINER — SIM (terrain mirroring, virtual gears apply) vs ERG (fixed
+    // target watts); standard control commands, only meaningful with a BLE
+    // trainer holding the control role
+    this.panel.appendChild(h(t('opt.trainer')));
+    const trRow = document.createElement('div');
+    trRow.className = 'opt-grid4';
+    const simBtn = card(
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 5-8 4 5"/></svg>',
+      t('opt.trainerSim'),
+    );
+    simBtn.addEventListener('click', () => {
+      this.rideCtl()?.setTrainerMode?.('sim');
+      this.refresh();
+    });
+    const ergBtn = card(
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 12h16M12 5v14"/></svg>',
+      t('opt.trainerErg'),
+    );
+    ergBtn.addEventListener('click', () => {
+      const ride = this.rideCtl();
+      ride?.setTrainerMode?.('erg');
+      const w = ride?.trainerState?.().ergW ?? 0;
+      this.showHint(t('opt.ergWatts', { w }));
+      this.refresh();
+    });
+    const ergMinus = card('<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 12h10"/></svg>', '−25 W');
+    ergMinus.addEventListener('click', () => {
+      const w = this.rideCtl()?.adjustErgTarget?.(-25);
+      if (w !== undefined) this.showHint(t('opt.ergWatts', { w }));
+    });
+    const ergPlus = card('<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 7v10M7 12h10"/></svg>', '+25 W');
+    ergPlus.addEventListener('click', () => {
+      const w = this.rideCtl()?.adjustErgTarget?.(25);
+      if (w !== undefined) this.showHint(t('opt.ergWatts', { w }));
+    });
+    this.trainerBtns.set('sim', simBtn);
+    this.trainerBtns.set('erg', ergBtn);
+    trRow.append(simBtn, ergBtn, ergMinus, ergPlus);
+    this.panel.appendChild(trRow);
+
     // HANDS — Shift+H (Cockpit.ts) has no touch equivalent on a device with
     // no keyboard; this row reads/writes the same state through the
     // __laasDbg seam rideSetSource/rideCtl above already use.
@@ -493,6 +537,8 @@ export class OptionsMenu {
     for (const [k, b] of this.srcBtns) b.classList.toggle('sel', k === src);
     const hv = this.handsVisible();
     for (const [v, b] of this.handBtns) b.classList.toggle('sel', v === hv);
+    const tm = this.rideCtl()?.trainerState?.().mode ?? 'sim';
+    for (const [m, b] of this.trainerBtns) b.classList.toggle('sel', m === tm);
   }
 }
 

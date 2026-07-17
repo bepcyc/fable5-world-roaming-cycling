@@ -40,6 +40,10 @@ export interface SensorSource {
    *  fixed step; BLE trainers turn it into FTMS SIM/FE-C-resistance writes.
    *  Sources without physical resistance simply omit this. */
   setSimState?(gradeFrac: number, crr: number): void;
+  /** optional ERG mode: hold the trainer at a fixed target power (standard
+   *  FTMS target-power / FE-C page 49 — encoders exist for both). The rig
+   *  calls this INSTEAD of setSimState while the rider selects ERG. */
+  setErgTarget?(watts: number): void;
   /** optional control-activation hooks — BikeRig calls these from its
    *  mount()/dismount() lifecycle, NEVER at connect/assignment time: a
    *  controllable BLE device sitting in the device manager must not start

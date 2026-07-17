@@ -600,6 +600,12 @@ const DICT: Record<string, Entry> = {
   'ride.uTurn': { en: 'U-turn', de: 'Wende', ru: 'разворот' },
   'ride.uturnBtn': { en: 'U-TURN', de: 'WENDE', ru: 'РАЗВОРОТ' },
   'ride.dismountBtn': { en: 'GET OFF', de: 'ABSTEIGEN', ru: 'СПЕШИТЬСЯ' },
+  'ride.gearBtn': { en: 'GEAR', de: 'GANG', ru: 'ПЕРЕД.' },
+  'ride.gearShift': { en: 'GEAR {gear}', de: 'GANG {gear}', ru: 'ПЕРЕДАЧА {gear}' },
+  'opt.trainer': { en: 'Trainer', de: 'Trainer', ru: 'Тренажёр' },
+  'opt.trainerSim': { en: 'SIM · terrain', de: 'SIM · Gelände', ru: 'SIM · рельеф' },
+  'opt.trainerErg': { en: 'ERG · fixed W', de: 'ERG · feste W', ru: 'ERG · фикс. Вт' },
+  'opt.ergWatts': { en: 'ERG target: {w} W', de: 'ERG-Ziel: {w} W', ru: 'Цель ERG: {w} Вт' },
 
   // ---- Cockpit.ts on-device screen (tiny canvas texture, no CSS/DOM —
   // keep short, the hazard strip has a fixed pixel width and no wrap) ----

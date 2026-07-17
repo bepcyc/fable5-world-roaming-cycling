@@ -422,6 +422,15 @@ export class RoleMux {
     }
   }
 
+  /** ERG: hold a fixed target power — same throttled write path as SIM
+   *  (latest-wins inside the controller), standard opcodes on both
+   *  protocols. No-op until control is activated, like setSimState. */
+  setErgTarget(watts: number): void {
+    if (this.controlActive && this.activeController) {
+      this.activeController.setTargetPower(Math.max(0, Math.round(watts)));
+    }
+  }
+
   // ---- UI projection --------------------------------------------------------------
 
   rows(): RoleRow[] {

@@ -54,6 +54,11 @@ export class BleSensorSource implements SensorSource {
     this.registry.roleMux.setSimState(gradeFrac, crr);
   }
 
+  /** ERG mode passthrough — fixed target watts instead of slope simulation */
+  setErgTarget(watts: number): void {
+    this.registry.roleMux.setErgTarget(watts);
+  }
+
   /** BikeRig.mount() hook — acquire the assigned controller's control
    *  point. Deliberately NOT called at connect/assignment time: a
    *  controllable device sitting in the manager must never start sending

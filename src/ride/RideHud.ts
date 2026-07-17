@@ -136,6 +136,12 @@ const STYLE = `
 .rp-btn.dismount{width:64px;height:64px;font-size:8px;color:#d8e8c9;
   border-color:rgba(180,220,150,0.4)}
 .rp-btn.dismount.active{background:rgba(180,220,150,0.32)}
+/* virtual gears (BLE trainer, SIM mode): app-level shifting — the tap
+   scales the slope the trainer feels, so shifting is FELT in the legs */
+.rp-btn.gear{width:64px;height:64px;font-size:9px;color:#ffe9b0;
+  border-color:rgba(255,209,102,0.4);flex-direction:column;gap:2px}
+.rp-btn.gear b{font-size:18px;line-height:1}
+.rp-btn.gear.active{background:rgba(255,209,102,0.3)}
 `;
 
 /** `setPointerCapture()` throws NotFoundError once the browser no longer
@@ -223,6 +229,9 @@ export class RideHud {
   private releaseUturn: (() => void) | null = null;
   /** touch dismount button — the tap equivalent of X (keyboard-only before) */
   private dismountBtn: HTMLDivElement | null = null;
+  /** virtual-gear buttons (BLE trainer only — they drive real resistance) */
+  private gearDownBtn: HTMLDivElement | null = null;
+  private gearUpBtn: HTMLDivElement | null = null;
   /** bound inside buildTouchPedal(); called from update() whenever a
    *  pedal/brake control transitions from shown to hidden (dismount / source
    *  swap) so a held finger can't latch state forever once its button goes
@@ -368,6 +377,25 @@ export class RideHud {
       this.rig?.setMode('hike');
     });
     dismount.addEventListener('pointercancel', () => dismount.classList.remove('active'));
+
+    // virtual gears — plain taps; feedback comes as the rig's flash banner
+    const mkGear = (delta: -1 | 1, sign: string): HTMLDivElement => {
+      const b = document.createElement('div');
+      b.className = 'rp-btn gear';
+      b.innerHTML = `<b>${sign}</b>${t('ride.gearBtn')}`;
+      b.setAttribute('role', 'button');
+      b.setAttribute('aria-label', `${t('ride.gearBtn')} ${sign}`);
+      b.addEventListener('pointerdown', () => b.classList.add('active'));
+      b.addEventListener('pointerup', () => {
+        b.classList.remove('active');
+        this.rig?.shiftVirtualGear(delta);
+      });
+      b.addEventListener('pointercancel', () => b.classList.remove('active'));
+      wrap.appendChild(b);
+      return b;
+    };
+    this.gearDownBtn = mkGear(-1, '−');
+    this.gearUpBtn = mkGear(1, '+');
 
     const setPedal = (on: boolean): void => {
       pedal.classList.toggle('active', on);
@@ -556,7 +584,11 @@ export class RideHud {
       this.brakeBtn.style.display = showBrake ? 'flex' : 'none';
       this.uturnBtn.style.display = showUturn ? 'flex' : 'none';
       this.dismountBtn.style.display = showDismount ? 'flex' : 'none';
-      this.pedalWrap.classList.toggle('on', showBrake || showPedal || showUturn || showDismount);
+      // gears drive REAL trainer resistance — only meaningful for a BLE source
+      const showGear = riding && this.source?.kind === 'ble';
+      if (this.gearDownBtn) this.gearDownBtn.style.display = showGear ? 'flex' : 'none';
+      if (this.gearUpBtn) this.gearUpBtn.style.display = showGear ? 'flex' : 'none';
+      this.pedalWrap.classList.toggle('on', showBrake || showPedal || showUturn || showDismount || showGear);
     }
     const sample = this.source?.read() ?? { cadenceRpm: null, heartRateBpm: null, powerW: null };
     // session recording (1 Hz decimation inside; power is real solver input)
