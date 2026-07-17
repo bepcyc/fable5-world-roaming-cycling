@@ -104,6 +104,7 @@ export class GameMenu {
       if (document.getElementById('qset')?.classList.contains('on')) return;
       if (document.getElementById('ble-mgr')?.classList.contains('on')) return;
       if (document.getElementById('opt-panel')?.classList.contains('on')) return;
+      if (document.getElementById('ridemenu-card')?.classList.contains('on')) return; // ride pause/finish card owns Esc
       if (document.getElementById('ble-scan')) return; // native BLE chooser (its Cancel owns dismissal)
       if (this.state === 'PLAYING') this.openPause();
       else if (this.state === 'PAUSED') this.resume();
