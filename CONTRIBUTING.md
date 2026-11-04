@@ -93,5 +93,6 @@ Owner-only pipeline (assumes `~/Android/Sdk`, Java 21, adb-connected devices):
 - `STATUS.md` — the working log: current state, known issues, measurements.
 - `docs/PACKAGING.md` — why Electron + APK (WebGPU/Web Bluetooth constraints).
 - `docs/THREE-NOTES.md` — verified three.js/TSL/WebGPU API notes.
-- `tools/` — the verification harness (~80 scripts); a `tools/README.md` index
-  is pending (kanzo `fable5#131`).
+- `tools/README.md` — the verification harness index: all 81 scripts
+  classified (gate / probe / perf / debug / one-off / infra) with run
+  requirements.
