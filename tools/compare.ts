@@ -3,6 +3,10 @@
  * Ours goes LEFT, reference goes RIGHT, separated by a gutter, scaled to a
  * common height. Also supports pixel sampling for the shadow-color test.
  *
+ * `./reference/` and `./shots/` are local-only dev material (gitignored, not
+ * shipped): third-party captures keep their own licenses. Each machine that
+ * runs the SBS loop provides its own reference frames under `./reference/`.
+ *
  * Usage:
  *   npx tsx tools/compare.ts --a shots/x.png --b reference/scene1.png --out shots/cmp_x.png
  *   npx tsx tools/compare.ts --sample shots/x.png --px "100,200;300,400"

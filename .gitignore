@@ -17,9 +17,10 @@ android/.idea/
 .DS_Store
 .cache/
 test-results/
+# third-party reference captures + dev screenshot output — local-only, never
+# redistributed in the public repo (see tools/compare.ts)
+reference/
 shots/*
-!shots/phase-*
-!shots/phase-*/**
 *.log
 .env
 .env.*
