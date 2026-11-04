@@ -89,12 +89,19 @@ jobs:
           # LAN forgejo serves https with a cert issued for a different name → -k there only.
           CURL_TLS=""; [ -n "${FORGEJO_TOKEN:-}" ] && CURL_TLS="-k"
           body=$(python3 -c 'import json,sys; print(json.dumps(open("RELEASE_NOTES.md").read()))')
+          # Idempotent: on tag re-push the release may already exist → fetch it
+          # instead of failing on the 422 conflict.
           resp=$(curl -fsS $CURL_TLS -X POST "$API/repos/$REPO/releases" \
             -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":$body}")
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":$body}" \
+            || curl -fsS $CURL_TLS "$API/repos/$REPO/releases/tags/$TAG" \
+            -H "Authorization: token $TOKEN")
           echo "$resp" | python3 -c 'import json,sys; r=json.load(sys.stdin); print("release id", r["id"], "at", r.get("html_url","?"))'
-          upload=$(echo "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')
+          upload=$(echo "$resp" | python3 -c 'import json,sys,os; r=json.load(sys.stdin); u=r.get("upload_url"); print(u.split("{")[0] if u else os.environ["API"]+"/repos/"+os.environ["REPO"]+"/releases/"+str(r["id"])+"/assets")')
           for f in laas-linux-*.AppImage "laas-${TAG}-android-debug.apk"; do
+            # skip assets already present on a re-run (same name → 422)
+            echo "$resp" | python3 -c 'import json,sys,os; n=os.path.basename(sys.argv[1]); sys.exit(0 if any(a["name"]==n for a in json.load(sys.stdin).get("assets",[])) else 1)' "$f" \
+              && { echo "asset $(basename "$f") already uploaded — skipping"; continue; }
             echo "uploading $f"
             curl -fsS $CURL_TLS -X POST "${upload}?name=$(basename "$f")" \
               -H "Authorization: token $TOKEN" \
