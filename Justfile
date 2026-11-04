@@ -161,7 +161,7 @@ linux-binary: deps
 # inside the APK, serves it from a 127.0.0.1:47862 loopback (secure context =>
 # WebGPU + Web Bluetooth with NO flags/TLS), and opens it in a Chrome Custom Tab
 # pinned to com.android.chrome. WebGPU/BLE come from the installed Chrome; no
-# hosting, no HTTPS, fully offline. See HANDOFF_APK.md §0.5/§2/§6.
+# hosting, no HTTPS, fully offline. See docs/log/HANDOFF_APK.md §0.5/§2/§6.
 # JAVA_HOME is FORCED to java-21 (env JAVA_HOME = Java 8 landmine → gradle dies).
 # Uses `vite build` directly (not the typecheck-gated `build`), mirroring
 # linux-binary; run `just typecheck` separately. Output:

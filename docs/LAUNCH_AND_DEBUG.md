@@ -88,7 +88,7 @@ reset под нагрузкой. Хендлер шлёт `tele().crash()` и `fa
 - Нет пресета «mobile» для РЕНДЕРА: froxel-объёмка, bloom, TRAA, тяжёлые CSM-тени
   включены всегда. Кандидаты на отключение/упрощение на `min`.
 - Нет тач-управления (сейчас клавиатура + pointer-lock).
-- Упаковка Android: план в `HANDOFF_APK.md` (вариант B — нативная оболочка +
+- Упаковка Android: план в `docs/log/HANDOFF_APK.md` (вариант B — нативная оболочка +
   loopback + Chrome Custom Tab, т.к. WebGPU в Chrome, не в WebView).
 
 ## Визуальные гейты (gates:visual)

@@ -1,7 +1,7 @@
 # OSS Audit — fable5-world-roaming-cycling (LAAS)
 
 Audited: 2026-11-04 · HEAD `42815e2` · auditor: Devin CLI (oss-audit skill)
-Scope: full working tree (static inspection) + `npm run typecheck`, `npm run build`, `npm audit` executed. Probe/gate scripts were NOT run — they require a WebGPU-capable GPU + Chrome display; their existence and past output are evidenced by `shots/phase-*` and `STATUS.md`.
+Scope: full working tree (static inspection) + `npm run typecheck`, `npm run build`, `npm audit` executed. Probe/gate scripts were NOT run — they require a WebGPU-capable GPU + Chrome display; their existence and past output are evidenced by `shots/phase-*` and `docs/log/STATUS.md`.
 
 ## Repository summary
 
@@ -52,9 +52,9 @@ No other correctness findings verified at static level.
 - **Smallest credible fix:** vendor-split (`manualChunks: three → vendor`) or accept and note it; lower limit back to ~1.7 MB to re-enable the tripwire.
 
 ### [P2] Root directory mixes product docs with model working-memory
-- **Evidence:** root has `STATUS.md` (129 KB), `PROGRESS.md` (31 KB), `PLAN_NEXT_STEP.md`, `GPU_CPU_ISSUE_CODEX.md`, `SOUNDS.txt`, `HANDOFF_APK.md`, `CLAUDE.md` (31 KB), `cv.md` (untracked) alongside `README.md`.
+- **Evidence:** root held `STATUS.md` (129 KB), `PROGRESS.md` (31 KB), `PLAN_NEXT_STEP.md`, `GPU_CPU_ISSUE_CODEX.md`, `SOUNDS.txt`, `HANDOFF_APK.md`, `CLAUDE.md` (31 KB), `cv.md` (untracked) alongside `README.md` — the six working files were moved to `docs/log/` in fable5#137 and CLAUDE.md now carries the owner-local note.
 - **Why it matters:** a new contributor can't tell canonical docs from the AI's session logs. CLAUDE.md references `.claude/` infra (`telegram/tg-photo.sh`, `hooks/sbs-guard.sh`) that is gitignored — dead instructions for anyone but the owner.
-- **Smallest credible fix:** move working logs under `docs/log/` (or `notes/`) and mark CLAUDE.md as owner-agent config, not project doc. Add a one-line pointer in README.
+- **Smallest credible fix (DONE fable5#137):** move working logs under `docs/log/` (or `notes/`) and mark CLAUDE.md as owner-agent config, not project doc. Add a one-line pointer in README.
 
 ## Testability
 
@@ -130,7 +130,7 @@ No other performance findings confirmed statically — perf work is an active, w
 ## Documentation
 
 ### [P1] README documents the world-generation phase — the cycling sim is invisible
-- **Evidence:** README has 1 line matching ride/bike/android/strava (the walk-mode bullet). Yet `src/ride/` = 71 files (largest `src/` subtree, ~43% of tracked source), plus `android/` APK, `electron/` shell, `docs/PROJECT_RIDE_v1.md`, `docs/BLE_ZWIFT_PLAN.md`, `HANDOFF_APK.md`, `SOUNDS.txt`. Repo name is literally "world-roaming-cycling". README also claims "about 21,000 lines … across 90+ commits" — actual `src/` is 52,457 lines across 164 files, 1200+ commits.
+- **Evidence:** README has 1 line matching ride/bike/android/strava (the walk-mode bullet). Yet `src/ride/` = 71 files (largest `src/` subtree, ~43% of tracked source), plus `android/` APK, `electron/` shell, `docs/PROJECT_RIDE_v1.md`, `docs/BLE_ZWIFT_PLAN.md`, `docs/log/HANDOFF_APK.md`, `docs/log/SOUNDS.txt`. Repo name is literally "world-roaming-cycling". README also claims "about 21,000 lines … across 90+ commits" — actual `src/` is 52,457 lines across 164 files, 1200+ commits.
 - **Why it matters:** the entry document describes a different product than what the repo primarily is now. Every OSS reader lands on a forest demo doc and misses BLE/Strava/APK entirely.
 - **Smallest credible fix:** restructure README: LAAS engine (as-is, condensed) + ride mode (sensors, routes, Strava, HUD) + surfaces (web/Electron/APK) + `just` commands + license/credits links.
 
@@ -141,7 +141,7 @@ No other performance findings confirmed statically — perf work is an active, w
 
 ### [P2] Missing standard community files
 - **Evidence:** no `SECURITY.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, `CITATION.cff`, `.env.example`; LICENSE not mentioned in README body; local tags `v0.4.0+` unpushed (remote has only v0.2.0/v0.3.0).
-- **Smallest credible fix:** `SECURITY.md` (one paragraph — personal project scope + disclosure route); `.env.example` with `BLENDERMCP_SKETCHFAB_API_KEY=`; push or prune tags; CHANGELOG optional — `STATUS.md` already acts as decision log, so generate it from tags later if wanted.
+- **Smallest credible fix:** `SECURITY.md` (one paragraph — personal project scope + disclosure route); `.env.example` with `BLENDERMCP_SKETCHFAB_API_KEY=`; push or prune tags; CHANGELOG optional — `docs/log/STATUS.md` already acts as decision log, so generate it from tags later if wanted.
 
 ### [P2] docs/ is deep but unindexed
 - **Evidence:** 24 files in `docs/` (ARCHITECTURE-ASSESSMENT, PACKAGING, PERF_×5, ROAD_REALISM_GATES, TURN_PICKER, UX_AUDIT_20…) + `docs/notes/` (6 research notes) — high-quality, but no index; README links only 3 of them.

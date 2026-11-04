@@ -1,7 +1,7 @@
 /**
  * ?segments=1 — split cpu.submit into PER-RENDER-CONTEXT CPU segments.
  *
- * GPU_CPU_ISSUE_CODEX.md §5 P0.2 asks to split post.render() into CPU segments
+ * docs/log/GPU_CPU_ISSUE_CODEX.md §5 P0.2 asks to split post.render() into CPU segments
  * (exposure compute, scene+shadows, half-res MRT, TRAA, bloom, composite, rest).
  *
  * WHY IT SEGMENTS BY RENDER CONTEXT AND NOT BY POST STAGE: our post graph is a

@@ -83,6 +83,6 @@ Order is dependency-driven; each milestone closes only with its named probes gre
 
 ## Standing rules for every milestone
 
-- Close = probes green + aesthetic gate + typecheck + STATUS.md updated + PROGRESS.md entry + (if perf-relevant) PERF-BASELINE append.
+- Close = probes green + aesthetic gate + typecheck + docs/log/STATUS.md updated + docs/log/PROGRESS.md entry + (if perf-relevant) PERF-BASELINE append.
 - Never ship primitive visuals or unnatural physics to a closed milestone (Pillars A/B); deviations go to `docs/DEVIATIONS.md` with Spec/Implemented/Why.
 - Inherited LAAS bugs (assessment §6) get fixed only when they block a milestone; otherwise leave the ledger alone.

@@ -35,7 +35,7 @@ export interface LaasParams {
   /** ?notimestamp=1 — build the renderer WITHOUT trackTimestamp and skip the
    *  per-frame resolveTimestampsAsync + GpuProfiler entirely.
    *
-   *  This is the OBSERVER-EFFECT control (GPU_CPU_ISSUE_CODEX.md §4). Timing
+   *  This is the OBSERVER-EFFECT control (docs/log/GPU_CPU_ISSUE_CODEX.md §4). Timing
    *  the GPU is not free: three allocates a query pair per render context /
    *  compute call, and every resolve creates a command encoder, does a
    *  resolveQuerySet, copies into a MAP_READ buffer, issues an EXTRA
@@ -47,7 +47,7 @@ export interface LaasParams {
   /** ?segments=1 — bracket every Renderer._renderScene() call and publish the
    *  per-render-context CPU ms into stats.counters as `seg.<label>Ms100`.
    *
-   *  This is the cpu.submit SPLIT (GPU_CPU_ISSUE_CODEX.md §5 P0.2). cpu.submit
+   *  This is the cpu.submit SPLIT (docs/log/GPU_CPU_ISSUE_CODEX.md §5 P0.2). cpu.submit
    *  is one bracket around three's whole render+encode path (Engine.ts:205-236);
    *  this says which of the ~19 render contexts inside it pays what. Debug only —
    *  without the flag the patch is never installed. See src/debug/RenderSegments.ts. */
@@ -106,10 +106,10 @@ export type PrepassMode = 'off' | 'grass' | 'on';
  * picture was verified side-by-side: grass carpet intact, no z-fighting.
  *
  * WHY IT INVERTS ON MOBILE: the prepass is a real win on an IMR desktop GPU
- * (STATUS.md: bm4 GPU 49.6 -> 39.4 ms on the M1 Max) because it lets early-Z
+ * (docs/log/STATUS.md: bm4 GPU 49.6 -> 39.4 ms on the M1 Max) because it lets early-Z
  * reject shaded fragments. Adreno is a TBDR: it already resolves visibility per
  * tile on-chip (low-res Z + early-Z), so the twins reject almost nothing while
- * still paying full geometry + duplicated vertex wind. GPU_CPU_ISSUE_CODEX.md
+ * still paying full geometry + duplicated vertex wind. docs/log/GPU_CPU_ISSUE_CODEX.md
  * §5 P2.6 sanctions exactly this ("on TBDR, turn off depth prepass if
  * prepass=0 wins on the device") — it does, so it is off on min.
  *

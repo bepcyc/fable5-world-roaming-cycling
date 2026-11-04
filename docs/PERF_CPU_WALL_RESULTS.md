@@ -2,8 +2,8 @@
 
 **Date:** 2026-07-15 · **Branch:** `perf-mobile-fps` · **Device:** Galaxy Tab S8
 Ultra (SM-X900, Adreno 730), `preset=min`, `dpr=0.6`, canvas 888×450 = 0.40 Mp
-**Plan of record:** [`GPU_CPU_ISSUE_CODEX.md`](../GPU_CPU_ISSUE_CODEX.md) (the owner's own research)
-**Prior art extended:** `STATUS.md:457-474`, `STATUS.md:538-559`
+**Plan of record:** [`docs/log/GPU_CPU_ISSUE_CODEX.md`](../log/docs/log/GPU_CPU_ISSUE_CODEX.md) (the owner's own research)
+**Prior art extended:** `docs/log/STATUS.md:457-474`, `docs/log/STATUS.md:538-559`
 
 This closes the campaign that started from the owner's measurement
 `cpu.update 1.4 + cpu.submit 31.8 = 33.2 ms` vs `GPU 28.6 ms` ≈ `frameMs 64.2`.
@@ -78,7 +78,7 @@ Names resolved **by call path**, not by guessing at minified symbols
 | `Nodes.updateForRender` | 1.07 |
 | `cyrb53` (the shadow hash-storm) | **0.05** |
 
-**This is the same ranking as the desktop profile at `STATUS.md:538-559`, at
+**This is the same ranking as the desktop profile at `docs/log/STATUS.md:538-559`, at
 3–4× the cost** (2.64→7.44, 1.6→6.96, 1.1→4.32, 0.67→1.85, 0.51→1.65). No new
 offender. `cyrb53 = 0.05 ms` proves the `d1aeb48` hash-storm fix still holds.
 
@@ -241,7 +241,7 @@ fitted per config (fit error 0.1–0.6% on the original code, 4 clean points):
   traversal order and the whole bundle executes at `finishRender`, i.e. **after**
   every non-bundled draw — which breaks our `depthFunc=EQUAL` prepass contract.
   `?prepass=0` removes the EQUAL dependency and the grass comes straight back.
-- **Correction to prior art, verified rather than inherited:** `STATUS.md:544-559`
+- **Correction to prior art, verified rather than inherited:** `docs/log/STATUS.md:544-559`
   blames the old revert partly on "records before async compiles". That mechanism
   does **not** apply here — `WebGPUPipelineUtils.js:274` only takes the async
   branch inside `compileAsync()`, which we never call.

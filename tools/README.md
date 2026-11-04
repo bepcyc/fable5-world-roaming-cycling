@@ -54,7 +54,7 @@ All `gates:roads` members take `--seeds 1,2,3` (see the package.json script).
 | `perf-baseline.ts` | avg + 1% low fps per bookmark + moving flythrough sample (docs/PERF-BASELINE.md) | perf, gpu |
 | `perf-mobile.ts` | Pixel-10-Pro-proxy mobile profile (`?preset=low`, floor limits) | perf, gpu |
 | `perf-tablet.ts` | THE REAL TABLET — Galaxy Tab S8 Ultra primary harness | perf, adb |
-| `profile-tablet.ts` | CPU profiler on the real tablet (GPU_CPU_ISSUE_CODEX §5) | perf, adb |
+| `profile-tablet.ts` | CPU profiler on the real tablet (docs/log/GPU_CPU_ISSUE_CODEX.md §5) | perf, adb |
 | `gpu-clock-tablet.ts` | Adreno GPU clock + busy sampler (Tab S8) | perf, adb |
 | `_converge-probe.ts` | Do drawCalls plateau at the fixed perf spot, and when | perf, gpu |
 

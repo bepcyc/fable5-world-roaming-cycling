@@ -1,8 +1,8 @@
 # Mobile perf killers — the practical, code-grounded autopsy
 
-> ## ⚠️ ОПРОВЕРГНУТО ЧАСТИЧНО — читай вместе с `GPU_CPU_ISSUE_CODEX.md`
+> ## ⚠️ ОПРОВЕРГНУТО ЧАСТИЧНО — читай вместе с `docs/log/GPU_CPU_ISSUE_CODEX.md`
 >
-> Владелец заказал собственное исследование (`GPU_CPU_ISSUE_CODEX.md`, 2026-07-15), и оно
+> Владелец заказал собственное исследование (`docs/log/GPU_CPU_ISSUE_CODEX.md`, 2026-07-15), и оно
 > **опровергает пункт №5 этого документа** («фрагментация compute-диспатчей»).
 >
 > **Почему:** `Engine.ts:205-236` — порядок такой:
@@ -24,9 +24,9 @@
 > geometry/bindings/pipelines, кодирование ~563 draw-команд, кодирование всех вложенных
 > post-проходов, `finish()`, несколько `queue.submit()` и возможный backpressure.
 >
-> **Что читать вместо догадок:** `STATUS.md:538-559` — там уже лежит РЕАЛЬНЫЙ CDP-профиль
+> **Что читать вместо догадок:** `docs/log/STATUS.md:538-559` — там уже лежит РЕАЛЬНЫЙ CDP-профиль
 > этого пути с именами функций (`Bindings._update` 2.64 мс, `UniformsGroup.update` 1.1,
-> `updateForRender` 1.6, `updateMatrixWorld` 0.67, `_projectObject` 0.51), а `STATUS.md:457-474`
+> `updateForRender` 1.6, `updateMatrixWorld` 0.67, `_projectObject` 0.51), а `docs/log/STATUS.md:457-474`
 > фиксирует, что устранение повторного хеширования node-графа материала уронило
 > `cpu.submit` с 15.7 до 11.7 мс.
 >

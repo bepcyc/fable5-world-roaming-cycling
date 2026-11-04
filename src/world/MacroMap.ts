@@ -1,7 +1,7 @@
 /**
  * Macro terrain layout — the art-directed bones of the world, seed-jittered.
  *
- * Geography (per STATUS.md D3, serving the reference frames):
+ * Geography (per docs/log/STATUS.md D3, serving the reference frames):
  *  - NE: serrated alpine massif (Witcher vista), ridges anisotropic NE–SW
  *  - a glacial U-valley descending NE→SW into a lake basin (SW corner)
  *  - center-S: karst tower plateau (scene1/3) with a tributary stream ravine

@@ -8,7 +8,7 @@
 
 A personal browser game for the owner and a small circle of friends, built on the LAAS fork: explore a procedural world in first person **on foot** and **on three bikes** (road / gravel / MTB) over a generated road & trail network with tagged surfaces. Bike riding is **Zwift/MyWhoosh-class**: real BLE sensors (trainer/power, cadence, heart rate) drive the in-game bike; dashboards show real data. Chrome + WebGPU + desktop only — inherited and accepted.
 
-The LAAS spec (`PROJECT_LAAS_v2.md`) still governs the *world's* visual quality. This brief governs the *game layer* on top. `STATUS.md` remains the cross-session working memory; `PROGRESS.md` tracks per-session progress; spec deviations go to `docs/DEVIATIONS.md` in the same Spec/Implemented/Why format.
+The LAAS spec (`PROJECT_LAAS_v2.md`) still governs the *world's* visual quality. This brief governs the *game layer* on top. `docs/log/STATUS.md` remains the cross-session working memory; `docs/log/PROGRESS.md` tracks per-session progress; spec deviations go to `docs/DEVIATIONS.md` in the same Spec/Implemented/Why format.
 
 ## The pillars
 
@@ -60,7 +60,7 @@ The LAAS spec (`PROJECT_LAAS_v2.md`) still governs the *world's* visual quality.
 
 **Screenshot harness** (inherited, stays): bookmarks + reference comparisons + **moving captures at bike speed** added to the suite (the flythrough capture pattern, `tools/probe-moving.ts`, extended to ride paths once bikes exist).
 
-**Headless physics probes** (new, first-class). Fixed-timestep ride physics driven through the synthetic sensor source; adapter identity asserted; `--framealign`/`--lockexp`/`--wind 0` discipline for any pixel comparison (STATUS.md measurement methodology). Named acceptance probes:
+**Headless physics probes** (new, first-class). Fixed-timestep ride physics driven through the synthetic sensor source; adapter identity asserted; `--framealign`/`--lockexp`/`--wind 0` discipline for any pixel comparison (docs/log/STATUS.md measurement methodology). Named acceptance probes:
 
 - **P1 mud-stop** — road bike entering deep mud at matrix top speed decelerates to a stop within the matrix-derived distance ± 15%.
 - **P2 top-speed** — each mode at 200 W on flat asphalt reaches the solver-reference speed ± 2%.
@@ -77,6 +77,6 @@ Probe tolerances live next to the matrix they test. A milestone's acceptance cri
 ## Operating instructions
 
 - Build in the LAAS idiom: TypeScript strict, zero `any`, TSL/WebGPU per `docs/THREE-NOTES.md` (authoritative over training memory), constants named at module tops, subsystems registered on `engine.onUpdate` respecting the mover-first contract (`src/main.ts:52-57`).
-- The surface matrix, sensor seam (`src/ride/Sensors.ts`), and probe suite are load-bearing interfaces — change them deliberately, version them in STATUS.md.
+- The surface matrix, sensor seam (`src/ride/Sensors.ts`), and probe suite are load-bearing interfaces — change them deliberately, version them in docs/log/STATUS.md.
 - Inherited LAAS bugs live in the assessment ledger (`docs/ARCHITECTURE-ASSESSMENT.md` §6); they are not this project's milestones unless they block one.
-- Update `STATUS.md` (cross-session memory) after every meaningful step; append to `PROGRESS.md` (per-session 0–100) roughly once per milestone.
+- Update `docs/log/STATUS.md` (cross-session memory) after every meaningful step; append to `docs/log/PROGRESS.md` (per-session 0–100) roughly once per milestone.

@@ -19,9 +19,9 @@ The goal of this project is to test the capabilities of Claude Fable 5, Anthropi
 - Everything else was planned and executed by Fable 5 across long autonomous sessions: the architecture, all engine and world systems, the ride layer, the verification tooling, the debugging, the working notes, and this README.
 - Human input is limited to rare feedback on the things a model cannot judge well from static output: whether motion effects feel right, whether interactive performance holds up, whether an artifact is visible while moving. Examples from the log: wind sway amplitude, walk-camera bob, cloud motion lagging the camera, water coverage taste.
 
-The model does its own QA. It boots the world headless (Playwright driving Chromium with a WebGPU/Metal adapter), takes screenshots, samples pixels, diffs frames against baselines with frame-aligned determinism, profiles GPU passes per encoder, and writes regression probes for the bugs it finds. The diagnosis logs, measurements, and decisions live in [STATUS.md](STATUS.md), which serves as the model's durable memory between sessions.
+The model does its own QA. It boots the world headless (Playwright driving Chromium with a WebGPU/Metal adapter), takes screenshots, samples pixels, diffs frames against baselines with frame-aligned determinism, profiles GPU passes per encoder, and writes regression probes for the bugs it finds. The diagnosis logs, measurements, and decisions live in [STATUS.md](docs/log/STATUS.md), which serves as the model's durable memory between sessions.
 
-Current state (v0.8.0): about 52,000 lines of strict TypeScript across 164 files and 300+ commits — engine, world, and the ride layer — with an ongoing performance pass. Known open issues are tracked at the top of STATUS.md.
+Current state (v0.8.0): about 52,000 lines of strict TypeScript across 164 files and 300+ commits — engine, world, and the ride layer — with an ongoing performance pass. Known open issues are tracked at the top of docs/log/STATUS.md.
 
 ## What is in the world
 
@@ -95,8 +95,8 @@ Contributing: prerequisites, the full command map, and what runs in CI vs. on GP
 | `docs/PROJECT_RIDE_v1.md` | The ride-layer brief (Project Rando). |
 | `CONTRIBUTING.md` | Contributor on-ramp: prerequisites, verified command map, CI vs. GPU-only checks. |
 | `OSS_AUDIT.md` | Evidence-backed open-source readiness report driving the P1/P2 backlog. |
-| `STATUS.md`, `PROGRESS.md` | The model's working memory: current state, diagnosis logs, measurements, decision history. |
-| `HANDOFF_APK.md` | Android APK build/deploy runbook. |
+| `docs/log/STATUS.md`, `docs/log/PROGRESS.md` | The model's working memory: current state, diagnosis logs, measurements, decision history. |
+| `docs/log/HANDOFF_APK.md` | Android APK build/deploy runbook. |
 | `Justfile` | Task runner: dev launchers, packaging, adb deploy recipes. |
 | `src/` | Engine and world: `core/`, `gpu/`, `world/`, `vegetation/`, `render/`, `sky/`, `debug/`. |
 | `src/ride/` | The ride layer: bikes, physics solver, road network, cockpit, HUD, session recording, `ble/` sensor stack, `strava/` upload, `replay/` import. |

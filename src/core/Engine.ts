@@ -281,7 +281,7 @@ export class Engine {
     s.drawCalls = this.renderer.info.render.drawCalls;
     s.triangles = this.renderer.info.render.triangles;
     s.frame = this.frameCounter++;
-    // render/compute SUBMISSION boundaries per frame (GPU_CPU_ISSUE_CODEX.md
+    // render/compute SUBMISSION boundaries per frame (docs/log/GPU_CPU_ISSUE_CODEX.md
     // §5 P0.1): three ends every render context with backend.finishRender() ->
     // its own queue.submit(), and every renderer.compute() with finishCompute()
     // -> another. These count them for real instead of estimating from the TSL

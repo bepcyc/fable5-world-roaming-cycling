@@ -91,7 +91,7 @@ Owner-only pipeline (assumes `~/Android/Sdk`, Java 21, adb-connected devices):
 ## Docs map
 
 - `README.md` — product overview and controls.
-- `STATUS.md` — the working log: current state, known issues, measurements.
+- `docs/log/STATUS.md` — the working log: current state, known issues, measurements.
 - `docs/PACKAGING.md` — why Electron + APK (WebGPU/Web Bluetooth constraints).
 - `docs/THREE-NOTES.md` — verified three.js/TSL/WebGPU API notes.
 - `tools/README.md` — the verification harness index: all 81 scripts

@@ -1,7 +1,7 @@
 /**
  * CPU PROFILER — THE REAL TABLET (Galaxy Tab S8 Ultra / SM-X900, Adreno 730).
  *
- * GPU_CPU_ISSUE_CODEX.md §5 P0.2: "If direct TSL-node boundaries are
+ * docs/log/GPU_CPU_ISSUE_CODEX.md §5 P0.2: "If direct TSL-node boundaries are
  * inconvenient, use a CDP CPU profile over 200-300 frames of a real tablet and
  * look for Bindings._update, UniformsGroup.update, NodeManager.updateForRender,
  * _projectObject, WebGPUBackend._draw, GPUQueue.submit/Dawn wire calls."
@@ -347,12 +347,12 @@ async function main(): Promise<void> {
     console.log(`  ${r.fn.slice(0, 37).padEnd(38)} ${r.url.slice(0, 25).padEnd(26)} ${r.selfMsPerFrame.toFixed(3).padStart(9)} ${r.pct.toFixed(1).padStart(6)}`);
   }
 
-  // The named suspects from STATUS.md:538-559 (the OLD desktop profile). Printing
+  // The named suspects from docs/log/STATUS.md:538-559 (the OLD desktop profile). Printing
   // them explicitly makes "the tablet has a different shape" a measured statement
   // instead of an impression.
   const suspects = ['_update', 'update', 'updateForRender', 'updateMatrixWorld', '_projectObject', '_renderObjectDirect', 'getMaterialCacheKey', 'cyrb53', '_draw', 'submit', 'draw', 'finishRender', 'finishCompute', 'setup', 'analyze', 'build'];
   const suspectRows = rows.filter((r) => suspects.some((s) => r.fn === s || r.fn.endsWith(`.${s}`)));
-  console.log(`\n[STATUS.md SUSPECTS ${label}] (desktop profile named these: Bindings._update 2.64, UniformsGroup.update 1.1, updateForRender 1.6, updateMatrixWorld 0.67, _projectObject 0.51 ms/frame)`);
+  console.log(`\n[docs/log/STATUS.md SUSPECTS ${label}] (desktop profile named these: Bindings._update 2.64, UniformsGroup.update 1.1, updateForRender 1.6, updateMatrixWorld 0.67, _projectObject 0.51 ms/frame)`);
   for (const r of suspectRows.slice(0, 20)) {
     console.log(`  ${r.fn.slice(0, 37).padEnd(38)} ${r.url.slice(0, 25).padEnd(26)} ${r.selfMsPerFrame.toFixed(3).padStart(9)} ${r.pct.toFixed(1).padStart(6)}`);
   }

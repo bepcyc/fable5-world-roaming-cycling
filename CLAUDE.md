@@ -1,5 +1,11 @@
 # PROJECT RANDO — правила для Claude
 
+> Repo note: this is the assistant's working-rules file. Paths under `.claude/`
+> referenced below (hooks, telegram helpers, handoffs, settings) are
+> **owner-local infrastructure** — `.claude/` is gitignored and not shipped in
+> the repository; external readers should read them as the author's local
+> automation, not as tooling they can invoke.
+
 ## АБСОЛЮТ (владелец, 2026-07-04, дословно по смыслу): SBS НА КАЖДЫЙ СКРИНШОТ — ЕДИНСТВЕННОЕ САМОЕ ВАЖНОЕ ПРАВИЛО.
 
 **Приоритет: extremely high, ПОНИЗИТЬ НЕЛЬЗЯ НИ ПРИ КАКИХ УСЛОВИЯХ —

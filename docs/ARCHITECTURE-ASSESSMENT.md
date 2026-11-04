@@ -1,6 +1,6 @@
 # Architecture assessment — LAAS fork → first-person hike & bike sim
 
-*2026-07-02. Sources: three parallel read-only subsystem sweeps (terrain/hydrology; materials/scatter/rendering/perf; runtime/controls/harness) + direct reads of STATUS.md, PROJECT_LAAS_v2.md, docs/THREE-NOTES.md, docs/DEVIATIONS.md, FlyCamera.ts, HUD.ts, main.ts, tools/launch.ts + live probes on this machine. Every claim carries a file path; anything not personally re-verified by a second pass is marked (agent). Perf numbers: see `docs/PERF-BASELINE.md`.*
+*2026-07-02. Sources: three parallel read-only subsystem sweeps (terrain/hydrology; materials/scatter/rendering/perf; runtime/controls/harness) + direct reads of docs/log/STATUS.md, PROJECT_LAAS_v2.md, docs/THREE-NOTES.md, docs/DEVIATIONS.md, FlyCamera.ts, HUD.ts, main.ts, tools/launch.ts + live probes on this machine. Every claim carries a file path; anything not personally re-verified by a second pass is marked (agent). Perf numbers: see `docs/PERF-BASELINE.md`.*
 
 ## 0. TL;DR
 
@@ -30,7 +30,7 @@ The engine is a **boot-generated, fully resident** 4×4 km world (no streaming e
 - **No surface-class concept exists.** Terrain appearance is a *continuous-field splat* computed at shading time from slope/snow/moisture/rockExposure/zone masks (`src/render/TerrainMaterial.ts:216-254`); the quantized biome id is scatter-only by design (`TerrainMaterial.ts:1-18`).
 - Per-texel classification storage exists to extend: `biomeTex` 4096² rgba8 = biomeId/8, snow, vegDensity, rockExposure (layout documented `src/gpu/passes/BiomeSnow.ts:4-5`, written at `:173-178`; ids in `src/world/WorldConst.ts:28-45`); hydrology fields in `fieldsTex` 2048² rgba16f (`src/world/Heightfield.ts:424`).
 - The matrix file itself is greenfield (proposed: `src/ride/SurfaceMatrix.ts`, data-only): per surface (asphalt, fine gravel, coarse gravel, dirt, singletrack, grass, rock, mud, shallow/deep water, snow…) × per mode (hike/road/gravel/MTB): allowed/degraded/blocked, rolling resistance, max speed, grip, sound id, weather sensitivity, stall risk. Consumers: physics solver, HUD warning, audio, and the road generator's surface tags.
-- **CPU access gap (key unlock):** CPU mirrors exist only for height (4096², `heightAtCpu`, `Heightfield.ts:198`) and waterY (2048², `waterYAtCpu`, `:216`). Slope/moisture/biome/flow have **no CPU mirror** — surface classification for physics/HUD needs one more `getArrayBufferAsync` readback each (pattern at `Heightfield.ts:190-193`), plus the future road/surface map itself. Trap: sim-res (2048²) vs full-res (4096²) comparisons need ≥0.25 m water-depth thresholds (STATUS.md:852 — a tight compare once silently deleted 53k trees).
+- **CPU access gap (key unlock):** CPU mirrors exist only for height (4096², `heightAtCpu`, `Heightfield.ts:198`) and waterY (2048², `waterYAtCpu`, `:216`). Slope/moisture/biome/flow have **no CPU mirror** — surface classification for physics/HUD needs one more `getArrayBufferAsync` readback each (pattern at `Heightfield.ts:190-193`), plus the future road/surface map itself. Trap: sim-res (2048²) vs full-res (4096²) comparisons need ≥0.25 m water-depth thresholds (docs/log/STATUS.md:852 — a tight compare once silently deleted 53k trees).
 
 ### 2.2 Road & trail network generation + terrain carving
 
@@ -45,7 +45,7 @@ The engine is a **boot-generated, fully resident** 4×4 km world (no streaming e
 - Walk mode is the template: `FlyCamera.updateWalk` (`src/core/FlyCamera.ts:326-433`) — yaw-plane wish velocity, exp-damp accel (`GROUND_ACCEL=10`), game gravity 22, velocity-Verlet jump (framerate-exact apex, `:366-370`), ground clamp + `STEP_DOWN` stick, wade clamp. All constants named at top (`:27-55`). Walk-sprint tops at **9.2 m/s = 33 km/h** — bike speeds (40–50 km/h) exceed every existing tuning.
 - Bike mode = new integrator beside `updateWalk`, fed by the **sensor seam** (`src/ride/Sensors.ts`, created this session): Zwift-style solver `P = (Crr·m·g·cosθ + m·g·sinθ + ½ρCdA·v²)·v` with Crr/grip/max-speed from the surface matrix, gradient from finite-differencing `heightAtCpu` (pattern: `findWalkSpawn`, `src/debug/TerrainScene.ts:312-314`), route-following steering (Zwift principles — no free WASD on bike).
 - Contracts to respect: FlyCamera owns `camera.position`; effects compose onto `basePos` and `getPose()` strips them (`:245-254`) — the bike computer/cockpit must attach to the *logical* pose. Any programmatic pose forces fly mode (`setPose`, `:225-243`) — bike probes must enter bike mode explicitly, not via setPose.
-- **Determinism gap:** the loop is variable-dt with a 0.1 s clamp (`src/core/Engine.ts:138`) — no fixed-step accumulator. Physics probes ("stops within N meters") need one (house precedent for dt-exactness: the velocity-Verlet jump fix, commit `daf8c52`). TSL `time` is wall-clock and NOT frozen by `?freeze=1` (STATUS.md:968) — probe discipline: `--framealign`, `--lockexp`, `--wind 0` (STATUS.md:583-598).
+- **Determinism gap:** the loop is variable-dt with a 0.1 s clamp (`src/core/Engine.ts:138`) — no fixed-step accumulator. Physics probes ("stops within N meters") need one (house precedent for dt-exactness: the velocity-Verlet jump fix, commit `daf8c52`). TSL `time` is wall-clock and NOT frozen by `?freeze=1` (docs/log/STATUS.md:968) — probe discipline: `--framealign`, `--lockexp`, `--wind 0` (docs/log/STATUS.md:583-598).
 - `groundProbe` returns `{ground, water}` only (`FlyCamera.ts:23`) — extend to `{ground, water, surfaceId, slope}` once CPU mirrors exist (§2.1).
 
 ### 2.4 Sensor layer (BLE) — greenfield
@@ -109,19 +109,19 @@ Everything is generated once at boot on GPU (`Heightfield.generate`, `src/world/
 
 Context: walk-sprint today is 9.2 m/s; bikes push 1.2–1.5×. What actually scales with camera speed (agent + STATUS evidence):
 
-1. **CSM cascade cache invalidation — top risk.** `CachedCsmShadowNode` re-renders cascade *i* every [1,2,3,6] frames, but any cascade refits early when its fit-center drifts >4% of span (periods `src/render/CsmCached.ts:29`, drift refit `:141-147`; the header comment `:13-15` names fast camera motion explicitly). Sustained 14 m/s pushes mid/far cascades toward every-frame re-render *including per-cascade veg caster re-raster* (`Forests.ts:544-635`) — eroding a cache upstream measured at −3.9 ms avg (STATUS.md:441-444, M1). Mitigations to evaluate in the high-speed pass (not now): velocity-aware cascade phasing, motion-directional fit margin.
+1. **CSM cascade cache invalidation — top risk.** `CachedCsmShadowNode` re-renders cascade *i* every [1,2,3,6] frames, but any cascade refits early when its fit-center drifts >4% of span (periods `src/render/CsmCached.ts:29`, drift refit `:141-147`; the header comment `:13-15` names fast camera motion explicitly). Sustained 14 m/s pushes mid/far cascades toward every-frame re-render *including per-cascade veg caster re-raster* (`Forests.ts:544-635`) — eroding a cache upstream measured at −3.9 ms avg (docs/log/STATUS.md:441-444, M1). Mitigations to evaluate in the high-speed pass (not now): velocity-aware cascade phasing, motion-directional fit margin.
 2. **CDLOD refine lag.** The quadtree rebuilds only after ≥20 m of camera travel (`src/world/TerrainTiles.ts:447`) — every ~1.5 s at bike speed; tiles refine *after* you enter them. At 50 km/h expect visible late-refine on rough ground; road corridors mitigate (roads flatten + smooth the near field).
 3. **LOD ring churn/overdraw.** Cull cost is ~fixed per frame (`Forests.ts:915-967`), but faster travel keeps more instances inside dithered crossfade bands (`src/render/VegInstance.ts:127-151`) — more double-drawn instances.
 4. **Not speed-scaled** (for the record): grass clipmap re-derives content with zero uploads (`GroundRing.ts:4-11`); particles live in a ±36 m box ≫ per-frame travel (`Particles.ts:135-142`); probe GI is world-anchored + time-sliced (`ProbeGI.ts:328-342`); froxels/auto-exposure are fixed cost; TRAA velocity is analytic camera reprojection — exact under translation for the static world (`PostStack.ts:463-509`).
-5. **CPU submit dominance.** Upstream's binding constraint at speed-independent framing was cpu.submit ≈ 12–15 ms on an M1 (STATUS.md:544). This box's Zen-2 desktop cores are unlikely to beat that; at Vega-7 GPU frame times (see PERF-BASELINE) the GPU dominates anyway. Re-attribute after Phase-1 systems land.
-6. Upstream's "120 fps, no quality loss" directive (STATUS.md:368-424) is **not** this fork's bar — ours: visuals first, honest avg + 1% low tracking, dedicated high-speed pass later (ROADMAP).
+5. **CPU submit dominance.** Upstream's binding constraint at speed-independent framing was cpu.submit ≈ 12–15 ms on an M1 (docs/log/STATUS.md:544). This box's Zen-2 desktop cores are unlikely to beat that; at Vega-7 GPU frame times (see PERF-BASELINE) the GPU dominates anyway. Re-attribute after Phase-1 systems land.
+6. Upstream's "120 fps, no quality loss" directive (docs/log/STATUS.md:368-424) is **not** this fork's bar — ours: visuals first, honest avg + 1% low tracking, dedicated high-speed pass later (ROADMAP).
 
 ## 5. Top integration risks, ranked
 
 1. **Hardware floor vs untouchable visual bar.** Vega 7 iGPU vs a world tuned on M1 Max: see PERF-BASELINE (boot ~63 s; single-digit-to-low-teens fps expected at native). If this box is the play machine, "LAAS bar + playable bike speeds" may be unreachable without decisions the owner reserved (resolution, preset). → OPEN-QUESTIONS (a)/(b).
 2. **Roads × water crossings.** Carve-after-hydrology keeps rivers stable, but ≥30 km of network in this terrain *will* cross channels; fords/bridges need explicit surface tags + carve exceptions or roads read flooded/clip through banks (`FlowRivers` carve fields vs road SDF).
 3. **Dual-site vegetation exclusion drift.** Road mask must gate both boot scatter (`Scatter.ts:201-238`) and GroundRing carpets — two GPU kernels in different files; a mismatch means grass on asphalt or bald verges. Single shared road-SDF module is the guard.
-4. **Physics determinism.** Variable dt (`Engine.ts:138`) + wall-clock TSL time (STATUS.md:968) vs probes that assert meters-to-stop. Fixed-step accumulator for ride physics + existing `--framealign/--lockexp/--wind` discipline; otherwise probe flake will erode trust in the whole verification policy.
+4. **Physics determinism.** Variable dt (`Engine.ts:138`) + wall-clock TSL time (docs/log/STATUS.md:968) vs probes that assert meters-to-stop. Fixed-step accumulator for ride physics + existing `--framealign/--lockexp/--wind` discipline; otherwise probe flake will erode trust in the whole verification policy.
 5. **TRAA vs cockpit** (§2.6): view-locked geometry gets wrong analytic velocity → smear/shimmer; needs per-object velocity or post-TRAA compositing. Known, budgeted, not a surprise.
 6. **CSM cache at speed** (§4.1) — quality-preserving fix unknown until measured; the high-speed pass owns it.
 7. **BLE testability.** No BT adapter on the dev box; Web Bluetooth needs user-gesture connect UI; FTMS control-point quirks vary by trainer. Demo source de-risks development; real-device test is a hard Phase-1 exit criterion (OPEN-QUESTIONS j).
@@ -131,13 +131,13 @@ Context: walk-sprint today is 9.2 m/s; bikes push 1.2–1.5×. What actually sca
 
 | Issue | Evidence | Status |
 |---|---|---|
-| bm2 lake: white water shards + see-through swells | STATUS.md:645-719; RESOLVED session 5 (M1.4.2): pooled-water Priority-Flood flatten (src/world/WaterPools.ts) + dry-cell shoreline clamp min(bed−2, wetMin−0.15) in buildWaterY | **fixed session 5** |
-| Blob rocks (smooth gray cobbles ≤120 m on meadows) | STATUS.md:299-311 (StoneL/M 'cobble' preset lacks detail) | open, fix sketched |
-| Lake far-rim reflection fallback (planar pass queued) | STATUS.md:291-298 | open, priority raised upstream |
+| bm2 lake: white water shards + see-through swells | docs/log/STATUS.md:645-719; RESOLVED session 5 (M1.4.2): pooled-water Priority-Flood flatten (src/world/WaterPools.ts) + dry-cell shoreline clamp min(bed−2, wetMin−0.15) in buildWaterY | **fixed session 5** |
+| Blob rocks (smooth gray cobbles ≤120 m on meadows) | docs/log/STATUS.md:299-311 (StoneL/M 'cobble' preset lacks detail) | open, fix sketched |
+| Lake far-rim reflection fallback (planar pass queued) | docs/log/STATUS.md:291-298 | open, priority raised upstream |
 | Stale sun uniforms after ToD change in world scene | `updateSunUniforms` called once at `src/debug/TerrainScene.ts:172`, not in the ToD handlers (`:242-255`); GalleryScene does it right (`src/debug/GalleryScene.ts:608`) | **found this session** (agent), unfixed by policy |
 | `npm run battery` broken | `package.json:14` → `tools/battery.ts` absent | inherited Phase-7 TODO |
 | `?view=hydro` documented but unimplemented | `TerrainScene.ts:6` header vs grep | doc rot |
-| STATUS "Current focus" section stale (says Phase 2/5) | STATUS.md:125-196 vs Phase-7 reality | conventions drift |
+| STATUS "Current focus" section stale (says Phase 2/5) | docs/log/STATUS.md:125-196 vs Phase-7 reality | conventions drift |
 | 8 inert `eslint-disable` comments, no eslint installed | e.g. `main.ts:46,104`, `FlyCamera.ts:162`; not in package-lock | cosmetic |
 | `terrain.maxH` strided max hack (`i+=7`) | `TerrainScene.ts:44-46` | cosmetic |
 | Playwright-chromium unusable on NixOS; launch.ts recipes Mac-only | this session's probes (§5.8) | **new, blocks repo harness on this box until launch.ts learns Linux** |
