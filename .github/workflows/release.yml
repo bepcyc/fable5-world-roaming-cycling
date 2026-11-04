@@ -16,7 +16,9 @@ on:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # ubuntu-24.04 (not ubuntu-latest): see ci.yml — routes the job to the
+    # pop-os host runner on Forgejo; GitHub still matches.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

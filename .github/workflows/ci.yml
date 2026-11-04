@@ -7,7 +7,11 @@ on: [push, pull_request, workflow_dispatch]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # ubuntu-24.04 (not ubuntu-latest): the forgejo host also runs a docker
+    # runner advertising ubuntu-latest which steals and fails our jobs; the
+    # versioned label is advertised only by the pop-os host runner and still
+    # matches GitHub's fleet.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
