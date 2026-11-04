@@ -23,6 +23,9 @@ const path = require('node:path');
 // ── WebGPU: match `just run-rxgpu` exactly (NO --use-angle=vulkan) ──────────
 app.commandLine.appendSwitch('enable-unsafe-webgpu');
 app.commandLine.appendSwitch('enable-features', 'Vulkan');
+// ── Web Bluetooth: navigator.bluetooth is blink-gated in Electron 43 —
+// without this the API surface doesn't exist in the renderer at all.
+app.commandLine.appendSwitch('enable-blink-features', 'WebBluetooth');
 
 const DIST = path.join(__dirname, '..', 'dist');
 
@@ -89,11 +92,26 @@ function startServer() {
 // sensors the app asks for are singular per kind). A proper in-renderer picker
 // is a follow-up. Also grant bluetooth permission unconditionally on loopback.
 function wireBluetooth(win, ses) {
-  ses.setPermissionCheckHandler(() => true);
-  ses.setDevicePermissionHandler(() => true);
+  // Explicit allowlist — extend deliberately, never widen to 'all'.
+  // 'bluetooth': the ride layer pairs BLE sensors via Web Bluetooth
+  //   (src/ride/ble/) — the only device API the app legitimately needs.
+  // Everything else (media, geolocation, notifications, hid, usb, serial,
+  // fullscreen, clipboard, pointerLock, openExternal) is denied. Verified
+  // by grep: no getUserMedia/clipboard/Notification/usb/hid/serial use in
+  // src/; requestFullscreen is mobile-only (ImmersiveMobile no-ops on
+  // desktop — isMobileDevice() gate).
+  const ALLOW = new Set(['bluetooth']);
+  ses.setPermissionCheckHandler((wc, permission) => ALLOW.has(permission));
+  // Without a request handler Electron defaults to granting every request —
+  // scope it too, or the allowlist only half-applies.
+  ses.setPermissionRequestHandler((wc, permission, callback) =>
+    callback(ALLOW.has(permission)),
+  );
+  ses.setDevicePermissionHandler((details) => ALLOW.has(details.deviceType));
   win.webContents.on('select-bluetooth-device', (event, devices, callback) => {
     event.preventDefault();
     if (devices.length > 0) {
+      console.log(`[laas-electron] bluetooth auto-pick: ${devices[0].deviceName || devices[0].deviceId}`);
       callback(devices[0].deviceId); // first match wins
     }
     // else: wait for the next discovery event (do not cancel)
