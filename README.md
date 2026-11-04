@@ -75,10 +75,11 @@ Contributing: prerequisites, the full command map, and what runs in CI vs. on GP
 ## Troubleshooting
 
 - **Boot gate refuses to load** — use Chrome 113+; check `chrome://gpu` shows WebGPU "Hardware accelerated" and that hardware acceleration is on. The gate page lists the exact failing check.
-- **`?debug=1`** — on-screen boot overlay (adapter identity, limits, timed steps) plus a reverse telemetry channel; see [docs/LAUNCH_AND_DEBUG.md](docs/LAUNCH_AND_DEBUG.md).
+- **`?debug=1`** — on-screen boot overlay (adapter identity, limits, timed steps) plus a reverse telemetry channel that beacons crashes even when the page dies; sink it with `TELE_LOG=/tmp/tele.jsonl TELE_PORT=5199 npx tsx tools/debug-telemetry-server.ts` and read `tail -f /tmp/tele.jsonl`. See [docs/LAUNCH_AND_DEBUG.md](docs/LAUNCH_AND_DEBUG.md) (full runbook; every doc indexed in [docs/README.md](docs/README.md)).
 - **`?log=debug|info|warn|error|silent`** — console verbosity; default `warn` keeps a boot quiet. `?log=debug` restores the adapter diag + build chatter (`[tag]`-prefixed lines).
 - **GPU process crashes when riding (headed Chrome only)** — never pass `--use-angle=vulkan`; Dawn's own Vulkan backend must not share the GPU with ANGLE's GL-on-Vulkan client. Details in `tools/probe-real-crash.ts`.
 - **Phone/tablet can't reach the dev server** — WebGPU + Web Bluetooth need a secure context: whitelist `http://<IP>:5173` once in `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, then open `http://<IP>:5173/?nogate=1` (`just run-lan` prints this).
+- **No BLE sensors in the ride picker** — the chooser is Chrome's own Web Bluetooth dialog, so it needs the secure context above, a powered BlueZ adapter on Linux (`bluetoothctl list`), and the sensor awake and advertising. `?ride=blefake` is the app-side check: if the scripted fake works, the problem is the radio/permissions, not the app.
 - **Slow on a weaker GPU** — `?preset=low&dpr=1` is the mobile floor profile; F3 shows per-pass GPU timings.
 
 ## License & credits

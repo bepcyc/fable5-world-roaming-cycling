@@ -123,9 +123,9 @@ No other performance findings confirmed statically — perf work is an active, w
 - **Smallest credible fix:** tiny `src/core/Log.ts` (level + tag prefix), sweep the 31 sites to it in one pass, keep `console` only in `tools/`.
 
 ### [P2] Strong boot diagnostics exist but aren't discoverable
-- **Evidence:** `BrowserGate`/`Diagnostics.ts` fail-loud WebGPU probing (README documents the gate); `?debug=1` telemetry → `tools/debug-telemetry-server.ts`; F3 HUD per-pass GPU timings; `docs/LAUNCH_AND_DEBUG.md` exists.
+- **Evidence (pre-fable5#146):** `BrowserGate`/`Diagnostics.ts` fail-loud WebGPU probing (README documents the gate); `?debug=1` telemetry → `tools/debug-telemetry-server.ts`; F3 HUD per-pass GPU timings; `docs/LAUNCH_AND_DEBUG.md` exists.
 - **Why it matters:** the pieces are good — they're just not linked from README, so users won't find the debug path.
-- **Smallest credible fix:** a "Troubleshooting" section in README linking `docs/LAUNCH_AND_DEBUG.md` + `?debug=1` + `chrome://gpu`.
+- **Smallest credible fix (DONE fable5#129/#146):** README "Troubleshooting" section (added in #129) links `docs/LAUNCH_AND_DEBUG.md`, `chrome://gpu`, `?debug=1` — #146 added the telemetry-sink command inline and a BLE-sensors symptom entry (Web Bluetooth secure context, BlueZ adapter, `?ride=blefake` sanity check).
 
 ## Documentation
 
