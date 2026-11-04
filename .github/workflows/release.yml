@@ -1,0 +1,99 @@
+name: release
+
+# Tag-driven release: push `v*` → build Android APK + Linux AppImage →
+# create a forge release whose notes are the matching CHANGELOG.md section.
+# The same file runs on GitHub Actions (ubuntu-latest VMs) and on Forgejo
+# Actions (self-hosted runner on pop-os, `ubuntu-latest` label → host).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install deps
+        run: npm ci
+
+      # Mirrors `just android-apk` (paths env-overridable). On GitHub runners
+      # ANDROID_HOME is preset; on the pop-os host runner it falls back to
+      # ~/Android/Sdk. Output: laas-<tag>-android-debug.apk
+      - name: Build Android APK (debug)
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          ANDROID_APK=1 npx vite build
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          mkdir -p android/app/src/main/assets android/app/src/main/res/mipmap-xxxhdpi
+          rm -rf android/app/src/main/assets/www
+          cp -r dist android/app/src/main/assets/www
+          cp public/icons/icon-maskable-512.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || true
+          cd android
+          ./gradlew assembleDebug
+          mv "app/build/outputs/apk/debug/app-debug.apk" "../laas-${GITHUB_REF_NAME}-android-debug.apk"
+
+      # Mirrors `just linux-binary`. Output: laas-linux-x64.AppImage
+      - name: Build Linux AppImage
+        run: |
+          set -euo pipefail
+          ELECTRON=1 npx vite build
+          npx electron-builder --linux --config electron-builder.yml
+          mv dist-electron/laas-linux-x64.AppImage ./
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" {found=1; next}
+            found && /^## \[/ {exit}
+            found {print}
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          test -s RELEASE_NOTES.md || { echo "no changelog section for $VERSION"; exit 1; }
+          head -5 RELEASE_NOTES.md
+
+      # Portable across GitHub and Forgejo: github.api_url + the upload_url
+      # template in the release response differ per forge but have the same
+      # shape. FORGEJO_TOKEN is auto-injected by Forgejo; GITHUB_TOKEN by
+      # GitHub — take whichever is non-empty.
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          API: ${{ github.api_url }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TOKEN="${FORGEJO_TOKEN:-$GH_TOKEN}"
+          body=$(python3 -c 'import json,sys; print(json.dumps(open("RELEASE_NOTES.md").read()))')
+          resp=$(curl -fsS -X POST "$API/repos/$REPO/releases" \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":$body}")
+          echo "$resp" | python3 -c 'import json,sys; r=json.load(sys.stdin); print("release id", r["id"], "at", r.get("html_url","?"))'
+          upload=$(echo "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')
+          for f in laas-linux-x64.AppImage "laas-${TAG}-android-debug.apk"; do
+            echo "uploading $f"
+            curl -fsS -X POST "${upload}?name=$(basename "$f")" \
+              -H "Authorization: token $TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" | python3 -c 'import json,sys; a=json.load(sys.stdin); print("  →", a.get("browser_download_url", a.get("name")))'
+          done

@@ -169,8 +169,8 @@ linux-binary: deps
 android-apk:
     #!/usr/bin/env bash
     set -euo pipefail
-    export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-    export ANDROID_HOME="$HOME/Android/Sdk"
+    export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
+    export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
     export PATH="$JAVA_HOME/bin:$PATH"
     # 1) web build with root-absolute base ('/') for the loopback origin
     ANDROID_APK=1 npx vite build
