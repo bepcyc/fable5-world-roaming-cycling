@@ -1,0 +1,10 @@
+Rider asset credits
+===================
+
+adventurer.glb — "Adventurer" character by Quaternius (quaternius.com), CC0.
+Loaded at runtime by src/ride/cockpit/RiderBody.ts; rigged and posed in-app.
+CC0 requires no attribution — this file keeps provenance next to the asset.
+
+Dev-only material (NOT shipped): "Cyclist – racing position – free 3d
+printable" by Andy Woodhead (Sketchfab), CC-BY 4.0 — lives in the gitignored
+assets/blender/ directory; attribution required if ever shipped.

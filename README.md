@@ -84,7 +84,7 @@ Contributing: prerequisites, the full command map, and what runs in CI vs. on GP
 ## License & credits
 
 - Code: [MIT](LICENSE).
-- Rider model: Quaternius "Adventurer" (CC0) — `public/rider/adventurer.glb`.
+- Rider model: Quaternius "Adventurer" (CC0) — `public/rider/adventurer.glb`; provenance in [NOTICE](NOTICE) and `public/rider/CREDITS.txt` (ships with the build).
 - `reference/` holds third-party visual-reference frames used during development; they are not engine assets and are tracked as an open licensing item in [OSS_AUDIT.md](OSS_AUDIT.md).
 
 ## Repository map

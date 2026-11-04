@@ -1,0 +1,22 @@
+Third-party asset notices
+=========================
+
+Shipped assets
+--------------
+
+public/rider/adventurer.glb — "Adventurer" character by Quaternius
+(quaternius.com), CC0. Loaded at runtime by
+src/ride/cockpit/RiderBody.ts (`/rider/adventurer.glb`); rigged and posed
+in-app. CC0 requires no attribution — this notice exists so the shipped
+binary has provenance on record.
+
+Dev-only material (NOT shipped)
+-------------------------------
+
+assets/blender/cyclist-racing-position.* — "Cyclist – racing position –
+free 3d printable" by Andy Woodhead (Sketchfab model f97acacd76be484dbf0
+243d82f6a1c44), CC-BY 4.0. Development reference only: the directory is
+gitignored and nothing in tracked code loads it. CC-BY requires
+attribution — if this model (or a derivative) is ever shipped, the
+attribution obligation activates and must be recorded here and in
+public/rider/CREDITS.txt.
