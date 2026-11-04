@@ -1,12 +1,9 @@
 name: ci
 
-# branches-only: tag pushes run release.yml instead; firing ci on the same tag
-# push makes the two jobs race a single-capacity runner (losers fail at setup).
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+# NOTE: `on.push.branches` filtering makes Forgejo fail the run at "Set up
+# job" — keep the plain list form; tag pushes also run release.yml (the
+# runner's capacity: 2 absorbs both).
+on: [push, pull_request, workflow_dispatch]
 
 jobs:
   build:
