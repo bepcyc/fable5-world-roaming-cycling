@@ -140,8 +140,8 @@ No other performance findings confirmed statically — perf work is an active, w
 - **Smallest credible fix:** `.github/workflows/ci.yml` running `npm ci && npm run typecheck && npm run build` (all verified working today); `CONTRIBUTING.md` with Node 22 + `just`/`npm` map + GPU note; `.nvmrc` = `22`.
 
 ### [P2] Missing standard community files
-- **Evidence:** no `SECURITY.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, `CITATION.cff`, `.env.example`; LICENSE not mentioned in README body; local tags `v0.4.0+` unpushed (remote has only v0.2.0/v0.3.0).
-- **Smallest credible fix:** `SECURITY.md` (one paragraph — personal project scope + disclosure route); `.env.example` with `BLENDERMCP_SKETCHFAB_API_KEY=`; push or prune tags; CHANGELOG optional — `docs/log/STATUS.md` already acts as decision log, so generate it from tags later if wanted.
+- **Evidence (pre-fable5#144):** no `SECURITY.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, `CITATION.cff`, `.env.example`; LICENSE not mentioned in README body; local tags `v0.4.0+` unpushed (remote has only v0.2.0/v0.3.0).
+- **Smallest credible fix (DONE fable5#144):** SECURITY.md + .env.example committed; all local tags pushed (v0.0.1, v0.4.0–v0.8.0 — real release commits, all ancestors of main). Deliberate skips for a personal experiment: CHANGELOG.md (docs/log/STATUS.md is the decision log; generate from tags if ever wanted), CODE_OF_CONDUCT.md, CITATION.cff.
 
 ### [P2] docs/ is deep but unindexed
 - **Evidence:** 24 files in `docs/` (ARCHITECTURE-ASSESSMENT, PACKAGING, PERF_×5, ROAD_REALISM_GATES, TURN_PICKER, UX_AUDIT_20…) + `docs/notes/` (6 research notes) — high-quality, but no index; README links only 3 of them.
