@@ -1,6 +1,11 @@
 name: ci
 
-on: [push, pull_request]
+# branches-only: tag pushes run release.yml instead; firing ci on the same tag
+# push makes the two jobs race a single-capacity runner (losers fail at setup).
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 jobs:
   build:
