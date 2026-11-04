@@ -114,7 +114,6 @@ export function makeChecks(): CheckRunner {
   let anyFailed = false;
   return {
     check(name: string, ok: boolean, detail = ''): void {
-      // eslint-disable-next-line no-console
       console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
       if (!ok) anyFailed = true;
     },

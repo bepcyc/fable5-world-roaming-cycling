@@ -851,7 +851,6 @@ async function livePart(shots: boolean): Promise<void> {
     page.evaluate(
       (src) => {
         const dbg = (window as unknown as { __laasDbg: Record<string, unknown> }).__laasDbg;
-        // eslint-disable-next-line no-new-func
         return (new Function('dbg', `return (${src})(dbg)`) as (d: unknown) => T)(dbg);
       },
       fn.toString(),

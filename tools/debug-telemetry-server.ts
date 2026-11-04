@@ -39,7 +39,6 @@ createServer((req, res) => {
       } catch {
         /* ignore */
       }
-      // eslint-disable-next-line no-console
       console.log('TELE ' + line.slice(0, 600));
       res.writeHead(204, cors);
       res.end();
@@ -49,6 +48,5 @@ createServer((req, res) => {
   res.writeHead(200, { ...cors, 'Content-Type': 'text/plain' });
   res.end('telemetry ok\n');
 }).listen(PORT, '0.0.0.0', () => {
-  // eslint-disable-next-line no-console
   console.log(`[telemetry] listening 0.0.0.0:${PORT} → ${LOG}`);
 });

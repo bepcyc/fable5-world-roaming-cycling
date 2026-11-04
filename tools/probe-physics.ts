@@ -186,7 +186,6 @@ async function livePart(shots: boolean): Promise<void> {
       (src) => {
         const dbg = (window as unknown as { __laasDbg: Record<string, unknown> }).__laasDbg;
         const r = dbg['ride'] as unknown as DbgRide;
-        // eslint-disable-next-line no-new-func
         return (new Function('r', 'dbg', `return (${src})(r, dbg)`) as (a: DbgRide, b: unknown) => T)(r, dbg);
       },
       fn.toString(),

@@ -19,7 +19,6 @@ async function main(): Promise<void> {
     waitUntil: 'domcontentloaded',
   });
   await page.waitForFunction(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     () => (window as any).__laas && ((window as any).__laas.ready || (window as any).__laas.error !== null),
     undefined,
     { timeout: 600_000, polling: 500 },
