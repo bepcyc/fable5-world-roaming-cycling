@@ -326,8 +326,14 @@ export function flowerMaterial(
     b: number;
   },
   nearGlow = 0,
-): MeshStandardNodeMaterial {
-  const mat = new MeshStandardNodeMaterial();
+): MeshPhysicalNodeMaterial {
+  // Physical variant for specularIntensity (silver-wash-cut, the same
+  // treatment grass/foliage already got): plain standard bakes F0 0.04 and
+  // under the post-65a1a68 blue sky the glancing-angle sheen bleached whole
+  // verge-bloom carpets into a frosty cream-white mat — trefoil stems read
+  // as white straw, far umbel fields as blue rime.
+  const mat = new MeshPhysicalNodeMaterial();
+  mat.specularIntensity = 0.25;
   const d = vdata();
   // 2026-07-16 rollback of the codex anti-black hacks (7db9995): the black
   // they fought was the grade NaN (fixed at the root in PostStack — c.max(0)),
@@ -343,6 +349,19 @@ export function flowerMaterial(
   const petalK = smoothstep(0.85, 0.95, d.x);
   let albedo = mix(stem, center, centerK) as unknown as NV3;
   albedo = mix(albedo, petalC, petalK) as unknown as NV3;
+  // Distance albedo fade (frost fix, root confirmed by main-thread bisection
+  // 2026-07-16): beyond ~40 m petals are sub-pixel and whole flower fields
+  // integrate to their average albedo — the near-white umbel petal turned
+  // sky-up by the 7db9995 rewind read as a blue-white rime carpet across
+  // every meadow. Near flowers keep full color; far fields settle into the
+  // meadow tone instead of white.
+  const camDist = positionWorld.sub(cameraPosition).length();
+  const meadowTone = vec3(0.16, 0.3, 0.1);
+  albedo = mix(
+    albedo,
+    meadowTone,
+    smoothstep(40, 120, camDist),
+  ) as unknown as NV3;
   mat.colorNode = albedo.mul(d.w.mul(0.4).add(0.6));
   if (nearGlow > 0) {
     // near-only petal glow: verge heads read as gold even in forest shade,
