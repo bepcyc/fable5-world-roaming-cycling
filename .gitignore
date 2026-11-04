@@ -34,3 +34,5 @@ assets/
 /-background
 # runtime log written by tools/debug-telemetry-server.ts (?debug=1 phone channel)
 telemetry.jsonl
+# personal documents accidentally dropped into the repo dir (cv.md lived here untracked)
+cv*.md
