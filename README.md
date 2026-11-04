@@ -105,7 +105,7 @@ Contributing: prerequisites, the full command map, and what runs in CI vs. on GP
 | `public/` | Shipped assets: CC0 rider GLB, icons, splash art, web manifest. |
 | `tests/` | Vitest pure-logic suites (BLE parsers, params, seed, route graph). |
 | `tools/` | The model's verification harness: headless WebGPU screenshots, image comparison, pixel sampling, GPU profiling, bug-specific probes. |
-| `docs/` | Design, packaging, BLE/Strava research, performance reports, debug runbooks. |
+| `docs/` | Design, packaging, BLE/Strava research, performance reports, debug runbooks — every file indexed in [docs/README.md](docs/README.md). |
 | `docs/THREE-NOTES.md` | Verified three.js/TSL/WebGPU API notes the model accumulated against the pinned version. |
 | `docs/DELTA.md`, `docs/DEVIATIONS.md` | Reference-comparison loops per phase, and spec deviations with reasons. |
 | `reference/` | The reference frames the world is judged against. |
