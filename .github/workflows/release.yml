@@ -10,8 +10,9 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
-permissions:
-  contents: write
+# NOTE: no `permissions:` block — Forgejo fails the run at "Set up job" on push
+# events when a token scope can't be provisioned. GitHub release upload relies
+# on the repo's default "Workflow permissions: read+write" setting instead.
 
 jobs:
   release:
