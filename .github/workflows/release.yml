@@ -50,13 +50,14 @@ jobs:
           ./gradlew assembleDebug
           mv "app/build/outputs/apk/debug/app-debug.apk" "../laas-${GITHUB_REF_NAME}-android-debug.apk"
 
-      # Mirrors `just linux-binary`. Output: laas-linux-x64.AppImage
+      # Mirrors `just linux-binary`. Output: laas-linux-x86_64.AppImage
+      # (--publish never: releases are created explicitly below via REST)
       - name: Build Linux AppImage
         run: |
           set -euo pipefail
           ELECTRON=1 npx vite build
-          npx electron-builder --linux --config electron-builder.yml
-          mv dist-electron/laas-linux-x64.AppImage ./
+          npx electron-builder --linux --config electron-builder.yml --publish never
+          mv dist-electron/laas-linux-*.AppImage ./
 
       - name: Extract release notes from CHANGELOG.md
         run: |
@@ -92,7 +93,7 @@ jobs:
             -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":$body}")
           echo "$resp" | python3 -c 'import json,sys; r=json.load(sys.stdin); print("release id", r["id"], "at", r.get("html_url","?"))'
           upload=$(echo "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')
-          for f in laas-linux-x64.AppImage "laas-${TAG}-android-debug.apk"; do
+          for f in laas-linux-*.AppImage "laas-${TAG}-android-debug.apk"; do
             echo "uploading $f"
             curl -fsS $CURL_TLS -X POST "${upload}?name=$(basename "$f")" \
               -H "Authorization: token $TOKEN" \
