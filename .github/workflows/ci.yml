@@ -1,0 +1,26 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      # GPU gates (tools/probe-*, npm run gates:*) are intentionally NOT run here:
+      # they need a real GPU with headed Chrome for WebGPU — see
+      # tools/probe-real-crash.ts for the headed-only crash class. CI scope is
+      # the env-independent gates: typecheck + production build.
+      # TODO: add `npm test` once the vitest bootstrap ticket lands (fable5#130).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
