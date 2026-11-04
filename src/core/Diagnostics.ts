@@ -4,6 +4,7 @@
  */
 
 import type { GpuDiagnostics } from './Hooks';
+import { log } from './Log';
 
 const INTERESTING_LIMITS: readonly (keyof GPUSupportedLimits & string)[] = [
   'maxTextureDimension2D',
@@ -92,8 +93,7 @@ let failShown = false;
 /** Render an unmissable full-screen failure overlay and record it on hooks. */
 export function failLoud(title: string, details: string[]): void {
   if (window.__laas) window.__laas.error = `${title}\n${details.join('\n')}`;
-  // eslint-disable-next-line no-console
-  console.error('[LAAS FATAL]', title, details);
+  log.error('LAAS FATAL', title, details);
   if (failShown) return;
   failShown = true;
 

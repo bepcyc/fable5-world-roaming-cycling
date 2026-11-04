@@ -16,6 +16,7 @@ import { SettingsMenu } from './core/SettingsMenu';
 import { applyStaticI18n } from './core/I18n';
 import { initHooks } from './core/Hooks';
 import { initImmersiveMobile } from './core/ImmersiveMobile';
+import { log } from './core/Log';
 import { parseCamString, parseParams } from './core/Params';
 import { initWakeLock } from './core/WakeLock';
 import { WorldSeed } from './core/Seed';
@@ -107,8 +108,7 @@ async function boot(): Promise<void> {
     for (const [k, v] of Object.entries(floor)) {
       if (diag.limits[k] !== undefined) diag.limits[k] = Math.min(diag.limits[k] as number, v);
     }
-    // eslint-disable-next-line no-console
-    console.warn('[laas] limitcap=mobile — diag.limits capped to floor', floor);
+    log.warn('laas', 'limitcap=mobile — diag.limits capped to floor', floor);
   }
   if (!diag.ok) {
     failLoud('WebGPU unavailable — LAAS has no fallback by design', [
@@ -121,8 +121,7 @@ async function boot(): Promise<void> {
     ]);
     return;
   }
-  // eslint-disable-next-line no-console
-  console.log('[laas] webgpu ok\n' + describeDiagnostics(diag).join('\n'));
+  log.info('laas', 'webgpu ok\n' + describeDiagnostics(diag).join('\n'));
 
   bootUI.set(0.08, 'creating renderer');
   const engine = await Engine.create(params, hooks);
@@ -333,8 +332,7 @@ async function boot(): Promise<void> {
   bootUI.hide();
   gameMenu.onWorldReady();
   hooks.ready = true;
-  // eslint-disable-next-line no-console
-  console.log('[laas] ready');
+  log.info('laas', 'ready');
 }
 
 boot().catch((e: unknown) => {

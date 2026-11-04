@@ -9,6 +9,7 @@
 
 import { BOOKMARKS, installBookmarks } from './Bookmarks';
 import { OptionsMenu } from './OptionsMenu';
+import { log } from '../core/Log';
 import { Froxels } from '../gpu/passes/Froxels';
 import { PARTICLE_COUNT, Particles } from '../gpu/passes/Particles';
 import { ProbeGI } from '../gpu/passes/ProbeGI';
@@ -339,7 +340,7 @@ export async function buildTerrainScene(ctx: WorldContext): Promise<void> {
       ctx.hooks.initialPose = { p: [p.x, p.y + 1.7, p.z], yaw, pitch: -0.03 };
       ctx.hooks.initialPoseMode = 'walk';
       engine.camera.position.set(p.x, p.y + 1.7, p.z);
-      console.log(`[road spawn] ${route.name} @${p.x.toFixed(0)},${p.z.toFixed(0)}`);
+      log.info('terrain', `road spawn ${route.name} @${p.x.toFixed(0)},${p.z.toFixed(0)}`);
     }
   } else if (params.cam === null) {
     if (Number.isFinite(alt)) {

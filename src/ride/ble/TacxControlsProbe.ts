@@ -65,6 +65,7 @@
  */
 
 import { CHR, SVC, type BleDeviceHandle } from './Transport';
+import { log } from '../../core/Log';
 
 /** BluetoothGattCharacteristic property bits — the native bridge reports this
  *  bitmask verbatim, because direction cannot be inferred from UUID numbering. */
@@ -126,7 +127,7 @@ export class TacxControlsCapture {
     this.events.push(e);
     // mirrored to console so `adb logcat -s LaasWeb` catches it on the APK,
     // where there is no devtools window to read
-    console.log(`[tacxcap] ${e.t.toFixed(0)}ms ${e.kind} ${e.note ?? `${e.chr} len=${e.len} ${e.hex}`}`);
+    log.debug('tacxcap', `${e.t.toFixed(0)}ms ${e.kind} ${e.note ?? `${e.chr} len=${e.len} ${e.hex}`}`);
   }
 
   mark(note: string): void {

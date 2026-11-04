@@ -21,6 +21,7 @@
  * (Pillar D) — no constants re-declared here.
  */
 
+import { log } from '../core/Log';
 import type { WorldSeed } from '../core/Seed';
 import { runWorkerJobs } from '../core/Threads';
 import type { MacroParams } from '../world/MacroMap';
@@ -735,8 +736,9 @@ export class RoadNetwork {
       }
       if (came[ti] < 0 && ti !== si) {
         if (guard >= 12_000_000) {
-          console.warn(
-            `[roads] A* guard exhausted (${guard} pops) — leg reported unroutable while the search was still open`,
+          log.warn(
+            'roads',
+            `A* guard exhausted (${guard} pops) — leg reported unroutable while the search was still open`,
           );
         }
         return null;
@@ -1254,8 +1256,9 @@ export class RoadNetwork {
           for (let j = i + 2; j + 1 < poly.length; j++) {
             const X = segIntersect(a, b, poly[j] as number[], poly[j + 1] as number[]);
             if (!X) continue;
-            console.warn(
-              `[roads] ${name}: self-cross spliced at (${X[0].toFixed(0)},${X[1].toFixed(0)}) ` +
+            log.warn(
+              'roads',
+              `${name}: self-cross spliced at (${X[0].toFixed(0)},${X[1].toFixed(0)}) ` +
                 `— dropped ${j - i} pt(s) loop`,
             );
             poly = [...poly.slice(0, i + 1), [X[0], X[1]], ...poly.slice(j + 1)];
@@ -2051,8 +2054,9 @@ export class RoadNetwork {
         if (lakeAt(i)) {
           const q = poly[i] as number[];
           if (spec.surfaceId === SurfaceId.Asphalt) asphaltCuts++; // Track C2 counter
-          console.warn(
-            `[roads] ${name} CUT at i=${i}/${n} (${(q[0] as number).toFixed(0)},${(q[1] as number).toFixed(0)}) ` +
+          log.warn(
+            'roads',
+            `${name} CUT at i=${i}/${n} (${(q[0] as number).toFixed(0)},${(q[1] as number).toFixed(0)}) ` +
               `water=${wAt(q[0] as number, q[1] as number).toFixed(1)} ys=${(ys[i] as number).toFixed(1)} terr=${(terrY[i] as number).toFixed(1)}`,
           );
           break;
@@ -2099,8 +2103,9 @@ export class RoadNetwork {
             if (broken) break;
           }
           if (broken) {
-            console.warn(
-              `[roads] ${name} CROSS-CUT at i=${i}/${n} (${(b[0] as number).toFixed(0)},${(b[1] as number).toFixed(0)}) ` +
+            log.warn(
+              'roads',
+              `${name} CROSS-CUT at i=${i}/${n} (${(b[0] as number).toFixed(0)},${(b[1] as number).toFixed(0)}) ` +
                 `— unlevelable crossing of a built route (profile misses its grade line)`,
             );
             break;
@@ -2206,8 +2211,9 @@ export class RoadNetwork {
     const ridgeStartCell = toCell(ridgeStart[0], ridgeStart[1]);
     const ridgeClimb = ridgeTop - (gh[ridgeStartCell.z * N + ridgeStartCell.x] as number);
     const SERPENTINE_MIN_CLIMB = 60;
-    console.log(
-      `[roads] serpentine: start (${ridgeStart[0].toFixed(0)},${ridgeStart[1].toFixed(0)}) → top (${ridgeTgt[0].toFixed(0)},${ridgeTgt[1].toFixed(0)}) h=${ridgeTop.toFixed(0)} climb=${ridgeClimb.toFixed(0)}`,
+    log.info(
+      'roads',
+      `serpentine: start (${ridgeStart[0].toFixed(0)},${ridgeStart[1].toFixed(0)}) → top (${ridgeTgt[0].toFixed(0)},${ridgeTgt[1].toFixed(0)}) h=${ridgeTop.toFixed(0)} climb=${ridgeClimb.toFixed(0)}`,
     );
 
     const plan: { name: string; cls: RoadClassSpec; via: [number, number][] }[] = [
@@ -2276,8 +2282,9 @@ export class RoadNetwork {
             markNetwork(r);
             part++;
           } else if (r.pts.length > 0) {
-            console.warn(
-              `[roads] drop stub ${r.name}: ${r.length.toFixed(0)} m < ${minLenM} m floor`,
+            log.warn(
+              'roads',
+              `drop stub ${r.name}: ${r.length.toFixed(0)} m < ${minLenM} m floor`,
             );
           }
         }
@@ -2302,12 +2309,13 @@ export class RoadNetwork {
           const to = (via[i + 1] as number[]).map((val) => val.toFixed(0)).join(',');
           if (isAsphalt) {
             asphaltGaps++;
-            console.error(
-              `[roads] ASPHALT GAP ${name}[${i}]: (${from}) → (${to}) — retry ladder exhausted ` +
+            log.error(
+              'roads',
+              `ASPHALT GAP ${name}[${i}]: (${from}) → (${to}) — retry ladder exhausted ` +
                 `(relaxed grade ${ASPHALT_RETRY_GRADE_MUL}× + ${ASPHALT_RETRY_ATTEMPTS} jittered targets), falling back to split`,
             );
           } else {
-            console.warn(`[roads] unroutable leg ${name}[${i}]: (${from}) → (${to})`);
+            log.warn('roads', `unroutable leg ${name}[${i}]: (${from}) → (${to})`);
           }
           flush();
           continue;
@@ -2350,8 +2358,9 @@ export class RoadNetwork {
           }
           if (cutAt < 0 && runStart >= 0 && leg.length - off - runStart >= 10) cutAt = runStart;
           if (cutAt >= 2) {
-            console.warn(
-              `[roads] ${name}[${i}]: mid-leg rides an existing corridor — T-junction, ` +
+            log.warn(
+              'roads',
+              `${name}[${i}]: mid-leg rides an existing corridor — T-junction, ` +
                 `dropping ${leg.length - cutAt - 2} trailing cell(s)`,
             );
             leg = leg.slice(0, cutAt + 2);
@@ -2607,8 +2616,9 @@ export class RoadNetwork {
           }
         }
       }
-      console.log(
-        `[roads] contour traverses: ${contourCount} route(s), ${(contourLen / 1000).toFixed(2)} km ` +
+      log.info(
+        'roads',
+        `contour traverses: ${contourCount} route(s), ${(contourLen / 1000).toFixed(2)} km ` +
           `over ${anchors.length} slope(s) [${anchors.map((a) => `(${cw(a.x).toFixed(0)},${cw(a.z).toFixed(0)})`).join(' ')}]`,
       );
     }
@@ -2828,7 +2838,7 @@ export class RoadNetwork {
           if (cands.length === 0) {
             failed = true; // isolated tip, nothing within CONNECT_MAX_M
             if (STITCH_DBG)
-              console.warn(`[roads/stitch] ${r.name} tip(${tx.toFixed(0)},${tz.toFixed(0)}) no target ≤${CONNECT_MAX_M}m`);
+              log.warn('roads/stitch', `${r.name} tip(${tx.toFixed(0)},${tz.toFixed(0)}) no target ≤${CONNECT_MAX_M}m`);
             continue;
           }
           // try the nearest few routes — the closest may be unreachable
@@ -2840,8 +2850,9 @@ export class RoadNetwork {
           if (!c) {
             failed = true;
             if (STITCH_DBG)
-              console.warn(
-                `[roads/stitch] ${r.name} tip(${tx.toFixed(0)},${tz.toFixed(0)}) → ${cands[0]?.route.name} ` +
+              log.warn(
+                'roads/stitch',
+                `${r.name} tip(${tx.toFixed(0)},${tz.toFixed(0)}) → ${cands[0]?.route.name} ` +
                   `gap ${(cands[0]?.d ?? 0).toFixed(0)}m CONNECT-FAIL (${cands.length} cand)`,
               );
             continue;
@@ -2860,8 +2871,9 @@ export class RoadNetwork {
         if (r.cls.surfaceId === SurfaceId.Asphalt) continue;
         if (isIsland(r)) dropped.add(r);
       }
-      console.log(
-        `[roads] dead-end stitch: +${connectId} connector(s), dropped ${dropped.size} isolated route(s)`,
+      log.info(
+        'roads',
+        `dead-end stitch: +${connectId} connector(s), dropped ${dropped.size} isolated route(s)`,
       );
     }
 
@@ -2876,12 +2888,13 @@ export class RoadNetwork {
     const scenic = traceScenicContours({ n: N, gh, gs, gd, gmud, netMask });
     if (scenic.length > 0) {
       const km = scenic.reduce((a, s) => a + s.length, 0) / 1000;
-      console.log(
-        `[roads] scenic contours: ${scenic.length} band(s), ${km.toFixed(2)} km, ` +
+      log.info(
+        'roads',
+        `scenic contours: ${scenic.length} band(s), ${km.toFixed(2)} km, ` +
           `levels [${scenic.map((s) => s.level.toFixed(0)).join(' ')}] m`,
       );
     } else {
-      console.log('[roads] scenic contours: none qualified');
+      log.info('roads', 'scenic contours: none qualified');
     }
 
     return new RoadNetwork(

@@ -13,6 +13,7 @@
 
 import type { PerspectiveCamera } from 'three';
 import { Vector3 } from 'three';
+import { log } from './Log';
 import { isMobileDevice } from './BrowserGate';
 import type { CamPose } from './Hooks';
 
@@ -284,8 +285,7 @@ export class FlyCamera {
     });
     window.addEventListener('keydown', (e) => {
       if (e.code === 'KeyP') {
-        // eslint-disable-next-line no-console
-        console.log(`[pose] cam=${this.toCamString()}`);
+        log.info('pose', `cam=${this.toCamString()}`);
       }
       if (e.code === 'KeyV' && this.enabled && this.modeV !== 'ride') {
         // ride mode owns its own exit (M key via BikeRig) — V is walk⇄fly
@@ -503,8 +503,7 @@ export class FlyCamera {
       this.velY = 0;
     } else if (mode === 'walk') {
       if (!this.groundProbe) {
-        // eslint-disable-next-line no-console
-        console.warn('[laas] walk mode unavailable — no terrain in this scene');
+        log.warn('laas', 'walk mode unavailable — no terrain in this scene');
         return;
       }
       this.basePos.copy(this.camera.position);
@@ -528,8 +527,7 @@ export class FlyCamera {
     if (mode === 'ride') this.resetTouchJoy();
     this.applyRotation(0);
     this.camera.updateMatrixWorld();
-    // eslint-disable-next-line no-console
-    console.log(`[laas] camera mode: ${mode} (V toggles)`);
+    log.info('laas', `camera mode: ${mode} (V toggles)`);
   }
 
   /**

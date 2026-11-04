@@ -24,6 +24,7 @@
 import { EqualDepth, type Material, type Side } from 'three';
 import { Mesh, NodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import { vec4 } from 'three/tsl';
+import { log } from '../core/Log';
 
 /**
  * Mark every vertex shader's clip-space position `@invariant` (WGSL's
@@ -59,8 +60,7 @@ export function installPositionInvariance(renderer: WebGPURenderer): void {
     // prepass EQUAL trick starts dropping fragments world-wide (frost).
     if (patched === code && !warned) {
       warned = true;
-      // eslint-disable-next-line no-console
-      console.warn('[laas] position-invariance marker NOT FOUND - prepass EQUAL is unsafe');
+      log.warn('laas', 'position-invariance marker NOT FOUND - prepass EQUAL is unsafe');
     }
     return patched;
   };

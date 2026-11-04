@@ -32,6 +32,7 @@ import {
   Vector3,
 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { log } from '../../core/Log';
 
 /* ---- pose targets (cockpit-root = eye space; -Z forward, +Y up) -------- */
 
@@ -194,8 +195,9 @@ function orientWrist(
   root.updateWorldMatrix(true, true);
   const wp2 = new Vector3().setFromMatrixPosition(wrist.matrixWorld);
   const mp2 = new Vector3().setFromMatrixPosition(mid.matrixWorld).sub(wp2).normalize();
-  console.log(
-    `[rider] wrist${side} fingers want(${fingerDirW.x.toFixed(2)},${fingerDirW.y.toFixed(2)},${fingerDirW.z.toFixed(2)})` +
+  log.debug(
+    'rider',
+    `wrist${side} fingers want(${fingerDirW.x.toFixed(2)},${fingerDirW.y.toFixed(2)},${fingerDirW.z.toFixed(2)})` +
     ` got(${mp2.x.toFixed(2)},${mp2.y.toFixed(2)},${mp2.z.toFixed(2)}) twist=${Math.atan2(sin, cos).toFixed(2)}`,
   );
 }
@@ -580,7 +582,7 @@ function poseArms(root: Object3D, rig: Object3D, grip: GripSpec, p: PoseParams):
     const lower = bone(rig, `LowerArm${side}`);
     const wrist = bone(rig, `Wrist${side}`);
     if (!upper || !lower || !wrist) {
-      console.error(`[rider] arm bones missing for side ${side} — pose skipped`);
+      log.error('rider', `arm bones missing for side ${side} — pose skipped`);
       continue;
     }
     const { sgn, target, fingerDir, palmNormal, bendAxis, hoodAxisW, latW, pole, solid } =
@@ -902,6 +904,6 @@ export function attachRider(parent: Group, grip: GripSpec): void {
     },
     undefined,
     // a silent load failure previously read as "rider skipped" — never again
-    (err) => console.error('[rider] adventurer.glb load FAILED:', err),
+    (err) => log.error('rider', 'adventurer.glb load FAILED:', err),
   );
 }

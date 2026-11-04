@@ -12,6 +12,7 @@ import { tele } from './Telemetry';
 import { installMaterialKeyMemo } from '../render/ThreePatches';
 import { installPositionInvariance } from '../render/VegPrepass';
 import { GpuProfiler } from './GpuProfiler';
+import { log } from './Log';
 import { installRenderSegments } from '../debug/RenderSegments';
 import type { EngineStats, LaasHooks } from './Hooks';
 import type { LaasParams } from './Params';
@@ -106,8 +107,7 @@ export class Engine {
       let reported = 0;
       device.onuncapturederror = (e: GPUUncapturedErrorEvent): void => {
         if (reported++ < 8) {
-          // eslint-disable-next-line no-console
-          console.error('[laas] WebGPU uncaptured error:', e.error.message);
+          log.error('laas', 'WebGPU uncaptured error:', e.error.message);
         }
       };
       // Device loss is the mobile failure surface (OOM on unified memory, or a
@@ -131,9 +131,9 @@ export class Engine {
       // floor while verifying the world boots clean.
       if (new URLSearchParams(location.search).get('limitcap') === 'mobile') {
         const L = device.limits;
-        // eslint-disable-next-line no-console
-        console.log(
-          '[laas] limitcap device.limits:',
+        log.info(
+          'laas',
+          'limitcap device.limits:',
           JSON.stringify({
             maxStorageBuffersPerShaderStage: L.maxStorageBuffersPerShaderStage,
             maxStorageBufferBindingSize: L.maxStorageBufferBindingSize,
