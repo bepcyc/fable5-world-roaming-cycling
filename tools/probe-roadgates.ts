@@ -705,7 +705,7 @@ async function main(): Promise<void> {
 
   console.log(
     `[probe-roadgates] seeds [${seeds.join(', ')}] — thresholds: step≤${SAMPLE_STEP_M}m, ` +
-      `grade=class×${GRADE_TOL} (asphalt 12% / gravel-fine 12% / gravel-coarse 14% / dirt 16% / singletrack 20%), ` +
+      `grade=class×${GRADE_TOL} (asphalt 12% / gravel-fine 12% / gravel-coarse 14% / dirt 16% / singletrack 17%), ` +
       `fordExempt=±${FORD_EXEMPT_M}m, gap>${GAP_MAX_M}m, touch=${TOUCH_M}m, flood>${FLOOD_DEPTH_M.toFixed(2)}m, ` +
       `narrow>${NARROW_TOL_M}m@±0.85halfW, wallAcross>±${WALL_ACROSS_M}m, canyon>+${WALL_SIDE_RISE_M}m@edge+${WALL_SIDE_OUT_M}m both sides, ` +
       `crossΔy>${CROSS_DY_M}m (dedupe ${CROSS_DEDUPE_M}m), deepFord>${DEEP_FORD_M.toFixed(2)}m, worldMargin=${WORLD_MARGIN_M}m`,
