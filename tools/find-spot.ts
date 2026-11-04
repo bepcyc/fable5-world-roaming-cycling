@@ -33,7 +33,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import sharp from 'sharp';
+import sharp, { type OverlayOptions } from 'sharp';
 import { laasUrl } from './launch';
 import { launchWebGPUReal as launchWebGPU } from './launch-gpu';
 
@@ -334,7 +334,7 @@ async function main(): Promise<void> {
   const COLS = 6, TW = 320, TH = 180, PAD = 4;
   const rows = Math.ceil(ranked.length / COLS);
   const sheetW = COLS * (TW + PAD) + PAD, sheetH = rows * (TH + PAD + 18) + PAD;
-  const overlays: sharp.OverlayOptions[] = [];
+  const overlays: OverlayOptions[] = [];
   for (let k = 0; k < ranked.length; k++) {
     const { c, i } = ranked[k]!;
     const img = await sharp(thumbs[i]!).resize(TW, TH).toBuffer();
