@@ -84,15 +84,17 @@ jobs:
         run: |
           set -euo pipefail
           TOKEN="${FORGEJO_TOKEN:-$GH_TOKEN}"
+          # LAN forgejo serves https with a cert issued for a different name → -k there only.
+          CURL_TLS=""; [ -n "${FORGEJO_TOKEN:-}" ] && CURL_TLS="-k"
           body=$(python3 -c 'import json,sys; print(json.dumps(open("RELEASE_NOTES.md").read()))')
-          resp=$(curl -fsS -X POST "$API/repos/$REPO/releases" \
+          resp=$(curl -fsS $CURL_TLS -X POST "$API/repos/$REPO/releases" \
             -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":$body}")
           echo "$resp" | python3 -c 'import json,sys; r=json.load(sys.stdin); print("release id", r["id"], "at", r.get("html_url","?"))'
           upload=$(echo "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')
           for f in laas-linux-x64.AppImage "laas-${TAG}-android-debug.apk"; do
             echo "uploading $f"
-            curl -fsS -X POST "${upload}?name=$(basename "$f")" \
+            curl -fsS $CURL_TLS -X POST "${upload}?name=$(basename "$f")" \
               -H "Authorization: token $TOKEN" \
               -H "Content-Type: application/octet-stream" \
               --data-binary "@$f" | python3 -c 'import json,sys; a=json.load(sys.stdin); print("  →", a.get("browser_download_url", a.get("name")))'
