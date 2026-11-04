@@ -5,12 +5,19 @@
  * it survives the page dying). Standalone (does not touch vite.config).
  *
  *   TELE_LOG=/path/telemetry.jsonl npx tsx tools/debug-telemetry-server.ts
- *   → listens 0.0.0.0:5199, appends one JSON line per event, echoes to stdout.
+ *   → listens 127.0.0.1:5199, appends one JSON line per event, echoes to stdout.
+ *
+ *   LAN=1 (mirroring vite.config's convention) binds 0.0.0.0 — REQUIRED for
+ *   the ?debug=1 phone flow this tool exists for, since the phone posts over
+ *   the LAN IP. Loopback is the default because an open 0.0.0.0 write-append
+ *   sink with `Access-Control-Allow-Origin: *` lets anyone on the LAN push
+ *   garbage into the log.
  */
 import { createServer } from 'node:http';
 import { appendFileSync } from 'node:fs';
 
 const PORT = Number(process.env.TELE_PORT ?? 5199);
+const HOST = process.env.LAN === '1' ? '0.0.0.0' : '127.0.0.1';
 const LOG = process.env.TELE_LOG ?? './telemetry.jsonl';
 
 const cors = {
@@ -47,6 +54,6 @@ createServer((req, res) => {
   }
   res.writeHead(200, { ...cors, 'Content-Type': 'text/plain' });
   res.end('telemetry ok\n');
-}).listen(PORT, '0.0.0.0', () => {
-  console.log(`[telemetry] listening 0.0.0.0:${PORT} → ${LOG}`);
+}).listen(PORT, HOST, () => {
+  console.log(`[telemetry] listening ${HOST}:${PORT} → ${LOG}${HOST === '127.0.0.1' ? ' (loopback; LAN=1 to expose)' : ''}`);
 });
