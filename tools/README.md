@@ -35,7 +35,7 @@ Run any script as `npx tsx tools/<file>` (or `node` for `.mjs`, `bash` for
 |---|---|---|---|
 | `shoot.ts` | `npm run shoot` | Boots LAAS at a scene/seed/T/cam, settles, captures PNG + engine stats JSON | gpu |
 | `compare.ts` | `npm run compare` | Side-by-side ours-left/reference-right compositor + pixel sampling | img |
-| `gate-grass-blue.ts` | `npm run gates:grass` | Far grass must read green, not blue frost carpet: shoots far+near pitch pair at the baseline repro spot, measures bluish-pixel fraction | gate, gpu |
+| `gate-grass-blue.ts` | `npm run gates:grass` | Far grass must read green, not blue frost carpet: shoots far+near pitch pair at the baseline repro spot, measures bluish-pixel fraction. PASS/FAIL thresholds + golden frames live in `tests/baselines/` | gate, gpu |
 | `gate-perf.ts` | `npm run gates:perf` | CI-style pass/fail perf on both shipping presets via the perf-mobile harness | gate, gpu |
 | `gate-visual.ts` | `npm run gates:visual` | Visual-regression runner (WARPLAN never-again gates); one boot per frame, non-zero on fail | gate, gpu |
 | `probe-turnpicker.ts` | `npm run gates:turnpicker` | Turn-picker gate (docs/TURN_PICKER.md): geometry-true layout + Zwift cutoff + no-teleport law, measured | gate, gpu |

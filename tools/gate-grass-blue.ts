@@ -4,14 +4,19 @@
  * and near pitch pair, and measures the bluish-pixel fraction in the far band
  * ROI (same metric as tools/measure-grass-blue.mjs / the main-thread baseline).
  *
- * PASS: far-band bluish < 3.0 %, near-band bluish < 0.05 %.
- * Exits non-zero on any fail. Honours LAAS_PORT (see launch-gpu.ts).
+ * PASS/FAIL thresholds come from tests/baselines/baselines.json
+ * (currently far-band bluish < 3.0 %, near-band bluish < 0.05 %) — the
+ * committed golden frames document what "good" looked like on the owner
+ * box (amd/rdna-2). Exits non-zero on any fail OR if the baseline file
+ * is missing/malformed — a gate without its golden data is not GREEN.
+ * Honours LAAS_PORT (see launch-gpu.ts).
  *
  * Usage: LAAS_PORT=5181 npx tsx tools/gate-grass-blue.ts
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { laasUrl } from './launch';
 import { launchWebGPUReal as launchWebGPU } from './launch-gpu';
@@ -55,18 +60,42 @@ async function measureBlue(
 }
 
 interface Probe {
-  name: string;
+  name: 'far' | 'near';
   cam: string;
-  limit: number; // max allowed bluePct
+  limit: number; // max allowed bluePct — from baselines.json
+  baseline: number; // measured bluePct when the golden frame was captured
 }
 
 const SPOT = '-1114.14,173.68,1121.58';
 const YAW = '-1.5808';
 const FOV = '55';
-const PROBES: Probe[] = [
-  { name: 'far', cam: `${SPOT},${YAW},-0.06,${FOV}`, limit: 3.0 },
-  { name: 'near', cam: `${SPOT},${YAW},-0.75,${FOV}`, limit: 0.05 },
-];
+
+interface BaselineFile {
+  gates?: {
+    'gate-grass-blue'?: {
+      probes?: Record<string, { maxBluePct?: number; baselineBluePct?: number }>;
+    };
+  };
+}
+
+function loadProbes(): Probe[] {
+  const file = fileURLToPath(new URL('../tests/baselines/baselines.json', import.meta.url));
+  const raw = readFileSync(file, 'utf8'); // throws (→ exit 1) when missing
+  const json = JSON.parse(raw) as BaselineFile;
+  const probes = json.gates?.['gate-grass-blue']?.probes;
+  const camFor = (name: string): string =>
+    `${SPOT},${YAW},${name === 'far' ? '-0.06' : '-0.75'},${FOV}`;
+  return (['far', 'near'] as const).map((name) => {
+    const limit = probes?.[name]?.maxBluePct;
+    const baseline = probes?.[name]?.baselineBluePct;
+    if (typeof limit !== 'number' || typeof baseline !== 'number') {
+      throw new Error(`baselines.json: gate-grass-blue.probes.${name} needs numeric maxBluePct + baselineBluePct`);
+    }
+    return { name, cam: camFor(name), limit, baseline };
+  });
+}
+
+const PROBES: Probe[] = loadProbes();
 
 async function main(): Promise<void> {
   const W = 1920;
@@ -105,7 +134,7 @@ async function main(): Promise<void> {
       if (!ok) failed = true;
       console.log(
         `[gate-grass-blue] ${p.name}: bluePct=${r.bluePct.toFixed(3)}% ` +
-          `(limit ${p.limit}%) -> ${ok ? 'PASS' : 'FAIL'}`,
+          `(limit ${p.limit}%, baseline ${p.baseline}%) -> ${ok ? 'PASS' : 'FAIL'}`,
       );
     }
   } finally {

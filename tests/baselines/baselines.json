@@ -1,0 +1,23 @@
+{
+  "$schema": "Golden baselines for pixel gates — the PASS/FAIL thresholds live HERE, not in tool code. Frames are self-rendered by the gate itself on the owner box; regenerate by running the gate, then copy its tmpdir shots through `sharp(<shot>).resize(960,540).png()` into this dir. Never reuse shots/ or reference/ imagery here (fable5#125 keeps those out of baselines).",
+  "gates": {
+    "gate-grass-blue": {
+      "capturedAt": "2026-11-04",
+      "capturedOn": "amd/rdna-2 (RADV), Chrome 150, live shots 1920x1080, committed frames downscaled to 960x540",
+      "frames": {
+        "far": "grass-far.png",
+        "near": "grass-near.png"
+      },
+      "probes": {
+        "far": {
+          "maxBluePct": 3.0,
+          "baselineBluePct": 0.899
+        },
+        "near": {
+          "maxBluePct": 0.05,
+          "baselineBluePct": 0.0
+        }
+      }
+    }
+  }
+}
