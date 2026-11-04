@@ -1,7 +1,20 @@
 # tools/ — the verification harness
 
 The probes **are** the test suite: vitest covers pure logic (`tests/`), this
-directory covers everything that needs pixels or physics. 81 files.
+directory covers everything that needs pixels or physics. 82 scripts plus
+this index.
+
+**Headless vs headed (fable5#132):** every `gpu` script runs headless on this
+box — `launch-gpu.ts` prefers the headless `--use-angle=vulkan` recipe and only
+falls back headed as a last resort. Headed-only: `probe-real-crash.ts` (the
+SIGFPE crash class needs a real window) and `probe-pointerlock.ts` (headless
+rejects every pointer-lock request). Nothing else here needs a display — but
+everything `gpu`-tagged still needs a REAL adapter: SwiftShader is measured
+NOT viable (adapter comes up, sanity scene builds in ~76 s on CPU, then the
+WebGPU device drops with `Instance dropped in popErrorScope` before ready —
+3/3 runs, 2026-11-04). On a GPU-less machine only `smoke.ts` tier A, the
+`node`-tagged image utilities, the CPU-only counters, and
+`debug-telemetry-server.ts` give a signal.
 
 **Classes:** `gate` — pass/fail, exits non-zero on failure · `probe` —
 repro/acceptance measurement, prints numbers or shots · `perf` — FPS/profiler
@@ -30,6 +43,7 @@ Run any script as `npx tsx tools/<file>` (or `node` for `.mjs`, `bash` for
 | `probe-roadgates.ts` | `npm run gates:roads` (2/4) | Road anomaly gates: walks every route per seed | gate, gpu |
 | `probe-deadends.ts` | `npm run gates:roads` (3/4) | Dead-end gate over the runtime RouteGraph | gate, gpu |
 | `probe-roadrealism.ts` | `npm run gates:roads` (4/4) | "Would anyone ride this in the Alps?" realism gate | gate, gpu |
+| `smoke.ts` | `npm run smoke` | CI-safe smoke tier: B = real-GPU headless boot to `__laas.ready` (skipped with no GPU), A = bundle executes + fail-loud `#laas-fatal` + gate verdict — runs in GitHub CI | gate, node (+gpu for tier B) |
 
 All `gates:roads` members take `--seeds 1,2,3` (see the package.json script).
 

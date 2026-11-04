@@ -36,6 +36,7 @@ invented commands.
 | Screenshot | `npm run shoot` (`tsx tools/shoot.ts`) | GPU + Playwright Chromium |
 | Image diff | `npm run compare` (`tsx tools/compare.ts`) | sharp |
 | Visual gates | `npm run gates:grass` / `gates:perf` / `gates:visual` / `gates:turnpicker` / `gates:roads` | GPU + Chromium, **not CI-safe** |
+| Smoke tier | `npm run smoke` (`tsx tools/smoke.ts`) | **CI-safe** — tier A needs only Chrome; tier B runs when a real GPU exists. Owner-side for now: wiring it into `ci.yml` needs a GitHub token with the `workflow` scope, which the repo's current credentials lack |
 | Probes | `npx tsx tools/probe-*.ts` (~80 scripts) | GPU + Chromium, **not CI-safe** |
 
 `just` convenience recipes (all wrap the above plus shell glue):
