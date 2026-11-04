@@ -9,6 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 5174 --strictPort",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "shoot": "tsx tools/shoot.ts",
     "compare": "tsx tools/compare.ts",
     "gates:grass": "tsx tools/gate-grass-blue.ts",
@@ -30,6 +32,7 @@
     "sharp": "^0.35.5",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^5.0.5"
   }
 }
