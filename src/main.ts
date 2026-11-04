@@ -41,7 +41,7 @@ import {
 import { BleSensorSource } from './ride/ble/BleSensorSource';
 import { DeviceManagerUi } from './ride/ble/DeviceManagerUi';
 import { NativeBridgeTransport, nativeBleAvailable } from './ride/ble/NativeBridgeTransport';
-import { FakeTransport, SVC, WebBluetoothTransport } from './ride/ble/Transport';
+import { FakeDevice, FakeTransport, SVC, WebBluetoothTransport } from './ride/ble/Transport';
 
 async function boot(): Promise<void> {
   const hooks = initHooks();
@@ -230,7 +230,6 @@ async function boot(): Promise<void> {
     if (fakeTransport) {
       dbg0['bleFake'] = fakeTransport;
       // probes build scripted peripherals in page context (tools/probe-ble.ts)
-      const { FakeDevice } = await import('./ride/ble/Transport');
       dbg0['bleMakeFakeDevice'] = (name: string, services: (number | string)[], id?: string) =>
         new FakeDevice(name, services, id);
     }
