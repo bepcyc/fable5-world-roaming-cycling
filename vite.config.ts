@@ -8,6 +8,14 @@ import { defineConfig } from "vite";
 // (No TLS cert: mkcert-per-device was a fragile dead end. See `just run-lan`.)
 const lan = process.env.LAN === "1";
 
+// POLL=1 (`POLL=1 npm run dev`): force chokidar polling. Native fs events
+// miss tool-driven file writes on SOME setups (inotify limits, network
+// filesystems, certain agent environments) — the symptom is edits not
+// triggering reload / the module graph serving stale code. Opt-in because
+// polling burns dev-time CPU for a quirk most machines don't have; if your
+// edits don't hot-reload, set POLL=1 (see CONTRIBUTING.md).
+const poll = process.env.POLL === "1";
+
 export default defineConfig(({ command }) => ({
   build: {
     target: "esnext",
@@ -32,9 +40,7 @@ export default defineConfig(({ command }) => ({
     port: 5173,
     strictPort: true,
     host: lan, // 0.0.0.0 for LAN, localhost otherwise
-    // tool-driven file writes are missed by fsevents on this setup; poll so
-    // the module graph never serves stale code (cost: dev-only CPU)
-    watch: { usePolling: true, interval: 200 },
+    watch: poll ? { usePolling: true, interval: 200 } : undefined,
   },
   esbuild: {
     target: "esnext",

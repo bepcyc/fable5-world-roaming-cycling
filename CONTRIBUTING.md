@@ -51,6 +51,10 @@ invented commands.
   `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, add
   `http://<IP>:5173`, relaunch, then open `http://<IP>:5173/?nogate=1`.
 - `just stop` — free ports :5173/:5174.
+- `POLL=1 npm run dev` — forces chokidar file polling. Only needed if edits
+  stop triggering reload (native fs events missing writes happens on some
+  setups — inotify limits, network filesystems, agent environments). Off by
+  default because polling costs dev-time CPU; see `vite.config.ts`.
 
 Owner-only pipeline (assumes `~/Android/Sdk`, Java 21, adb-connected devices):
 
