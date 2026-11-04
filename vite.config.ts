@@ -11,7 +11,22 @@ const lan = process.env.LAN === "1";
 export default defineConfig(({ command }) => ({
   build: {
     target: "esnext",
-    chunkSizeWarningLimit: 4096,
+    // Just above the largest chunk currently emitted — growth now warns
+    // again (was 4096, which silenced the tripwire at a 1.57 MB app chunk).
+    chunkSizeWarningLimit: 1700,
+    rollupOptions: {
+      output: {
+        // Vendor split: app code vs the three.js framework — the app chunk
+        // churns every commit while 'three' is cache-stable on GH Pages.
+        // Function form because 'three/webgpu', 'three/tsl' and
+        // 'three/addons/*' are separate module ids, not caught by the
+        // object form's bare-'three' entry.
+        manualChunks(id: string): string | undefined {
+          if (id.includes("node_modules/three")) return "three";
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     port: 5173,
