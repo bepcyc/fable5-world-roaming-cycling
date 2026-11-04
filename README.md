@@ -44,11 +44,14 @@ Controls: click to capture the mouse. WASD to move, Shift to sprint, Space to ju
 
 Useful URL parameters: `?seed=N` (world seed), `?T=hours` (time of day, 0–24), `?shot=1..9` (boot into a bookmark), `?cam=x,y,z,yaw,pitch[,fov]` (exact pose), `?preset=low|high|ultra`, `?freeze=1` (freeze world motion), `?hud=1` (HUD open at boot).
 
+Contributing: prerequisites, the full command map, and what runs in CI vs. on GPU hardware live in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Repository map
 
 | Path | What it is |
 |---|---|
 | `PROJECT_LAAS_v2.md` | The brief. The only human-authored document in the repository. |
+| `CONTRIBUTING.md` | Contributor on-ramp: prerequisites, verified command map, CI vs. GPU-only checks. |
 | `STATUS.md` | The model's working memory: current state, diagnosis logs, measurements, decision history. |
 | `docs/THREE-NOTES.md` | Verified three.js/TSL/WebGPU API notes the model accumulated against the pinned version. |
 | `docs/DELTA.md`, `docs/DEVIATIONS.md` | Reference-comparison loops per phase, and spec deviations with reasons. |

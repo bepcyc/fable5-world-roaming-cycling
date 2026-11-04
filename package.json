@@ -4,6 +4,9 @@
   "version": "0.8.0",
   "type": "module",
   "description": "PROJECT LAAS — fully procedural open world in the browser (WebGPU)",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite --port 5173 --strictPort",
     "build": "tsc --noEmit && vite build",
